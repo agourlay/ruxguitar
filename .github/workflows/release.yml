@@ -1,0 +1,67 @@
+name: release binaries
+
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+
+jobs:
+  upload-bins:
+    name: "Upload release binaries"
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # Install dependencies per OS
+      # copy the dependencies step from the ci.yml file
+      - if: matrix.os == 'ubuntu-latest'
+        name: Install dependencies (ubuntu-latest)
+        run: |
+          sudo apt update
+          sudo apt-get install libasound2-dev
+
+      - if: matrix.os == 'macOS-latest'
+        name: Install dependencies (macOS-latest)
+        run: |
+          brew install llvm
+
+      - if: matrix.os == 'windows-latest'
+        name: Install ASIO SDK
+        env:
+          LINK: https://www.steinberg.net/asiosdk
+        run: |
+          curl -L -o asio.zip $env:LINK
+          7z x -oasio asio.zip
+          move asio\*\* asio\
+          choco install asio4all
+          choco install llvm
+
+      - if: matrix.os == 'windows-latest'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: x86_64-pc-windows-msvc
+
+      - if: matrix.os != 'windows-latest'
+        uses: dtolnay/rust-toolchain@stable
+
+      # All
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          target: ${{ matrix.target }}
+          bin: ruxguitar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

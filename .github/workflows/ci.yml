@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux-build:
+    name: Linux CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update apt
+        run: sudo apt update
+      - name: Install alsa
+        run: sudo apt-get install libasound2-dev
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Check code formatting
+        run: cargo fmt --all -- --check
+      - name: Build
+        run: cargo build --verbose
+      - name: Run tests
+        run: cargo test --verbose
+      - name: Check cargo clippy warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  macos-build:
+    name: macOS CI
+    runs-on: macOS-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install llvm and clang
+        run: brew install llvm
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --verbose
+      - name: Run tests
+        run: cargo test --verbose
+      - name: Check cargo clippy warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  windows-build:
+    name: windows CI
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ASIO SDK
+        env:
+          LINK: https://www.steinberg.net/asiosdk
+        run: |
+          curl -L -o asio.zip $env:LINK
+          7z x -oasio asio.zip
+          move asio\*\* asio\
+      - name: Install ASIO4ALL
+        run: choco install asio4all
+      - name: Install llvm and clang
+        run: choco install llvm
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: x86_64-pc-windows-msvc
+      - name: Build
+        run: cargo build --verbose
+      - name: Run tests
+        run: cargo test --verbose
+      - name: Check cargo clippy warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
