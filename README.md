@@ -6,6 +6,8 @@ A guitar pro tablature player.
 
 The design of the application is described in details in the blog article "[Playing guitar tablatures in Rust](https://agourlay.github.io/ruxguitar-tablature-player/)".
 
+![screenshot](screenshot.png)
+
 ## Limitations
 
 - supports only gp5 files
