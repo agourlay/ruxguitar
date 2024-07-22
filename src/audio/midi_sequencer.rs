@@ -25,6 +25,10 @@ impl MidiSequencer {
         }
     }
 
+    pub fn events(&self) -> &[MidiEvent] {
+        &self.sorted_events
+    }
+
     pub fn set_tick(&mut self, tick: usize) {
         self.last_tick = tick;
         self.current_tick = tick;
