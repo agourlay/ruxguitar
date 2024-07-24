@@ -5,7 +5,6 @@ use crate::audio::midi_sequencer::MidiSequencer;
 use crate::audio::FIRST_TICK;
 use crate::parser::song_parser::Song;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::BufferSize;
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 use std::fs::File;
 use std::path::PathBuf;
@@ -13,7 +12,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch::Sender;
 
-const SAMPLE_RATE: u32 = 44100; // number of samples per second
+const DEFAULT_SAMPLE_RATE: u32 = 44100; // number of samples per second
 
 /// Default sound font file is embedded in the binary (6MB)
 const TIMIDITY_SOUND_FONT: &[u8] = include_bytes!("../../resources/TimGM6mb.sf2");
@@ -25,6 +24,7 @@ pub struct AudioPlayer {
     sequencer: Arc<Mutex<MidiSequencer>>,        // Need a handle to reset sequencer
     player_params: Arc<Mutex<MidiPlayerParams>>, // Use to communicate play changes to sequencer
     synthesizer: Arc<Mutex<Synthesizer>>,        // Synthesizer for audio output
+    sound_font: Arc<SoundFont>,                  // Sound font for synthesizer
     beat_sender: Arc<Sender<usize>>,             // Notify beat changes
 }
 
@@ -58,24 +58,8 @@ impl AudioPlayer {
         };
         let sound_font = Arc::new(sound_font);
 
-        let synthesizer_settings = SynthesizerSettings::new(SAMPLE_RATE as i32);
-        let synthesizer_settings = Arc::new(synthesizer_settings);
-        assert_eq!(synthesizer_settings.sample_rate, SAMPLE_RATE as i32);
-
-        // build new synthesizer for the stream
-        let mut synthesizer = Synthesizer::new(&sound_font, &synthesizer_settings).unwrap();
-
-        // apply events at tick=FIRST_TICK to set up synthesizer state
-        // otherwise a picking a measure *before* playing does produce the correct sound
-        events
-            .iter()
-            .take_while(|event| event.tick == FIRST_TICK)
-            .filter(|event| event.is_midi_message())
-            .for_each(|event| {
-                if let MidiEventType::MidiMessage(channel, command, data1, data2) = event.event {
-                    synthesizer.process_midi_message(channel, command, data1, data2);
-                }
-            });
+        // build new default synthesizer for the stream
+        let synthesizer = Self::make_synthesizer(sound_font.clone(), DEFAULT_SAMPLE_RATE);
         let midi_sequencer = MidiSequencer::new(events);
 
         let synthesizer = Arc::new(Mutex::new(synthesizer));
@@ -87,8 +71,16 @@ impl AudioPlayer {
             sequencer,
             player_params,
             synthesizer,
+            sound_font,
             beat_sender,
         }
+    }
+
+    fn make_synthesizer(sound_font: Arc<SoundFont>, sample_rate: u32) -> Synthesizer {
+        let synthesizer_settings = SynthesizerSettings::new(sample_rate as i32);
+        let synthesizer_settings = Arc::new(synthesizer_settings);
+        assert_eq!(synthesizer_settings.sample_rate, sample_rate as i32);
+        Synthesizer::new(&sound_font.clone(), &synthesizer_settings).unwrap()
     }
 
     pub fn is_playing(&self) -> bool {
@@ -150,6 +142,7 @@ impl AudioPlayer {
                 self.sequencer.clone(),
                 self.player_params.clone(),
                 self.synthesizer.clone(),
+                self.sound_font.clone(),
                 self.beat_sender.clone(),
             );
             self.stream = Some(Rc::new(stream));
@@ -183,6 +176,7 @@ fn new_output_stream(
     sequencer: Arc<Mutex<MidiSequencer>>,
     player_params: Arc<Mutex<MidiPlayerParams>>,
     synthesizer: Arc<Mutex<Synthesizer>>,
+    sound_font: Arc<SoundFont>,
     beat_notifier: Arc<Sender<usize>>,
 ) -> cpal::Stream {
     // Initialize audio output
@@ -196,19 +190,41 @@ fn new_output_stream(
         format!("Unsupported sample format {}", config.sample_format())
     );
     let stream_config: cpal::StreamConfig = config.into();
+    let sample_rate = stream_config.sample_rate.0;
 
-    let channels_count = stream_config.channels as usize;
-    assert_eq!(channels_count, 2);
-    assert_eq!(stream_config.sample_rate.0, SAMPLE_RATE);
-    assert_eq!(stream_config.buffer_size, BufferSize::Default);
+    let mut synthesizer_guard = synthesizer.lock().unwrap();
+    if sample_rate != DEFAULT_SAMPLE_RATE {
+        // audio output is not using the default sample rate - recreate synthesizer with proper sample rate
+        let new_synthesizer = AudioPlayer::make_synthesizer(sound_font.clone(), sample_rate);
+        *synthesizer_guard = new_synthesizer;
+    }
 
-    // TODO Size initial buffer properly?
-    // 4410 samples at 44100 Hz is 0.1 second
-    let mono_sample_count = 4410;
+    // Apply events at tick=FIRST_TICK to set up synthesizer state
+    // otherwise clicking on a measure *before* playing does not produce the correct instrument sound
+    sequencer
+        .lock()
+        .unwrap()
+        .events()
+        .iter()
+        .take_while(|event| event.tick == FIRST_TICK)
+        .filter(|event| event.is_midi_message())
+        .for_each(|event| {
+            if let MidiEventType::MidiMessage(channel, command, data1, data2) = event.event {
+                synthesizer_guard.process_midi_message(channel, command, data1, data2);
+            }
+        });
+
+    drop(synthesizer_guard);
+
+    // Size left and right buffers according to sample rate.
+    // Each side gets half of the buffer.
+    // The buffer accounts for 0.1 second of audio.
+    // e.g. 4410 samples at 44100 Hz is 0.1 second
+    let init_mono_sample_count = sample_rate / 10 / 2;
 
     // reuse buffer for left and right channels across all calls
-    let mut left: Vec<f32> = vec![0_f32; mono_sample_count];
-    let mut right: Vec<f32> = vec![0_f32; mono_sample_count];
+    let mut left: Vec<f32> = vec![0_f32; init_mono_sample_count as usize];
+    let mut right: Vec<f32> = vec![0_f32; init_mono_sample_count as usize];
 
     let err_fn = |err| log::error!("an error occurred on stream: {}", err);
 
@@ -276,7 +292,7 @@ fn new_output_stream(
                     }
                 }
             }
-            // Split buffer in two channels (left and right)
+            // Split buffer for this run between left and right
             let channel_len = output.len() / 2;
 
             if left.len() < channel_len || right.len() < channel_len {
