@@ -296,7 +296,7 @@ fn new_output_stream(
             let channel_len = output.len() / 2;
 
             if left.len() < channel_len || right.len() < channel_len {
-                log::warn!("Buffer too small, skipping audio rendering");
+                log::info!("Buffer too small, skipping audio rendering");
                 return;
             }
 
