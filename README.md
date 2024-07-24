@@ -35,6 +35,20 @@ For instance I like to use `FluidR3_GM.sf2` which is present on most systems and
 ./ruxguitar --sound-font-file /usr/share/sounds/sf2/FluidR3_GM.sf2
 ```
 
+## FAQ
+
+- **Where can I find guitar pro files?**
+  - You can find a lot of guitar pro files on the internet. For instance on [Ultimate Guitar](https://www.ultimate-guitar.com/).
+
+- **Why is the sound quality so bad?**
+  - The default soundfont is very basic. You can provide a better soundfont file using the `--sound-font-file` option.
+
+- **Why is the file picker not opening on Linux?**
+  - Make sure to install the `XDG Destop Portal` package. For instance on Ubuntu: `sudo apt-get install -y xdg-desktop-portal`.
+
+- **Why are the strings no rendered on the tablature?**
+  - You might need to disable antialiasing using the `--no-antialiasing` option.
+
 ## Installation
 
 ### Releases
