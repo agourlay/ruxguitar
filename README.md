@@ -43,6 +43,9 @@ For instance I like to use `FluidR3_GM.sf2` which is present on most systems and
 - **Why is the sound quality so bad?**
   - The default soundfont is very basic. You can provide a better soundfont file using the `--sound-font-file` option.
 
+- **Which dependencies are needed to run the application?**
+  - Check the necessary dependencies for your system from the [CI configuration](https://github.com/agourlay/ruxguitar/blob/master/.github/workflows/ci.yml).
+
 - **Why is the file picker not opening on Linux?**
   - Make sure to install the `XDG Destop Portal` package. For instance on Ubuntu: `sudo apt-get install -y xdg-desktop-portal`.
 
