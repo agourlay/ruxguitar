@@ -22,6 +22,7 @@ Usage: ruxguitar [OPTIONS]
 
 Options:
       --sound-font-file <SOUND_FONT_FILE>  Optional path to a sound font file
+      --no-antialiasing                    Disable antialiasing
   -h, --help                               Print help
   -V, --version                            Print version
 ```

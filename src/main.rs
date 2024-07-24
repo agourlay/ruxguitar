@@ -40,6 +40,7 @@ pub fn main_result() -> Result<(), RuxError> {
 
     let args = ApplicationArgs {
         sound_font_bank: sound_font_file,
+        no_antialiasing: args.no_antialiasing,
     };
 
     // go!
@@ -53,11 +54,15 @@ pub struct CliArgs {
     /// Optional path to a sound font file.
     #[arg(long)]
     sound_font_file: Option<String>,
+    /// Disable antialiasing.
+    #[arg(long, default_value_t = false)]
+    no_antialiasing: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct ApplicationArgs {
     sound_font_bank: Option<PathBuf>,
+    no_antialiasing: bool,
 }
 
 #[derive(Debug, thiserror::Error)]

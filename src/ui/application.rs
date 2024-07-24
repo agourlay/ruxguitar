@@ -110,7 +110,7 @@ impl RuxApplication {
         .font(ICONS_FONT)
         .window_size((1150.0, 768.0))
         .centered()
-        .antialiasing(true)
+        .antialiasing(!args.no_antialiasing)
         .run_with(move || {
             (
                 RuxApplication::new(args.sound_font_bank.clone()),
