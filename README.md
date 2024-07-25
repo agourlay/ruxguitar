@@ -47,7 +47,7 @@ For instance I like to use `FluidR3_GM.sf2` which is present on most systems and
   - Check the necessary dependencies for your system from the [CI configuration](https://github.com/agourlay/ruxguitar/blob/master/.github/workflows/ci.yml).
 
 - **Why is the file picker not opening on Linux?**
-  - Make sure to install the `XDG Destop Portal` package. For instance on Ubuntu: `sudo apt-get install -y xdg-desktop-portal`.
+  - Install the `XDG Destop Portal` package for your [desktop environment](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces).
 
 - **Why are the strings no rendered on the tablature?**
   - You might need to disable antialiasing using the `--no-antialiasing` option.
