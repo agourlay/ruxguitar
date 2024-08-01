@@ -52,6 +52,9 @@ For instance I like to use `FluidR3_GM.sf2` which is present on most systems and
 - **Why are the strings no rendered on the tablature?**
   - You might need to disable antialiasing using the `--no-antialiasing` option.
 
+- **Does it run on Windows 7 or Windows 8?**
+  - Yes, the Windows binary is built with Rust 1.75 which supports Windows 7 and Windows 8.
+
 ## Installation
 
 ### Releases
