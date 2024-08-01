@@ -67,6 +67,7 @@ jobs:
         with:
           toolchain: 1.75.0 # to support Windows 7
           target: x86_64-pc-windows-msvc
+          components: clippy
       - name: Build
         run: cargo build --verbose
       - name: Run tests
