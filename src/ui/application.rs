@@ -1,5 +1,5 @@
-use iced::widget::{column, horizontal_space, pick_list, row, text};
-use iced::{keyboard, stream, Alignment, Element, Subscription, Task, Theme};
+use iced::widget::{column, container, horizontal_space, pick_list, row, text};
+use iced::{keyboard, stream, window, Alignment, Element, Size, Subscription, Task, Theme};
 use std::borrow::Cow;
 use std::fmt::Display;
 
@@ -12,6 +12,7 @@ use crate::ui::utils::{action_gated, action_toggle, untitled_text_table_box};
 use crate::ApplicationArgs;
 use iced::futures::{SinkExt, Stream};
 use iced::keyboard::key::Named::Space;
+use iced::widget::container::visible_bounds;
 use iced::widget::scrollable::{scroll_to, AbsoluteOffset, Id};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -26,6 +27,7 @@ pub struct RuxApplication {
     track_selection: TrackSelection,            // selected track
     all_tracks: Vec<TrackSelection>,            // all possible tracks
     tablature: Option<Tablature>,               // loaded tablature
+    tablature_id: container::Id,                // tablature container id
     audio_player: Option<AudioPlayer>,          // audio player
     tab_file_is_loading: bool,                  // file loading flag in progress
     sound_font_file: Option<PathBuf>,           // sound font file
@@ -75,11 +77,13 @@ pub enum Message {
     OpenFile,                                           // open file dialog
     FileOpened(Result<(Vec<u8>, String), PickerError>), // file content & file name
     TrackSelected(TrackSelection),                      // track selection
-    FocusMeasure(usize), // used when clicking on measure in tablature
-    FocusTick(usize),    // focus on a specific tick in the tablature
-    PlayPause,           // toggle play/pause
-    StopPlayer,          // stop playback
-    ToggleSolo,          // toggle solo mode
+    FocusMeasure(usize),    // used when clicking on measure in tablature
+    FocusTick(usize),       // focus on a specific tick in the tablature
+    PlayPause,              // toggle play/pause
+    StopPlayer,             // stop playback
+    ToggleSolo,             // toggle solo mode
+    WindowResized,          // window resized
+    TablatureResized(Size), // tablature resized
 }
 
 impl RuxApplication {
@@ -90,6 +94,7 @@ impl RuxApplication {
             track_selection: TrackSelection::default(),
             all_tracks: vec![],
             tablature: None,
+            tablature_id: container::Id::new("tablature-outer-container"),
             audio_player: None,
             tab_file_is_loading: false,
             sound_font_file,
@@ -213,7 +218,16 @@ impl RuxApplication {
             }
             Message::FocusTick(tick) => {
                 if let Some(tablature) = &mut self.tablature {
-                    tablature.focus_on_tick(tick);
+                    if let Some(scroll_offset) = tablature.focus_on_tick(tick) {
+                        // scroll to the focused measure
+                        return scroll_to(
+                            tablature.scroll_id.clone(),
+                            AbsoluteOffset {
+                                x: 0.0,
+                                y: scroll_offset,
+                            },
+                        );
+                    }
                 }
                 Task::none()
             }
@@ -221,7 +235,8 @@ impl RuxApplication {
                 if let Some(audio_player) = &mut self.audio_player {
                     audio_player.toggle_play();
                 }
-                Task::none()
+                // Hack to make sure the tablature is aware of its size
+                Task::done(Message::WindowResized)
             }
             Message::StopPlayer => {
                 if let (Some(audio_player), Some(tablature)) =
@@ -241,6 +256,17 @@ impl RuxApplication {
                 if let Some(audio_player) = &mut self.audio_player {
                     let track = self.track_selection.index;
                     audio_player.toggle_solo_mode(track);
+                }
+                Task::none()
+            }
+            Message::WindowResized => {
+                // query tablature container size
+                visible_bounds(self.tablature_id.clone())
+                    .map(|rect| Message::TablatureResized(rect.unwrap().size()))
+            }
+            Message::TablatureResized(tablature_container_size) => {
+                if let Some(tablature) = &mut self.tablature {
+                    tablature.update_container_width(tablature_container_size.width);
                 }
                 Task::none()
             }
@@ -324,7 +350,9 @@ impl RuxApplication {
             .as_ref()
             .map_or(untitled_text_table_box().into(), |t| t.view());
 
-        column![controls, tablature_view, status,]
+        let tablature = container(tablature_view).id(self.tablature_id.clone());
+
+        column![controls, tablature, status,]
             .spacing(20)
             .padding(10)
             .into()
@@ -368,6 +396,9 @@ impl RuxApplication {
             "audio-player-beat",
             audio_player_beat_subscription,
         ));
+
+        let window_resized = window::resize_events().map(|_| Message::WindowResized);
+        subscriptions.push(window_resized);
 
         Subscription::batch(subscriptions)
     }

@@ -45,7 +45,8 @@ pub struct CanvasMeasure {
     focused_beat: usize,
     canvas_cache: Cache,
     measure_len: f32,
-    total_measure_len: f32,
+    pub total_measure_len: f32,
+    pub vertical_measure_height: f32,
 }
 
 impl CanvasMeasure {
@@ -56,6 +57,10 @@ impl CanvasMeasure {
         let measure_len = MIN_MEASURE_WIDTH.max(beat_count as f32 * BEAT_LENGTH);
         // total length of measure (padding on both sides)
         let total_measure_len = measure_len + MEASURE_NOTES_PADDING * 2.0;
+        let string_count = track.strings.len();
+        // total height of measure (same for all measures in track)
+        let vertical_measure_height = STRING_LINE_HEIGHT * (string_count - 1) as f32;
+        let vertical_measure_height = vertical_measure_height + FIRST_STRING_Y * 2.0;
         Self {
             measure_id,
             track_id,
@@ -65,14 +70,13 @@ impl CanvasMeasure {
             canvas_cache: Cache::default(),
             measure_len,
             total_measure_len,
+            vertical_measure_height,
         }
     }
 
     pub fn view(&self) -> Element<Message> {
-        let string_count = self.song.tracks[self.track_id].strings.len();
-        let vertical_measure_height = STRING_LINE_HEIGHT * (string_count - 1) as f32;
         let canvas = Canvas::new(self)
-            .height(vertical_measure_height + FIRST_STRING_Y * 2.0)
+            .height(self.vertical_measure_height)
             .width(Length::Fixed(self.total_measure_len));
         canvas.into()
     }
