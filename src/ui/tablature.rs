@@ -51,6 +51,12 @@ impl Tablature {
             }
             self.canvas_measures.push(measure);
         }
+        // recompute line tracker with existing width
+        let existing_width = self.line_tracker.tablature_container_width;
+        std::mem::swap(
+            &mut self.line_tracker,
+            &mut LineTracker::make(&self.canvas_measures, existing_width),
+        );
     }
 
     pub fn update_container_width(&mut self, width: f32) {
@@ -136,12 +142,14 @@ impl Tablature {
 #[derive(Default)]
 struct LineTracker {
     measure_to_line: Vec<usize>, // measure id to line number
+    tablature_container_width: f32,
 }
 
 impl LineTracker {
     pub fn make(measures: &[CanvasMeasure], tablature_container_width: f32) -> Self {
         let mut line_tracker = LineTracker {
             measure_to_line: vec![0; measures.len()],
+            tablature_container_width,
         };
         let mut current_line = 1;
         let mut horizontal_cursor = 0.0;
