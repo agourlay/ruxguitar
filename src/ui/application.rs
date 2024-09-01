@@ -150,6 +150,10 @@ impl RuxApplication {
             }
             Message::FileOpened(result) => {
                 self.tab_file_is_loading = false;
+                // stop previous audio player if any
+                if let Some(audio_player) = &mut self.audio_player {
+                    audio_player.stop();
+                }
                 match result {
                     Ok((contents, file_name)) => {
                         if let Ok(song) = parse_gp_data(&contents) {
@@ -178,10 +182,6 @@ impl RuxApplication {
                                 tablature_scroll_id.clone(),
                             );
                             self.tablature = Some(tablature);
-                            // stop previous audio player if any
-                            if let Some(audio_player) = &mut self.audio_player {
-                                audio_player.stop();
-                            }
                             // audio player initialization
                             let audio_player = AudioPlayer::new(
                                 song_rc.clone(),
