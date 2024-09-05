@@ -28,6 +28,7 @@ pub struct RuxApplication {
     all_tracks: Vec<TrackSelection>,            // all possible tracks
     tablature: Option<Tablature>,               // loaded tablature
     tablature_id: container::Id,                // tablature container id
+    tempo_selection: TempoSelection,            // tempo percentage for playback
     audio_player: Option<AudioPlayer>,          // audio player
     tab_file_is_loading: bool,                  // file loading flag in progress
     sound_font_file: Option<PathBuf>,           // sound font file
@@ -54,6 +55,43 @@ impl SongDisplayInfo {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct TempoSelection {
+    percentage: usize,
+}
+
+impl Default for TempoSelection {
+    fn default() -> Self {
+        TempoSelection::new(100)
+    }
+}
+
+impl TempoSelection {
+    fn new(percentage: usize) -> Self {
+        Self { percentage }
+    }
+
+    fn values() -> Vec<TempoSelection> {
+        vec![
+            TempoSelection::new(25),
+            TempoSelection::new(50),
+            TempoSelection::new(60),
+            TempoSelection::new(70),
+            TempoSelection::new(80),
+            TempoSelection::new(90),
+            TempoSelection::new(100),
+            TempoSelection::new(150),
+            TempoSelection::new(200),
+        ]
+    }
+}
+
+impl Display for TempoSelection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}%", self.percentage)
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct TrackSelection {
     index: usize,
@@ -77,13 +115,14 @@ pub enum Message {
     OpenFile,                                           // open file dialog
     FileOpened(Result<(Vec<u8>, String), PickerError>), // file content & file name
     TrackSelected(TrackSelection),                      // track selection
-    FocusMeasure(usize),    // used when clicking on measure in tablature
-    FocusTick(usize),       // focus on a specific tick in the tablature
-    PlayPause,              // toggle play/pause
-    StopPlayer,             // stop playback
-    ToggleSolo,             // toggle solo mode
-    WindowResized,          // window resized
-    TablatureResized(Size), // tablature resized
+    FocusMeasure(usize),           // used when clicking on measure in tablature
+    FocusTick(usize),              // focus on a specific tick in the tablature
+    PlayPause,                     // toggle play/pause
+    StopPlayer,                    // stop playback
+    ToggleSolo,                    // toggle solo mode
+    WindowResized,                 // window resized
+    TablatureResized(Size),        // tablature resized
+    TempoSelected(TempoSelection), // tempo selection
 }
 
 impl RuxApplication {
@@ -95,6 +134,7 @@ impl RuxApplication {
             all_tracks: vec![],
             tablature: None,
             tablature_id: container::Id::new("tablature-outer-container"),
+            tempo_selection: TempoSelection::default(),
             audio_player: None,
             tab_file_is_loading: false,
             sound_font_file,
@@ -186,6 +226,7 @@ impl RuxApplication {
                             let audio_player = AudioPlayer::new(
                                 song_rc.clone(),
                                 song_rc.tempo.value,
+                                self.tempo_selection.percentage,
                                 self.sound_font_file.clone(),
                                 self.beat_sender.clone(),
                             );
@@ -270,6 +311,13 @@ impl RuxApplication {
                 }
                 Task::none()
             }
+            Message::TempoSelected(tempos_selection) => {
+                if let Some(audio_player) = &mut self.audio_player {
+                    audio_player.set_tempo_percentage(tempos_selection.percentage)
+                }
+                self.tempo_selection = tempos_selection;
+                Task::none()
+            }
         }
     }
 
@@ -298,6 +346,15 @@ impl RuxApplication {
         let track_control = if self.all_tracks.is_empty() {
             row![horizontal_space()]
         } else {
+            let tempo_label = text("Tempo").size(14);
+            let tempo_percentage = pick_list(
+                TempoSelection::values(),
+                Some(&self.tempo_selection),
+                Message::TempoSelected,
+            )
+            .text_size(14)
+            .padding([5, 10]);
+
             let solo_mode = action_toggle(
                 solo_icon(),
                 "Solo",
@@ -315,7 +372,7 @@ impl RuxApplication {
             .text_size(14)
             .padding([5, 10]);
 
-            row![solo_mode, track_pick_list,]
+            row![tempo_label, tempo_percentage, solo_mode, track_pick_list,]
                 .spacing(10)
                 .align_y(Alignment::Center)
         };

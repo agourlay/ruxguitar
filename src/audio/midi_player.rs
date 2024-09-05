@@ -32,6 +32,7 @@ impl AudioPlayer {
     pub fn new(
         song: Rc<Song>,
         song_tempo: i32,
+        tempo_percentage: usize,
         sound_font_file: Option<PathBuf>,
         beat_sender: Arc<Sender<usize>>,
     ) -> Self {
@@ -39,7 +40,11 @@ impl AudioPlayer {
         let solo_track_id = None;
 
         // player params
-        let player_params = Arc::new(Mutex::new(MidiPlayerParams::new(song_tempo, solo_track_id)));
+        let player_params = Arc::new(Mutex::new(MidiPlayerParams::new(
+            song_tempo,
+            tempo_percentage,
+            solo_track_id,
+        )));
 
         // midi sequencer initialization
         let builder = MidiBuilder::new();
@@ -100,6 +105,11 @@ impl AudioPlayer {
             log::info!("Enable solo mode on track {}", new_track_id);
             params_guard.set_solo_track_id(Some(new_track_id));
         }
+    }
+
+    pub fn set_tempo_percentage(&mut self, new_tempo_percentage: usize) {
+        let mut params_guard = self.player_params.lock().unwrap();
+        params_guard.set_tempo_percentage(new_tempo_percentage)
     }
 
     pub fn stop(&mut self) {
@@ -233,7 +243,7 @@ fn new_output_stream(
         move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let mut player_params_guard = player_params.lock().unwrap();
             let mut sequencer_guard = sequencer.lock().unwrap();
-            sequencer_guard.advance(player_params_guard.tempo());
+            sequencer_guard.advance(player_params_guard.adjusted_tempo());
             let mut synthesizer_guard = synthesizer.lock().unwrap();
             // process midi events for current tick
             if let Some(events) = sequencer_guard.get_next_events() {
