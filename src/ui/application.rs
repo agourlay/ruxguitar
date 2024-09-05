@@ -88,7 +88,7 @@ impl TempoSelection {
 
 impl Display for TempoSelection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "tempo {}%", self.percentage)
+        write!(f, "{}%", self.percentage)
     }
 }
 
@@ -346,6 +346,7 @@ impl RuxApplication {
         let track_control = if self.all_tracks.is_empty() {
             row![horizontal_space()]
         } else {
+            let tempo_label = text("Tempo").size(14);
             let tempo_percentage = pick_list(
                 TempoSelection::values(),
                 Some(&self.tempo_selection),
@@ -371,7 +372,7 @@ impl RuxApplication {
             .text_size(14)
             .padding([5, 10]);
 
-            row![tempo_percentage, solo_mode, track_pick_list,]
+            row![tempo_label, tempo_percentage, solo_mode, track_pick_list,]
                 .spacing(10)
                 .align_y(Alignment::Center)
         };
