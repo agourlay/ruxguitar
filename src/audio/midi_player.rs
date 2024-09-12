@@ -200,6 +200,12 @@ fn new_output_stream(
         format!("Unsupported sample format {}", config.sample_format())
     );
     let stream_config: cpal::StreamConfig = config.into();
+    log::warn!(
+        "Audio output stream config: {:?} ({} channels, {} Hz)",
+        stream_config,
+        stream_config.channels,
+        stream_config.sample_rate.0
+    );
     let sample_rate = stream_config.sample_rate.0;
 
     let mut synthesizer_guard = synthesizer.lock().unwrap();
@@ -303,11 +309,11 @@ fn new_output_stream(
                 }
             }
             // Split buffer for this run between left and right
-            let channel_len = output.len() / 2;
+            let mut channel_len = output.len() / 2;
 
             if left.len() < channel_len || right.len() < channel_len {
-                log::info!("Buffer too small, skipping audio rendering");
-                return;
+                log::info!("Buffer too small {}<{}", left.len(), channel_len);
+                channel_len = left.len()
             }
 
             // Render the waveform.
