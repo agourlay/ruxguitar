@@ -7,7 +7,7 @@ use iced::event::Status;
 use iced::mouse::{Cursor, Interaction};
 use iced::widget::canvas::{Cache, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::{canvas, Canvas};
-use iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme};
+use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
 use std::rc::Rc;
 
 /// Drawing constants
@@ -334,16 +334,9 @@ fn draw_focused_box(
     } = focused_box;
 
     let top_left = Point::new(x, y);
-    let top_right = Point::new(x + width, y);
-    let bottom_left = Point::new(x, y + height);
-    let bottom_right = Point::new(x + width, y + height);
-
+    let rectangle_size = Size::new(width, height);
     let stroke = Stroke::default().with_width(1.0).with_color(Color::WHITE);
-    // TODO use `stroke_rectangle` when available
-    frame.stroke(&Path::line(top_left, top_right), stroke);
-    frame.stroke(&Path::line(top_left, bottom_left), stroke);
-    frame.stroke(&Path::line(top_right, bottom_right), stroke);
-    frame.stroke(&Path::line(bottom_right, bottom_left), stroke);
+    frame.stroke_rectangle(top_left, rectangle_size, stroke);
 }
 
 fn draw_measure_vertical_line(
