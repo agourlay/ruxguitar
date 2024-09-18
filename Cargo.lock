@@ -1704,6 +1704,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "iced_aw"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b47215370062021ef31616348a0cb490d2e9004b8eaa50f1973feb76e9135ce"
+dependencies = [
+ "cfg-if",
+ "iced",
+]
+
+[[package]]
 name = "iced_core"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3193,6 +3203,7 @@ dependencies = [
  "encoding_rs",
  "env_logger",
  "iced",
+ "iced_aw",
  "log",
  "nom",
  "rfd",

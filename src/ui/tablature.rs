@@ -1,10 +1,10 @@
 use crate::parser::song_parser::Song;
 use crate::ui::application::Message;
 use crate::ui::canvas_measure::CanvasMeasure;
-use crate::ui::iced_aw::wrap::Wrap;
 use iced::widget::scrollable;
 use iced::widget::scrollable::Id;
 use iced::{Element, Length};
+use iced_aw::Wrap;
 use std::rc::Rc;
 
 const INNER_PADDING: f32 = 10.0;
