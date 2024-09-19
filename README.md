@@ -55,6 +55,9 @@ For instance I like to use `FluidR3_GM.sf2` which is present on most systems and
 - **Does it run on Windows 7 or Windows 8?**
   - Yes, the Windows binary is built with Rust 1.75 which supports Windows 7 and Windows 8.
 
+- **Why is the sound not working on Linux?**
+  - You are most likely using `PulseAudio` which is not supported.
+
 ## Installation
 
 ### Releases
