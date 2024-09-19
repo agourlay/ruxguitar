@@ -27,6 +27,7 @@ pub fn main_result() -> Result<(), RuxError> {
 
     // args
     let mut args = CliArgs::parse();
+    let file = args.file.take().map(PathBuf::from);
     let sound_font_file = args.sound_font_file.take().map(PathBuf::from);
 
     // check if sound font file exists
@@ -39,6 +40,7 @@ pub fn main_result() -> Result<(), RuxError> {
     }
 
     let args = ApplicationArgs {
+        file,
         sound_font_bank: sound_font_file,
         no_antialiasing: args.no_antialiasing,
     };
@@ -51,6 +53,10 @@ pub fn main_result() -> Result<(), RuxError> {
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct CliArgs {
+    /// Optional path to a gp5 file. If not passed, a file must be selected with
+    /// the file selector.
+    #[arg(long)]
+    file: Option<String>,
     /// Optional path to a sound font file.
     #[arg(long)]
     sound_font_file: Option<String>,
@@ -61,6 +67,7 @@ pub struct CliArgs {
 
 #[derive(Debug, Clone)]
 pub struct ApplicationArgs {
+    file: Option<PathBuf>,
     sound_font_bank: Option<PathBuf>,
     no_antialiasing: bool,
 }

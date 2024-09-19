@@ -126,9 +126,12 @@ pub enum Message {
 }
 
 impl RuxApplication {
-    fn new(sound_font_file: Option<PathBuf>) -> Self {
+    fn new(
+        file: Option<PathBuf>,
+        sound_font_file: Option<PathBuf>,
+    ) -> Self {
         let (beat_sender, beat_receiver) = tokio::sync::watch::channel(0);
-        Self {
+        let mut app = Self {
             song_info: None,
             track_selection: TrackSelection::default(),
             all_tracks: vec![],
@@ -140,7 +143,13 @@ impl RuxApplication {
             sound_font_file,
             beat_receiver: Arc::new(Mutex::new(beat_receiver)),
             beat_sender: Arc::new(beat_sender),
+        };
+        if let Some(file) = file {
+            let path = file.clone().into_os_string().into_string().unwrap();
+            let content = fs::read(path.clone()).unwrap();
+            app.update(Message::FileOpened(Ok((content, path))));
         }
+        app
     }
 
     pub fn start(args: ApplicationArgs) -> iced::Result {
