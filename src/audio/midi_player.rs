@@ -147,15 +147,31 @@ impl AudioPlayer {
                 stream.play().unwrap();
             }
         } else {
-            self.is_playing = true;
-            let stream = new_output_stream(
-                self.sequencer.clone(),
-                self.player_params.clone(),
-                self.synthesizer.clone(),
-                self.sound_font.clone(),
-                self.beat_sender.clone(),
-            );
-            self.stream = Some(Rc::new(stream));
+            let device = cpal::default_host().default_output_device().unwrap();
+            // default_output_config may fail on some devices (e.g. USB speakers). this is
+            // an edge case that is not really handled by cpal. for example,
+            // see: https://github.com/RustAudio/cpal/issues/680
+            match device.default_output_config() {
+                Ok(conf) => {
+                    self.is_playing = true;
+                    // Initialize audio output
+                    let stream = new_output_stream(
+                        device,
+                        conf,
+                        self.sequencer.clone(),
+                        self.player_params.clone(),
+                        self.synthesizer.clone(),
+                        self.sound_font.clone(),
+                        self.beat_sender.clone(),
+                    );
+                    self.stream = Some(Rc::new(stream));
+                }
+                Err(_) => {
+                    // TODO: popup
+                    log::warn!("No output config found; this is probably a cpal issue");
+                    self.stream = None;
+                }
+            }
         }
     }
 
@@ -183,17 +199,14 @@ impl AudioPlayer {
 
 /// Create a new output stream for audio playback.
 fn new_output_stream(
+    device: cpal::Device,
+    config: cpal::SupportedStreamConfig,
     sequencer: Arc<Mutex<MidiSequencer>>,
     player_params: Arc<Mutex<MidiPlayerParams>>,
     synthesizer: Arc<Mutex<Synthesizer>>,
     sound_font: Arc<SoundFont>,
     beat_notifier: Arc<Sender<usize>>,
 ) -> cpal::Stream {
-    // Initialize audio output
-    let host = cpal::default_host();
-    let device = host.default_output_device().unwrap();
-
-    let config = device.default_output_config().unwrap();
     assert!(
         config.sample_format().is_float(),
         "{}",
