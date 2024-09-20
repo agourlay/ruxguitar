@@ -126,10 +126,7 @@ pub enum Message {
 }
 
 impl RuxApplication {
-    fn new(
-        file: Option<PathBuf>,
-        sound_font_file: Option<PathBuf>,
-    ) -> Self {
+    fn new(file: Option<PathBuf>, sound_font_file: Option<PathBuf>) -> Self {
         let (beat_sender, beat_receiver) = tokio::sync::watch::channel(0);
         let mut app = Self {
             song_info: None,
