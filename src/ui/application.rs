@@ -143,7 +143,7 @@ impl RuxApplication {
         };
         if let Some(file) = file {
             let path = file.clone().into_os_string().into_string().unwrap();
-            let content = fs::read(path.clone()).unwrap();
+            let content = std::fs::read(path.clone()).unwrap();
             app.update(Message::FileOpened(Ok((content, path))));
         }
         app
@@ -164,7 +164,7 @@ impl RuxApplication {
         .antialiasing(!args.no_antialiasing)
         .run_with(move || {
             (
-                RuxApplication::new(args.sound_font_bank.clone()),
+                RuxApplication::new(args.file.clone(), args.sound_font_bank.clone()),
                 Task::none(),
             )
         })
