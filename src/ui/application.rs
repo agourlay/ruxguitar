@@ -5,8 +5,9 @@ use std::fmt::Display;
 
 use crate::audio::midi_player::AudioPlayer;
 use crate::parser::song_parser::{parse_gp_data, GpVersion, Song};
+use crate::ui::application::Message::OpenFile;
 use crate::ui::icons::{open_icon, pause_icon, play_icon, solo_icon, stop_icon};
-use crate::ui::picker::{open_file, PickerError};
+use crate::ui::picker::{load_file, open_file_dialog, FilePickerError};
 use crate::ui::tablature::Tablature;
 use crate::ui::utils::{action_gated, action_toggle, untitled_text_table_box};
 use crate::ApplicationArgs;
@@ -112,9 +113,10 @@ impl Display for TrackSelection {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    OpenFile,                                           // open file dialog
-    FileOpened(Result<(Vec<u8>, String), PickerError>), // file content & file name
-    TrackSelected(TrackSelection),                      // track selection
+    OpenFileDialog,                                         // open file dialog
+    OpenFile(PathBuf),                                      // open file path
+    FileOpened(Result<(Vec<u8>, String), FilePickerError>), // file content & file name
+    TrackSelected(TrackSelection),                          // track selection
     FocusMeasure(usize),           // used when clicking on measure in tablature
     FocusTick(usize),              // focus on a specific tick in the tablature
     PlayPause,                     // toggle play/pause
@@ -159,7 +161,9 @@ impl RuxApplication {
         .run_with(move || {
             (
                 RuxApplication::new(args.sound_font_bank.clone()),
-                Task::none(),
+                args.tab_file_path
+                    .map(|f| Task::done(OpenFile(f)))
+                    .unwrap_or_else(Task::none),
             )
         })
     }
@@ -180,13 +184,17 @@ impl RuxApplication {
                 self.track_selection = selection;
                 Task::none()
             }
-            Message::OpenFile => {
+            Message::OpenFileDialog => {
                 if self.tab_file_is_loading {
                     Task::none()
                 } else {
                     self.tab_file_is_loading = true;
-                    Task::perform(open_file(), Message::FileOpened)
+                    Task::perform(open_file_dialog(), Message::FileOpened)
                 }
+            }
+            Message::OpenFile(path) => {
+                self.tab_file_is_loading = true;
+                Task::perform(load_file(path), Message::FileOpened)
             }
             Message::FileOpened(result) => {
                 self.tab_file_is_loading = false;
@@ -206,6 +214,11 @@ impl RuxApplication {
                                     TrackSelection::new(index, track.name.clone())
                                 })
                                 .collect();
+                            if track_selections.is_empty() {
+                                log::warn!("No tracks found in GP file");
+                                // TODO show alert popup
+                                return Task::none();
+                            }
                             self.all_tracks.clone_from(&track_selections);
                             self.song_info = Some(SongDisplayInfo::new(&song, file_name));
                             // select first track by default
@@ -325,7 +338,7 @@ impl RuxApplication {
         let open_file = action_gated(
             open_icon(),
             "Open file",
-            (!self.tab_file_is_loading).then_some(Message::OpenFile),
+            (!self.tab_file_is_loading).then_some(Message::OpenFileDialog),
         );
 
         let player_control = if let Some(audio_player) = &self.audio_player {

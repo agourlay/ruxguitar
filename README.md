@@ -22,6 +22,7 @@ Usage: ruxguitar [OPTIONS]
 
 Options:
       --sound-font-file <SOUND_FONT_FILE>  Optional path to a sound font file
+      --tab-file-path <TAB_FILE_PATH>      Optional path to tab file to by-pass the file picker
       --no-antialiasing                    Disable antialiasing
   -h, --help                               Print help
   -V, --version                            Print version

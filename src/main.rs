@@ -28,6 +28,7 @@ pub fn main_result() -> Result<(), RuxError> {
     // args
     let mut args = CliArgs::parse();
     let sound_font_file = args.sound_font_file.take().map(PathBuf::from);
+    let tab_file_path = args.tab_file_path.take().map(PathBuf::from);
 
     // check if sound font file exists
     if let Some(sound_font_file) = &sound_font_file {
@@ -38,8 +39,18 @@ pub fn main_result() -> Result<(), RuxError> {
         log::info!("Starting with custom sound font file {:?}", sound_font_file);
     }
 
+    // check if tab file exists
+    if let Some(tab_file_path) = &tab_file_path {
+        if !tab_file_path.exists() {
+            let err = ConfigError(format!("Tab file not found {:?}", tab_file_path));
+            return Err(err);
+        }
+        log::info!("Starting with tab file {:?}", tab_file_path);
+    }
+
     let args = ApplicationArgs {
         sound_font_bank: sound_font_file,
+        tab_file_path,
         no_antialiasing: args.no_antialiasing,
     };
 
@@ -54,6 +65,9 @@ pub struct CliArgs {
     /// Optional path to a sound font file.
     #[arg(long)]
     sound_font_file: Option<String>,
+    /// Optional path to tab file to by-pass the file picker.
+    #[arg(long)]
+    tab_file_path: Option<String>,
     /// Disable antialiasing.
     #[arg(long, default_value_t = false)]
     no_antialiasing: bool,
@@ -62,6 +76,7 @@ pub struct CliArgs {
 #[derive(Debug, Clone)]
 pub struct ApplicationArgs {
     sound_font_bank: Option<PathBuf>,
+    tab_file_path: Option<PathBuf>,
     no_antialiasing: bool,
 }
 
