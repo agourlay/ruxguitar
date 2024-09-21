@@ -310,15 +310,22 @@ fn new_output_stream(
                 }
             }
             // Split buffer for this run between left and right
-            let channel_len = output.len() / 2;
+            let mut output_channel_len = output.len() / 2;
 
-            if left.len() < channel_len || right.len() < channel_len {
-                log::info!("Buffer too small, skipping audio rendering");
-                return;
+            if left.len() < output_channel_len || right.len() < output_channel_len {
+                log::info!(
+                    "Output buffer larger than expected channel size {} > {}",
+                    output_channel_len,
+                    left.len()
+                );
+                output_channel_len = left.len()
             }
 
             // Render the waveform.
-            synthesizer_guard.render(&mut left[..channel_len], &mut right[..channel_len]);
+            synthesizer_guard.render(
+                &mut left[..output_channel_len],
+                &mut right[..output_channel_len],
+            );
 
             // Drop locks
             drop(sequencer_guard);
@@ -326,7 +333,8 @@ fn new_output_stream(
             drop(player_params_guard);
 
             // Interleave the left and right channels into the output buffer.
-            for (i, (l, r)) in left.iter().zip(right.iter()).take(channel_len).enumerate() {
+            let stereo_interleaved = left.iter().zip(right.iter());
+            for (i, (l, r)) in stereo_interleaved.take(output_channel_len).enumerate() {
                 output[i * 2] = *l;
                 output[i * 2 + 1] = *r;
             }
