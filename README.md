@@ -1,6 +1,7 @@
 # ruxguitar
 
 [![Build status](https://github.com/agourlay/ruxguitar/actions/workflows/ci.yml/badge.svg)](https://github.com/agourlay/ruxguitar/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/ruxguitar.svg)](https://crates.io/crates/ruxguitar)
 
 A guitar pro tablature player.
 
@@ -64,6 +65,14 @@ For instance I like to use `FluidR3_GM.sf2` which is present on most systems and
 ### Releases
 
 Using the provided binaries in https://github.com/agourlay/ruxguitar/releases
+
+### Crates.io
+
+Using Cargo via [crates.io](https://crates.io/crates/ruxguitar).
+
+```bash
+cargo install ruxguitar
+```
 
 ### Build
 
