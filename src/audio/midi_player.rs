@@ -5,6 +5,7 @@ use crate::audio::midi_sequencer::MidiSequencer;
 use crate::audio::FIRST_TICK;
 use crate::parser::song_parser::Song;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::DefaultStreamConfigError;
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 use std::fs::File;
 use std::path::PathBuf;
@@ -148,6 +149,8 @@ impl AudioPlayer {
             }
         } else {
             self.is_playing = true;
+
+            // Initialize audio output stream
             let stream = new_output_stream(
                 self.sequencer.clone(),
                 self.player_params.clone(),
@@ -155,7 +158,17 @@ impl AudioPlayer {
                 self.sound_font.clone(),
                 self.beat_sender.clone(),
             );
-            self.stream = Some(Rc::new(stream));
+
+            match stream {
+                Ok(stream) => {
+                    self.stream = Some(Rc::new(stream));
+                }
+                Err(err) => {
+                    log::error!("Failed to create audio stream: {}", err);
+                    self.is_playing = false;
+                    self.stream = None;
+                }
+            }
         }
     }
 
@@ -181,6 +194,14 @@ impl AudioPlayer {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+enum AudioStreamError {
+    #[error("audio device not found")]
+    CpalDeviceNotFount,
+    #[error("no output configuration found: {0}")]
+    CpalOutputConfigNotFound(DefaultStreamConfigError),
+}
+
 /// Create a new output stream for audio playback.
 fn new_output_stream(
     sequencer: Arc<Mutex<MidiSequencer>>,
@@ -188,12 +209,16 @@ fn new_output_stream(
     synthesizer: Arc<Mutex<Synthesizer>>,
     sound_font: Arc<SoundFont>,
     beat_notifier: Arc<Sender<usize>>,
-) -> cpal::Stream {
-    // Initialize audio output
+) -> Result<cpal::Stream, AudioStreamError> {
     let host = cpal::default_host();
-    let device = host.default_output_device().unwrap();
+    let Some(device) = host.default_output_device() else {
+        return Err(AudioStreamError::CpalDeviceNotFount);
+    };
 
-    let config = device.default_output_config().unwrap();
+    let config = device
+        .default_output_config()
+        .map_err(AudioStreamError::CpalOutputConfigNotFound)?;
+
     assert!(
         config.sample_format().is_float(),
         "{}",
@@ -344,5 +369,5 @@ fn new_output_stream(
     );
     let stream = stream.unwrap();
     stream.play().unwrap();
-    stream
+    Ok(stream)
 }
