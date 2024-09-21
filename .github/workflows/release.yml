@@ -73,6 +73,13 @@ jobs:
     steps:
       - name: Checkout the repository
         uses: actions/checkout@v4
+      # Install dependencies per OS
+      # copy the dependencies step from the ci.yml file
+      - if: matrix.os == 'ubuntu-latest'
+        name: Install dependencies (ubuntu-latest)
+        run: |
+          sudo apt update
+          sudo apt-get install libasound2-dev
       - name: Publish
         uses: actions-rs/cargo@v1
         with:
