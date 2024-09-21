@@ -202,6 +202,13 @@ fn new_output_stream(
     let stream_config: cpal::StreamConfig = config.into();
     let sample_rate = stream_config.sample_rate.0;
 
+    log::info!(
+        "Audio output stream config: {:?} ({} channels, {} Hz)",
+        stream_config,
+        stream_config.channels,
+        stream_config.sample_rate.0
+    );
+
     let mut synthesizer_guard = synthesizer.lock().unwrap();
     if sample_rate != DEFAULT_SAMPLE_RATE {
         // audio output is not using the default sample rate - recreate synthesizer with proper sample rate
