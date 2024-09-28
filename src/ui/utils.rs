@@ -3,7 +3,8 @@ use iced::widget::{button, container, tooltip, Container, Text};
 use iced::{Color, Element, Length};
 
 pub fn untitled_text_table_box() -> Container<'static, Message> {
-    let message = "Tip: use the space bar to play/pause";
+    let message =
+        "Tips:\n - use the space bar to play/pause\n - use ctr+up/down to change the tempo";
     let text = Text::new(message).color(Color::WHITE);
     let container = Container::new(text)
         .center_x(Length::Fill)

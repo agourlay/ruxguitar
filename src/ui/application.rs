@@ -5,14 +5,13 @@ use std::fmt::Display;
 
 use crate::audio::midi_player::AudioPlayer;
 use crate::parser::song_parser::{parse_gp_data, GpVersion, Song};
-use crate::ui::application::Message::OpenFile;
 use crate::ui::icons::{open_icon, pause_icon, play_icon, solo_icon, stop_icon};
 use crate::ui::picker::{load_file, open_file_dialog, FilePickerError};
 use crate::ui::tablature::Tablature;
 use crate::ui::utils::{action_gated, action_toggle, untitled_text_table_box};
 use crate::ApplicationArgs;
 use iced::futures::{SinkExt, Stream};
-use iced::keyboard::key::Named::Space;
+use iced::keyboard::key::Named::{ArrowDown, ArrowUp, Space};
 use iced::widget::container::visible_bounds;
 use iced::widget::scrollable::{scroll_to, AbsoluteOffset, Id};
 use std::path::PathBuf;
@@ -56,7 +55,7 @@ impl SongDisplayInfo {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct TempoSelection {
     percentage: usize,
 }
@@ -68,12 +67,12 @@ impl Default for TempoSelection {
 }
 
 impl TempoSelection {
-    fn new(percentage: usize) -> Self {
+    const fn new(percentage: usize) -> Self {
         Self { percentage }
     }
 
-    fn values() -> Vec<TempoSelection> {
-        vec![
+    const VALUES: [TempoSelection; 9] = {
+        [
             TempoSelection::new(25),
             TempoSelection::new(50),
             TempoSelection::new(60),
@@ -84,7 +83,7 @@ impl TempoSelection {
             TempoSelection::new(150),
             TempoSelection::new(200),
         ]
-    }
+    };
 }
 
 impl Display for TempoSelection {
@@ -124,7 +123,9 @@ pub enum Message {
     ToggleSolo,                    // toggle solo mode
     WindowResized,                 // window resized
     TablatureResized(Size),        // tablature resized
-    TempoSelected(TempoSelection), // tempo selection
+    TempoSelected(TempoSelection), // tempo selected
+    IncreaseTempo,                 // increase tempo
+    DecreaseTempo,                 // decrease selection
 }
 
 impl RuxApplication {
@@ -162,7 +163,7 @@ impl RuxApplication {
             (
                 RuxApplication::new(args.sound_font_bank.clone()),
                 args.tab_file_path
-                    .map(|f| Task::done(OpenFile(f)))
+                    .map(|f| Task::done(Message::OpenFile(f)))
                     .unwrap_or_else(Task::none),
             )
         })
@@ -331,6 +332,30 @@ impl RuxApplication {
                 self.tempo_selection = tempos_selection;
                 Task::none()
             }
+            Message::IncreaseTempo => {
+                if let Some(current_index) = TempoSelection::VALUES
+                    .iter()
+                    .position(|t| t == &self.tempo_selection)
+                {
+                    if current_index < TempoSelection::VALUES.len() - 1 {
+                        let next_tempo = TempoSelection::VALUES[current_index + 1];
+                        return Task::done(Message::TempoSelected(next_tempo));
+                    }
+                }
+                Task::none()
+            }
+            Message::DecreaseTempo => {
+                if let Some(current_index) = TempoSelection::VALUES
+                    .iter()
+                    .position(|t| t == &self.tempo_selection)
+                {
+                    if current_index > 0 {
+                        let previous_tempo = TempoSelection::VALUES[current_index - 1];
+                        return Task::done(Message::TempoSelected(previous_tempo));
+                    }
+                }
+                Task::none()
+            }
         }
     }
 
@@ -361,7 +386,7 @@ impl RuxApplication {
         } else {
             let tempo_label = text("Tempo").size(14);
             let tempo_percentage = pick_list(
-                TempoSelection::values(),
+                TempoSelection::VALUES,
                 Some(&self.tempo_selection),
                 Message::TempoSelected,
             )
@@ -454,8 +479,10 @@ impl RuxApplication {
         let mut subscriptions = Vec::with_capacity(2);
 
         // keyboard event subscription
-        let keyboard_subscription = keyboard::on_key_press(|key, _modifiers| match key.as_ref() {
+        let keyboard_subscription = keyboard::on_key_press(|key, modifiers| match key.as_ref() {
             keyboard::Key::Named(Space) => Some(Message::PlayPause),
+            keyboard::Key::Named(ArrowUp) if modifiers.control() => Some(Message::IncreaseTempo),
+            keyboard::Key::Named(ArrowDown) if modifiers.control() => Some(Message::DecreaseTempo),
             _ => None,
         });
         subscriptions.push(keyboard_subscription);
