@@ -1,6 +1,6 @@
 [package]
 name = "ruxguitar"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 authors = ["Arnaud Gourlay <arnaud.gourlay@gmail.com>"]
 description = "Guitar pro tablature player"
@@ -23,5 +23,5 @@ env_logger = "0.11.5"
 rustysynth = "1.3.1"
 cpal = "0.15.3"
 uuid = { version = "1.10.0", features = ["v4"] }
-thiserror = "1.0.63"
+thiserror = "1.0.64"
 clap = { version = "4.5.18", features = ["derive", "cargo"] }
