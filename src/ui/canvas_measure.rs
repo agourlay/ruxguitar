@@ -478,13 +478,13 @@ fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<String> {
         annotations.push("~~~".to_string());
     }
     if note_effect.trill.is_some() {
-        annotations.push("tr".to_string());
+        annotations.push("Tr".to_string());
     }
     if note_effect.tremolo_picking.is_some() {
-        annotations.push("tp".to_string());
+        annotations.push("T.P".to_string());
     }
     if note_effect.tremolo_bar.is_some() {
-        annotations.push("tb".to_string());
+        annotations.push("T.B".to_string());
     }
     annotations
 }

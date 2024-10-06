@@ -24,7 +24,7 @@ pub const DURATION_SIXTEENTH: u8 = 16;
 pub const DURATION_THIRTY_SECOND: u8 = 32;
 pub const DURATION_SIXTY_FOURTH: u8 = 64;
 
-pub const BEND_EFFECT_MAX_POSITION: u8 = 12;
+pub const BEND_EFFECT_MAX_POSITION_LENGTH: f32 = 12.0;
 
 pub const SEMITONE_LENGTH: f32 = 1.0;
 pub const GP_BEND_SEMITONE: f32 = 25.0;
@@ -363,7 +363,8 @@ pub struct BendPoint {
 
 impl BendPoint {
     pub fn get_time(&self, duration: usize) -> usize {
-        duration * self.position as usize / BEND_EFFECT_MAX_POSITION as usize
+        let time = duration as f32 * self.position as f32 / BEND_EFFECT_MAX_POSITION_LENGTH;
+        time as usize
     }
 }
 
@@ -1040,7 +1041,7 @@ pub fn parse_bend_effect(i: &[u8]) -> IResult<&[u8], BendEffect> {
         i = inner;
 
         let point_position =
-            bend_position * BEND_EFFECT_MAX_POSITION as i32 / GP_BEND_POSITION as i32;
+            bend_position as f32 * BEND_EFFECT_MAX_POSITION_LENGTH / GP_BEND_POSITION;
         let point_value = bend_value as f32 * SEMITONE_LENGTH / GP_BEND_SEMITONE;
         bend_effect.points.push(BendPoint {
             position: point_position as u8,
@@ -1060,7 +1061,7 @@ pub fn parse_tremolo_bar(i: &[u8]) -> IResult<&[u8], TremoloBarEffect> {
         let (inner, (position, value, _vibrato)) = tuple((parse_int, parse_int, parse_byte))(i)?;
         i = inner;
 
-        let point_position = position * BEND_EFFECT_MAX_POSITION as i32 / GP_BEND_POSITION as i32;
+        let point_position = position as f32 * BEND_EFFECT_MAX_POSITION_LENGTH / GP_BEND_POSITION;
         let point_value = value as f32 / GP_BEND_SEMITONE * 2.0f32;
         tremolo_bar_effect.points.push(BendPoint {
             position: point_position as u8,
