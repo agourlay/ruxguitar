@@ -3178,7 +3178,7 @@ checksum = "bff572eb558d73c5f5e0fd82c19dd82bb010234d2a65d54f52e93da5856241c7"
 
 [[package]]
 name = "ruxguitar"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "clap",
  "cpal",
