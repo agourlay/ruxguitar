@@ -10,30 +10,30 @@ use iced::widget::{canvas, Canvas};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
 use std::rc::Rc;
 
-/// Drawing constants
+// Drawing constants
 
-/// Measure label + marker
+// Measure label + marker
 const MEASURE_ANNOTATION_Y: f32 = 3.0;
 
-/// Chord label level
+// Chord label level
 const CHORD_ANNOTATION_Y: f32 = 15.0;
 
-/// Note effect level
+// Note effect level
 const NOTE_EFFECT_ANNOTATION_Y: f32 = 27.0;
 
-/// First string level
+// First string level
 const FIRST_STRING_Y: f32 = 50.0;
 
-/// Distance between strings
+// Distance between strings
 const STRING_LINE_HEIGHT: f32 = 13.0;
 
-/// Measure notes padding
+// Measure notes padding
 const MEASURE_NOTES_PADDING: f32 = 20.0;
 
-/// Length of a beat
+// Length of a beat
 const BEAT_LENGTH: f32 = 25.0;
 
-/// minimum measure width
+// minimum measure width
 const MIN_MEASURE_WIDTH: f32 = 60.0;
 
 #[derive(Debug)]
@@ -449,7 +449,7 @@ fn draw_note(
     frame.fill_text(note_effect_text);
 }
 
-/// Similar to https://www.tuxguitar.app/files/1.6.0/desktop/help/edit_effects.html
+// Similar to `https://www.tuxguitar.app/files/1.6.0/desktop/help/edit_effects.html`
 fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<String> {
     let mut annotations: Vec<String> = vec![];
     if note_effect.accentuated_note {

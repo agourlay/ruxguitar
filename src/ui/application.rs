@@ -266,7 +266,7 @@ impl RuxApplication {
                     tablature.focus_on_measure(measure_id);
                 }
                 // focus measure in player
-                if let Some(audio_player) = &mut self.audio_player {
+                if let Some(audio_player) = &self.audio_player {
                     audio_player.focus_measure(measure_id);
                 }
                 Task::none()
@@ -308,7 +308,7 @@ impl RuxApplication {
                 }
             }
             Message::ToggleSolo => {
-                if let Some(audio_player) = &mut self.audio_player {
+                if let Some(audio_player) = &self.audio_player {
                     let track = self.track_selection.index;
                     audio_player.toggle_solo_mode(track);
                 }
@@ -326,7 +326,7 @@ impl RuxApplication {
                 Task::none()
             }
             Message::TempoSelected(tempos_selection) => {
-                if let Some(audio_player) = &mut self.audio_player {
+                if let Some(audio_player) = &self.audio_player {
                     audio_player.set_tempo_percentage(tempos_selection.percentage)
                 }
                 self.tempo_selection = tempos_selection;

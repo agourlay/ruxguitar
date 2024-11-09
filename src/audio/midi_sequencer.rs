@@ -1,7 +1,7 @@
 use crate::audio::midi_event::MidiEvent;
 use std::time::Instant;
 
-const QUARTER_TIME: i32 = 960; // 1 quarter note = 960 ticks
+const QUARTER_TIME: f64 = 960.0; // 1 quarter note = 960 ticks
 
 pub struct MidiSequencer {
     current_tick: usize,           // current Midi tick
@@ -117,7 +117,7 @@ impl MidiSequencer {
 
 fn tick_increase(tempo_bpm: i32, elapsed_seconds: f64) -> usize {
     let tempo_bps = tempo_bpm as f64 / 60.0;
-    let bump = QUARTER_TIME as f64 * tempo_bps * elapsed_seconds;
+    let bump = QUARTER_TIME * tempo_bps * elapsed_seconds;
     bump as usize
 }
 

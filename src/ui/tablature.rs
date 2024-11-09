@@ -153,7 +153,7 @@ impl LineTracker {
         };
         let mut current_line = 1;
         let mut horizontal_cursor = 0.0;
-        for measure in measures.iter() {
+        for measure in measures {
             horizontal_cursor += measure.total_measure_len;
             if horizontal_cursor >= tablature_container_width {
                 current_line += 1;

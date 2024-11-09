@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 const DEFAULT_DURATION_DEAD: i32 = 30;
 const DEFAULT_DURATION_PM: i32 = 60;
-const DEFAULT_BEND: i32 = 64;
+const DEFAULT_BEND: f32 = 64.0;
 const DEFAULT_BEND_SEMI_TONE: f32 = 2.75;
 
 pub const NATURAL_FREQUENCIES: [(i32, i32); 6] = [
@@ -330,14 +330,13 @@ impl MidiBuilder {
                     let points = length / (QUARTER_TIME as usize / 8) as i32;
                     for p_offset in 1..=points {
                         let tone = ((length / points) * p_offset) * distance / length;
-                        let bend =
-                            DEFAULT_BEND as f32 + (tone as f32 * DEFAULT_BEND_SEMI_TONE * 2.0);
+                        let bend = DEFAULT_BEND + (tone as f32 * DEFAULT_BEND_SEMI_TONE * 2.0);
                         let bend_tick = tick1 as i32 + (length / points) * p_offset;
                         self.add_pitch_bend(bend_tick as usize, track_id, channel_id, bend as i32);
                     }
 
                     // normalise the bend
-                    self.add_pitch_bend(tick2, track_id, channel_id, DEFAULT_BEND);
+                    self.add_pitch_bend(tick2, track_id, channel_id, DEFAULT_BEND as i32);
                 }
             }
         }
@@ -404,17 +403,17 @@ impl MidiBuilder {
             } else {
                 next_start + 160
             };
-            self.add_pitch_bend(next_start, track_id, channel_id as i32, DEFAULT_BEND);
+            self.add_pitch_bend(next_start, track_id, channel_id as i32, DEFAULT_BEND as i32);
 
             next_start = if next_start + 160 > end {
                 end
             } else {
                 next_start + 160
             };
-            let value = DEFAULT_BEND as f32 + DEFAULT_BEND_SEMI_TONE / 2.0;
+            let value = DEFAULT_BEND + DEFAULT_BEND_SEMI_TONE / 2.0;
             self.add_pitch_bend(next_start, track_id, channel_id as i32, value as i32);
         }
-        self.add_pitch_bend(next_start, track_id, channel_id as i32, DEFAULT_BEND)
+        self.add_pitch_bend(next_start, track_id, channel_id as i32, DEFAULT_BEND as i32);
     }
 
     fn add_bend(
@@ -426,15 +425,15 @@ impl MidiBuilder {
         bend: &BendEffect,
     ) {
         for (point_id, point) in bend.points.iter().enumerate() {
-            let value = DEFAULT_BEND as f32
-                + (point.value as f32 * DEFAULT_BEND_SEMI_TONE / SEMITONE_LENGTH);
+            let value =
+                DEFAULT_BEND + (point.value as f32 * DEFAULT_BEND_SEMI_TONE / SEMITONE_LENGTH);
             let value = value.clamp(0.0, 127.0) as i32;
             let bend_start = start + point.get_time(duration);
             self.add_pitch_bend(bend_start, track_id, channel_id, value);
 
             // look ahead to next bend point
             if let Some(next_point) = bend.points.get(point_id + 1) {
-                let next_value = DEFAULT_BEND as f32
+                let next_value = DEFAULT_BEND
                     + (next_point.value as f32 * DEFAULT_BEND_SEMI_TONE / SEMITONE_LENGTH);
                 self.process_next_bend_values(
                     track_id,
@@ -448,7 +447,7 @@ impl MidiBuilder {
                 );
             }
         }
-        self.add_pitch_bend(start + duration, track_id, channel_id, DEFAULT_BEND)
+        self.add_pitch_bend(start + duration, track_id, channel_id, DEFAULT_BEND as i32)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -499,7 +498,7 @@ impl MidiBuilder {
         tremolo_bar: &TremoloBarEffect,
     ) {
         for (point_id, point) in tremolo_bar.points.iter().enumerate() {
-            let value = DEFAULT_BEND as f32 + (point.value as f32 * DEFAULT_BEND_SEMI_TONE * 2.0);
+            let value = DEFAULT_BEND + (point.value as f32 * DEFAULT_BEND_SEMI_TONE * 2.0);
             let value = value.clamp(0.0, 127.0) as i32;
             let bend_start = start + point.get_time(duration);
             self.add_pitch_bend(bend_start, track_id, channel_id, value);
@@ -507,7 +506,7 @@ impl MidiBuilder {
             // look ahead to next bend point
             if let Some(next_point) = tremolo_bar.points.get(point_id + 1) {
                 let next_value =
-                    DEFAULT_BEND as f32 + (next_point.value as f32 * DEFAULT_BEND_SEMI_TONE * 2.0);
+                    DEFAULT_BEND + (next_point.value as f32 * DEFAULT_BEND_SEMI_TONE * 2.0);
                 self.process_next_bend_values(
                     track_id,
                     channel_id,
@@ -520,7 +519,7 @@ impl MidiBuilder {
                 );
             }
         }
-        self.add_pitch_bend(start + duration, track_id, channel_id, DEFAULT_BEND)
+        self.add_pitch_bend(start + duration, track_id, channel_id, DEFAULT_BEND as i32)
     }
 
     fn add_note(
@@ -707,12 +706,13 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn test_midi_events_for_all_gp5_song() {
+    fn test_midi_events_for_all_files() {
         let test_dir = std::path::Path::new("test-files");
         for entry in std::fs::read_dir(test_dir).unwrap() {
             let entry = entry.unwrap();
             let path = entry.path();
-            if path.extension().unwrap() != "gp5" {
+            let extension = path.extension().unwrap();
+            if extension != "gp5" && extension != "gp4" {
                 continue;
             }
             let file_name = path.file_name().unwrap().to_str().unwrap();

@@ -52,15 +52,12 @@ impl AudioPlayer {
         let events = builder.build_for_song(&song);
 
         // sound font setup
-        let sound_font = match sound_font_file {
-            Some(sound_font_file) => {
-                let mut sf2 = File::open(sound_font_file).unwrap();
-                SoundFont::new(&mut sf2).unwrap()
-            }
-            None => {
-                let mut sf2 = TIMIDITY_SOUND_FONT;
-                SoundFont::new(&mut sf2).unwrap()
-            }
+        let sound_font = if let Some(sound_font_file) = sound_font_file {
+            let mut sf2 = File::open(sound_font_file).unwrap();
+            SoundFont::new(&mut sf2).unwrap()
+        } else {
+            let mut sf2 = TIMIDITY_SOUND_FONT;
+            SoundFont::new(&mut sf2).unwrap()
         };
         let sound_font = Arc::new(sound_font);
 
@@ -86,7 +83,7 @@ impl AudioPlayer {
         let synthesizer_settings = SynthesizerSettings::new(sample_rate as i32);
         let synthesizer_settings = Arc::new(synthesizer_settings);
         assert_eq!(synthesizer_settings.sample_rate, sample_rate as i32);
-        Synthesizer::new(&sound_font.clone(), &synthesizer_settings).unwrap()
+        Synthesizer::new(&sound_font, &synthesizer_settings).unwrap()
     }
 
     pub fn is_playing(&self) -> bool {
@@ -97,7 +94,7 @@ impl AudioPlayer {
         self.player_params.lock().unwrap().solo_track_id()
     }
 
-    pub fn toggle_solo_mode(&mut self, new_track_id: usize) {
+    pub fn toggle_solo_mode(&self, new_track_id: usize) {
         let mut params_guard = self.player_params.lock().unwrap();
         if params_guard.solo_track_id() == Some(new_track_id) {
             log::info!("Disable solo mode on track {}", new_track_id);
@@ -108,7 +105,7 @@ impl AudioPlayer {
         }
     }
 
-    pub fn set_tempo_percentage(&mut self, new_tempo_percentage: usize) {
+    pub fn set_tempo_percentage(&self, new_tempo_percentage: usize) {
         let mut params_guard = self.player_params.lock().unwrap();
         params_guard.set_tempo_percentage(new_tempo_percentage)
     }
@@ -172,7 +169,7 @@ impl AudioPlayer {
         }
     }
 
-    pub fn focus_measure(&mut self, measure_id: usize) {
+    pub fn focus_measure(&self, measure_id: usize) {
         log::debug!("Focus audio player on measure:{}", measure_id);
         let measure = &self.song.measure_headers[measure_id];
         let measure_start_tick = measure.start;
@@ -237,7 +234,7 @@ fn new_output_stream(
     let mut synthesizer_guard = synthesizer.lock().unwrap();
     if sample_rate != DEFAULT_SAMPLE_RATE {
         // audio output is not using the default sample rate - recreate synthesizer with proper sample rate
-        let new_synthesizer = AudioPlayer::make_synthesizer(sound_font.clone(), sample_rate);
+        let new_synthesizer = AudioPlayer::make_synthesizer(sound_font, sample_rate);
         *synthesizer_guard = new_synthesizer;
     }
 

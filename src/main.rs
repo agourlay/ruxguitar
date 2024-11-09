@@ -94,12 +94,12 @@ pub enum RuxError {
 
 impl From<iced::Error> for RuxError {
     fn from(error: iced::Error) -> Self {
-        RuxError::IcedError(error)
+        Self::IcedError(error)
     }
 }
 
 impl From<io::Error> for RuxError {
     fn from(error: io::Error) -> Self {
-        RuxError::OtherError(error.to_string())
+        Self::OtherError(error.to_string())
     }
 }
