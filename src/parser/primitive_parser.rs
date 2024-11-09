@@ -102,6 +102,7 @@ pub fn parse_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
 
 /// Size of string encoded as Int, but the size is encoded as a byte.
 pub fn parse_int_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
+    log::debug!("Parsing int byte sized string");
     flat_map(parse_int, |len| {
         flat_map(number::complete::i8, move |str_len| {
             if str_len < 0 {

@@ -11,7 +11,7 @@ pub enum FilePickerError {
 /// Opens a file dialog and returns the content of the picked file.
 pub async fn open_file_dialog() -> Result<(Vec<u8>, String), FilePickerError> {
     let picked_file = rfd::AsyncFileDialog::new()
-        .add_filter("Guitar Pro files", &["gp5"]) // only gp5 for now in parser
+        .add_filter("Guitar Pro files", &["gp5", "gp4"])
         .set_title("Pick a GP file")
         .pick_file()
         .await
@@ -29,7 +29,7 @@ pub async fn load_file(path: impl Into<PathBuf>) -> Result<(Vec<u8>, String), Fi
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase())
         .unwrap_or_default();
-    if file_extension != "gp5" {
+    if file_extension != "gp5" && file_extension != "gp4" {
         return Err(FilePickerError::IoError(format!(
             "Unsupported file extension: {}",
             file_extension

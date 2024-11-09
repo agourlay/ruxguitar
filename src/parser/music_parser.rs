@@ -5,7 +5,7 @@ use crate::parser::primitive_parser::{
 use crate::parser::song_parser::{
     convert_velocity, parse_beat_effects, parse_chord, parse_color, parse_duration,
     parse_measure_headers, parse_note_effects, Beat, GpVersion, Measure, Note, NoteEffect,
-    NoteType, Song, Track, Voice, QUARTER_TIME,
+    NoteType, Song, Track, Voice, MAX_VOICES, QUARTER_TIME,
 };
 use nom::multi::count;
 use nom::sequence::tuple;
@@ -24,8 +24,13 @@ impl MusicParser {
     }
 
     pub fn parse_music_data<'a>(&'a mut self, i: &'a [u8]) -> IResult<&[u8], ()> {
-        // skip directions & master reverb
-        let i = skip(i, 42);
+        let mut i = i;
+        let song_version = self.song.version;
+
+        if song_version >= GpVersion::GP5 {
+            // skip directions & master reverb
+            i = skip(i, 42);
+        }
 
         let (i, (measure_count, track_count)) = tuple((
             parse_int, // Measure count
@@ -39,7 +44,8 @@ impl MusicParser {
         );
 
         let song_tempo = self.song.tempo.value;
-        let (i, measure_headers) = parse_measure_headers(measure_count, song_tempo)(i)?;
+        let (i, measure_headers) =
+            parse_measure_headers(measure_count, song_tempo, song_version)(i)?;
         self.song.measure_headers = measure_headers;
 
         let (i, tracks) = self.parse_tracks(track_count as usize)(i)?;
@@ -66,7 +72,9 @@ impl MusicParser {
             // tracks done
             if self.song.version == GpVersion::GP5 {
                 i = skip(i, 2);
-            } else {
+            }
+
+            if self.song.version > GpVersion::GP5 {
                 i = skip(i, 1);
             }
 
@@ -83,7 +91,10 @@ impl MusicParser {
             log::debug!("Parsing track {}", number);
             let mut i = skip(i, 1);
             let mut track = Track::default();
-            if number == 1 || self.song.version == GpVersion::GP5 {
+
+            if self.song.version >= GpVersion::GP5
+                && (number == 1 || self.song.version == GpVersion::GP5)
+            {
                 i = skip(i, 1);
             };
 
@@ -132,12 +143,14 @@ impl MusicParser {
             i = inner;
             track.color = color;
 
-            i = if self.song.version == GpVersion::GP5 {
+            if self.song.version == GpVersion::GP5 {
                 // skip 44
-                skip(i, 44)
-            } else {
+                i = skip(i, 44)
+            }
+
+            if self.song.version > GpVersion::GP5 {
                 // skip 49
-                skip(i, 49)
+                i = skip(i, 49)
             };
 
             if self.song.version > GpVersion::GP5 {
@@ -168,6 +181,7 @@ impl MusicParser {
                 }
             } else {
                 log::debug!("channel {} not found", gm_channel_1);
+                debug_assert!(false, "channel {} not found", gm_channel_1)
             }
             Ok((i, gm_channel_1))
         }
@@ -206,7 +220,9 @@ impl MusicParser {
                     i = inner;
                     // push measure on track
                     self.song.tracks[track_index].measures.push(measure);
-                    i = skip(i, 1);
+                    if self.song.version >= GpVersion::GP5 {
+                        i = skip(i, 1);
+                    }
                 }
                 // update start with measure length
                 let measure_length = self.song.measure_headers[measure_index].length();
@@ -236,7 +252,12 @@ impl MusicParser {
                 track_index,
                 ..Default::default()
             };
-            for voice_index in 0..crate::parser::song_parser::MAX_VOICES {
+            let voice_count = if self.song.version >= GpVersion::GP5 {
+                MAX_VOICES
+            } else {
+                1
+            };
+            for voice_index in 0..voice_count {
                 // voices have the same start value
                 let beat_start = measure_start;
                 log::debug!("--------");
@@ -311,7 +332,7 @@ impl MusicParser {
             // beat chords
             if (flags & 0x02) != 0 {
                 let track = &self.song.tracks[track_index];
-                let (inner, chord) = parse_chord(track.strings.len() as u8)(i)?;
+                let (inner, chord) = parse_chord(track.strings.len() as u8, self.song.version)(i)?;
                 i = inner;
                 beat.effect.chord = Some(chord);
             }
@@ -353,11 +374,13 @@ impl MusicParser {
                 }
             }
 
-            i = skip(i, 1);
-            let (inner, read) = parse_byte(i)?;
-            i = inner;
-            if (read & 0x08) != 0 {
+            if self.song.version >= GpVersion::GP5 {
                 i = skip(i, 1);
+                let (inner, read) = parse_byte(i)?;
+                i = inner;
+                if (read & 0x08) != 0 {
+                    i = skip(i, 1);
+                }
             }
             Ok((i, beat))
         }
@@ -392,7 +415,9 @@ impl MusicParser {
             let (inner, _) = parse_signed_byte(i)?;
             i = inner;
 
-            i = skip(i, 16);
+            if self.song.version >= GpVersion::GP5 {
+                i = skip(i, 16);
+            }
 
             let (inner, (volume, pan, chorus, reverb, phaser, tremolo)) = tuple((
                 parse_signed_byte,
@@ -404,9 +429,14 @@ impl MusicParser {
             ))(i)?;
             i = inner;
 
-            let (inner, tempo_name) = parse_int_byte_sized_string(i)?;
-            log::debug!("Tempo name: {}", tempo_name);
-            i = inner;
+            let mut tempo_name: String = String::new();
+
+            if self.song.version >= GpVersion::GP5 {
+                let (inner, tempo_name_tmp) = parse_int_byte_sized_string(i)?;
+                log::debug!("Tempo name: {}", tempo_name_tmp);
+                i = inner;
+                tempo_name = tempo_name_tmp;
+            }
 
             let (inner, tempo_value) = parse_int(i)?;
             i = inner;
@@ -444,12 +474,15 @@ impl MusicParser {
                 }
             }
 
-            i = skip(i, 2);
+            i = skip(i, 1);
 
-            if self.song.version > GpVersion::GP5 {
-                let (inner, _) =
-                    tuple((parse_int_byte_sized_string, parse_int_byte_sized_string))(i)?;
-                i = inner;
+            if self.song.version >= GpVersion::GP5 {
+                i = skip(i, 1);
+                if self.song.version > GpVersion::GP5 {
+                    let (inner, _) =
+                        tuple((parse_int_byte_sized_string, parse_int_byte_sized_string))(i)?;
+                    i = inner;
+                }
             }
 
             Ok((i, ()))
@@ -512,16 +545,22 @@ impl MusicParser {
 
             // duration percent
             if (flags & 0x01) != 0 {
-                i = skip(i, 8);
+                if self.song.version >= GpVersion::GP5 {
+                    i = skip(i, 8);
+                } else {
+                    i = skip(i, 2);
+                }
             }
 
-            // swap accidentals
-            let (inner, swap) = parse_byte(i)?;
-            i = inner;
-            note.swap_accidentals = swap & 0x02 == 0x02;
+            if self.song.version >= GpVersion::GP5 {
+                // swap accidentals
+                let (inner, swap) = parse_byte(i)?;
+                i = inner;
+                note.swap_accidentals = swap & 0x02 == 0x02;
+            }
 
             if (flags & 0x08) == 0x08 {
-                let (inner, ()) = parse_note_effects(note)(i)?;
+                let (inner, ()) = parse_note_effects(note, self.song.version)(i)?;
                 i = inner;
             }
 

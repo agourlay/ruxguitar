@@ -20,17 +20,20 @@ mod tests {
         Duration, GpVersion, KeySignature, Marker, Padding, Point, TripletFeel,
     };
 
-    #[test]
-    fn parse_all_gp5_files_successfully() {
+    fn init_logger() {
         env_logger::builder()
             .is_test(true)
             .try_init()
             .unwrap_or_default();
+    }
+
+    fn parse_all_files_successfully(with_extension: &str) {
+        init_logger();
         let test_dir = std::path::Path::new("test-files");
         for entry in std::fs::read_dir(test_dir).unwrap() {
             let entry = entry.unwrap();
             let path = entry.path();
-            if path.extension().unwrap() != "gp5" {
+            if path.extension().unwrap() != with_extension {
                 continue;
             }
             let file_name = path.file_name().unwrap().to_str().unwrap();
@@ -38,6 +41,8 @@ mod tests {
             let file_path = path.to_str().unwrap();
             let song = parse_gp_file(file_path)
                 .unwrap_or_else(|err| panic!("Failed to parse file: {}\n{}", file_name, err));
+            // no empty tracks
+            assert!(!song.tracks.is_empty(), "File: {}", file_name);
             // assert global invariant across all measures
             for (t_id, t) in song.tracks.iter().enumerate() {
                 assert_eq!(
@@ -58,9 +63,10 @@ mod tests {
                         "Track:{} Measure:{} File:{}",
                         t_id, m_id, file_name
                     );
+                    let voice_count = if with_extension == "gp4" { 1 } else { 2 };
                     assert_eq!(
                         m.voices.len(),
-                        2,
+                        voice_count,
                         "Track:{} Measure:{} File:{}",
                         t_id,
                         m_id,
@@ -83,6 +89,35 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn parse_all_gp5_files_successfully() {
+        parse_all_files_successfully("gp5");
+    }
+
+    #[test]
+    fn parse_all_gp4_files_successfully() {
+        parse_all_files_successfully("gp4");
+    }
+
+    #[test]
+    fn parse_gp4_06_canon_rock() {
+        init_logger();
+        //const FILE_PATH: &str = "test-files/Lynyrd Skynyrd - Free bird.gp4";
+        const FILE_PATH: &str = "test-files/canon_rock.gp4";
+        let song = parse_gp_file(FILE_PATH).unwrap();
+        assert_eq!(song.version, GpVersion::GP4_06);
+        assert_eq!(song.tempo.value, 90);
+        assert_eq!(song.tracks.len(), 1);
+        assert_eq!(song.tracks[0].name, "\u{ad}µ\u{ad}y 1");
+        assert_eq!(song.tracks[0].number, 1);
+        assert_eq!(song.tracks[0].offset, 0);
+        assert_eq!(song.tracks[0].channel_id, 0);
+
+        // inspect headers
+        assert_eq!(song.measure_headers.len(), 220);
+        assert_eq!(song.tracks[0].measures.len(), 220);
     }
 
     #[test]

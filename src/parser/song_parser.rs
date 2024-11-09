@@ -791,7 +791,10 @@ impl Default for Track {
     }
 }
 
-pub fn parse_chord(string_count: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], Chord> {
+pub fn parse_chord(
+    string_count: u8,
+    version: GpVersion,
+) -> impl FnMut(&[u8]) -> IResult<&[u8], Chord> {
     move |i| {
         log::debug!("Parsing chords for {} strings", string_count);
         let mut i = i;
@@ -799,27 +802,58 @@ pub fn parse_chord(string_count: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], Chor
             strings: vec![-1; string_count.into()],
             ..Default::default()
         };
-        i = skip(i, 17);
-        let (inner, chord_name) = parse_byte_size_string(21)(i)?;
+        let (inner, chord_gp4_header) = parse_byte(i)?;
         i = inner;
-        chord.name = chord_name;
-        i = skip(i, 4);
-        let (inner, first_fret) = parse_int(i)?;
-        i = inner;
-        chord.first_fret = Some(first_fret as u32);
-        for c in 0..7 {
-            let (inner, fret) = parse_int(i)?;
-            if c < string_count {
-                chord.strings[c as usize] = fret as i8;
-            }
+
+        // chord header defines the version as well
+        if (chord_gp4_header & 0x01) == 0 {
+            debug_assert!(
+                version < GpVersion::GP5,
+                "Chord header is GP4 but version is {:?}",
+                version
+            );
+            log::debug!("Parsing GP4 chord");
+            let (inner, chord_name) = parse_int_byte_sized_string(i)?;
             i = inner;
+            chord.name = chord_name;
+            let (inner, first_fret) = parse_int(i)?;
+            i = inner;
+            chord.first_fret = Some(first_fret as u32);
+            if first_fret != 0 {
+                for c in 0..6 {
+                    let (inner, fret) = parse_int(i)?;
+                    if c < string_count {
+                        chord.strings[c as usize] = fret as i8;
+                    }
+                    i = inner;
+                }
+            }
+        } else {
+            i = skip(i, 16);
+            let (inner, chord_name) = parse_byte_size_string(21)(i)?;
+            i = inner;
+            chord.name = chord_name;
+            i = skip(i, 4);
+            let (inner, first_fret) = parse_int(i)?;
+            i = inner;
+            chord.first_fret = Some(first_fret as u32);
+            for c in 0..7 {
+                let (inner, fret) = parse_int(i)?;
+                if c < string_count {
+                    chord.strings[c as usize] = fret as i8;
+                }
+                i = inner;
+            }
+            i = skip(i, 32);
         }
-        i = skip(i, 32);
         Ok((i, chord))
     }
 }
 
-pub fn parse_note_effects(note: &mut Note) -> impl FnMut(&[u8]) -> IResult<&[u8], ()> + '_ {
+pub fn parse_note_effects(
+    note: &mut Note,
+    version: GpVersion,
+) -> impl FnMut(&[u8]) -> IResult<&[u8], ()> + '_ {
     move |i| {
         log::debug!("Parsing note effects");
         let mut i = i;
@@ -839,7 +873,7 @@ pub fn parse_note_effects(note: &mut Note) -> impl FnMut(&[u8]) -> IResult<&[u8]
         }
 
         if (flags1 & 0x10) == 0x10 {
-            let (inner, grace_effect) = parse_grace_effect(i)?;
+            let (inner, grace_effect) = parse_grace_effect(version)(i)?;
             i = inner;
             note.effect.grace = Some(grace_effect);
         }
@@ -857,7 +891,7 @@ pub fn parse_note_effects(note: &mut Note) -> impl FnMut(&[u8]) -> IResult<&[u8]
         }
 
         if (flags2 & 0x10) == 0x10 {
-            let (inner, harmonic_effect) = parse_harmonic_effect(i)?;
+            let (inner, harmonic_effect) = parse_harmonic_effect(version)(i)?;
             i = inner;
             note.effect.harmonic = Some(harmonic_effect);
         }
@@ -883,35 +917,61 @@ pub fn parse_trill_effect(i: &[u8]) -> IResult<&[u8], TrillEffect> {
     Ok((i, trill_effect))
 }
 
-pub fn parse_harmonic_effect(i: &[u8]) -> IResult<&[u8], HarmonicEffect> {
-    log::debug!("Parsing harmonic effect");
-    let mut i = i;
-    let mut he = HarmonicEffect::default();
-    let (inner, harmonic_type) = parse_signed_byte(i)?;
-    i = inner;
+pub fn parse_harmonic_effect(
+    version: GpVersion,
+) -> impl FnMut(&[u8]) -> IResult<&[u8], HarmonicEffect> {
+    move |i| {
+        log::debug!("Parsing harmonic effect");
+        let mut i = i;
+        let mut he = HarmonicEffect::default();
+        let (inner, harmonic_type) = parse_signed_byte(i)?;
+        i = inner;
 
-    match harmonic_type {
-        1 => he.kind = HarmonicType::Natural,
-        2 => {
-            he.kind = HarmonicType::Artificial;
-            let (inner, (semitone, accidental, octave)) =
-                tuple((parse_byte, parse_signed_byte, parse_byte))(i)?;
-            i = inner;
-            he.pitch = Some(PitchClass::from(semitone as i8, Some(accidental), None));
-            he.octave = Some(Octave::get_octave(octave));
-        }
-        3 => {
-            he.kind = HarmonicType::Tapped;
-            let (inner, fret) = parse_byte(i)?;
-            i = inner;
-            he.right_hand_fret = Some(fret as i8);
-        }
-        4 => he.kind = HarmonicType::Pinch,
-        5 => he.kind = HarmonicType::Semi,
-        _ => panic!("Cannot read harmonic type"),
-    };
-
-    Ok((i, he))
+        match harmonic_type {
+            1 => he.kind = HarmonicType::Natural,
+            2 => {
+                he.kind = HarmonicType::Artificial;
+                if version >= GpVersion::GP5 {
+                    let (inner, (semitone, accidental, octave)) =
+                        tuple((parse_byte, parse_signed_byte, parse_byte))(i)?;
+                    i = inner;
+                    he.pitch = Some(PitchClass::from(semitone as i8, Some(accidental), None));
+                    he.octave = Some(Octave::get_octave(octave));
+                }
+            }
+            3 => {
+                he.kind = HarmonicType::Tapped;
+                let (inner, fret) = parse_byte(i)?;
+                i = inner;
+                he.right_hand_fret = Some(fret as i8);
+            }
+            4 => he.kind = HarmonicType::Pinch,
+            5 => he.kind = HarmonicType::Semi,
+            15 => {
+                assert!(
+                    version < GpVersion::GP5,
+                    "Cannot read artificial harmonic type for GP4"
+                );
+                he.kind = HarmonicType::Artificial
+            }
+            17 => {
+                assert!(
+                    version < GpVersion::GP5,
+                    "Cannot read artificial harmonic type for GP4"
+                );
+                he.kind = HarmonicType::Artificial
+            }
+            22 => {
+                assert!(
+                    version < GpVersion::GP5,
+                    "Cannot read artificial harmonic type for GP4"
+                );
+                he.kind = HarmonicType::Artificial
+            }
+            x => panic!("Cannot read harmonic type {}", x),
+        };
+        Ok((i, he))
+    }
 }
 
 pub fn parse_slide_type(i: &[u8]) -> IResult<&[u8], Option<SlideType>> {
@@ -945,36 +1005,42 @@ pub fn parse_tremolo_picking(i: &[u8]) -> IResult<&[u8], TremoloPickingEffect> {
     })(i)
 }
 
-pub fn parse_grace_effect(i: &[u8]) -> IResult<&[u8], GraceEffect> {
-    log::debug!("Parsing grace effect");
-    let mut i = i;
-    let mut grace_effect = GraceEffect::default();
-    // fret
-    let (inner, fret) = parse_byte(i)?;
-    i = inner;
-    grace_effect.fret = fret as i8;
+pub fn parse_grace_effect(version: GpVersion) -> impl FnMut(&[u8]) -> IResult<&[u8], GraceEffect> {
+    move |i| {
+        log::debug!("Parsing grace effect");
+        let mut i = i;
+        let mut grace_effect = GraceEffect::default();
 
-    // velocity
-    let (inner, velocity) = parse_byte(i)?;
-    i = inner;
-    grace_effect.velocity = convert_velocity(velocity as i16);
+        // fret
+        let (inner, fret) = parse_byte(i)?;
+        i = inner;
+        grace_effect.fret = fret as i8;
 
-    // transition
-    let (inner, transition) = parse_signed_byte(i)?;
-    i = inner;
-    grace_effect.transition = GraceEffectTransition::get_grace_effect_transition(transition);
+        // velocity
+        let (inner, velocity) = parse_byte(i)?;
+        i = inner;
+        grace_effect.velocity = convert_velocity(velocity as i16);
 
-    // duration
-    let (inner, duration) = parse_byte(i)?;
-    i = inner;
-    grace_effect.duration = duration;
+        // transition
+        let (inner, transition) = parse_signed_byte(i)?;
+        i = inner;
+        grace_effect.transition = GraceEffectTransition::get_grace_effect_transition(transition);
 
-    let (inner, flags) = parse_byte(i)?;
-    i = inner;
-    grace_effect.is_dead = (flags & 0x01) == 0x01;
-    grace_effect.is_on_beat = (flags & 0x02) == 0x02;
+        // duration
+        let (inner, duration) = parse_byte(i)?;
+        i = inner;
+        grace_effect.duration = duration;
 
-    Ok((i, grace_effect))
+        if version >= GpVersion::GP5 {
+            // flags
+            let (inner, flags) = parse_byte(i)?;
+            i = inner;
+            grace_effect.is_dead = (flags & 0x01) == 0x01;
+            grace_effect.is_on_beat = (flags & 0x02) == 0x02;
+        }
+
+        Ok((i, grace_effect))
+    }
 }
 
 pub fn parse_beat_effects<'a>(
@@ -1089,8 +1155,8 @@ pub fn parse_duration(flags: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], Duration
         let mut d = Duration::default();
         let (inner, value) = parse_signed_byte(i)?;
         i = inner;
-        log::debug!("Duration value: {}", value);
         d.value = (2_u32.pow((value + 4) as u32) / 4) as u16;
+        log::debug!("Duration value: {}", d.value);
         d.dotted = flags & 0x01 != 0;
 
         if (flags & 0x20) == 0x20 {
@@ -1149,6 +1215,7 @@ pub fn parse_triplet_feel(i: &[u8]) -> IResult<&[u8], TripletFeel> {
 pub fn parse_measure_header(
     previous_time_signature: TimeSignature,
     song_tempo: i32,
+    song_version: GpVersion,
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], MeasureHeader> {
     move |i: &[u8]| {
         log::debug!("Parsing measure header");
@@ -1214,38 +1281,43 @@ pub fn parse_measure_header(
             mh.key_signature.is_minor = is_minor != 0;
         }
 
-        if (flags & 0x01) != 0 || (flags & 0x02) != 0 {
-            log::debug!("Skip 4");
-            i = skip(i, 4);
-        }
+        if song_version >= GpVersion::GP5 {
+            if (flags & 0x01) != 0 || (flags & 0x02) != 0 {
+                log::debug!("Skip 4");
+                i = skip(i, 4);
+            }
 
-        if (flags & 0x10) == 0 {
-            log::debug!("Skip one");
-            i = skip(i, 1);
-        }
+            if (flags & 0x10) == 0 {
+                log::debug!("Skip one");
+                i = skip(i, 1);
+            }
 
-        let (inner, triplet_feel) = parse_triplet_feel(i)?;
-        mh.triplet_feel = triplet_feel;
+            let (inner, triplet_feel) = parse_triplet_feel(i)?;
+            i = inner;
+            mh.triplet_feel = triplet_feel;
+        }
         log::debug!("{:?}", mh);
 
-        Ok((inner, mh))
+        Ok((i, mh))
     }
 }
 
 pub fn parse_measure_headers(
     measure_count: i32,
     song_tempo: i32,
+    version: GpVersion,
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], Vec<MeasureHeader>> {
     move |i: &[u8]| {
         log::debug!("Parsing {} measure headers", measure_count);
         // parse first header to account for the byte in between each header
-        let (mut i, first_header) = parse_measure_header(TimeSignature::default(), song_tempo)(i)?;
+        let (mut i, first_header) =
+            parse_measure_header(TimeSignature::default(), song_tempo, version)(i)?;
         let mut previous_time_signature = first_header.time_signature.clone();
         let mut headers = vec![first_header];
         for _ in 1..measure_count {
             let (rest, header) = preceded(
-                parse_byte,
-                parse_measure_header(previous_time_signature, song_tempo),
+                cond(version >= GpVersion::GP5, parse_byte),
+                parse_measure_header(previous_time_signature, song_tempo, version),
             )(i)?;
             // propagate time signature
             previous_time_signature = header.time_signature.clone();

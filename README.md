@@ -11,7 +11,7 @@ The design of the application is described in details in the blog article "[Play
 
 ## Limitations
 
-- supports only gp5 files
+- supports only gp5 & gp4 files
 
 ## Usage
 
