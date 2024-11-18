@@ -104,7 +104,6 @@ mod tests {
     #[test]
     fn parse_gp4_06_canon_rock() {
         init_logger();
-        //const FILE_PATH: &str = "test-files/Lynyrd Skynyrd - Free bird.gp4";
         const FILE_PATH: &str = "test-files/canon_rock.gp4";
         let song = parse_gp_file(FILE_PATH).unwrap();
         assert_eq!(song.version, GpVersion::GP4_06);
