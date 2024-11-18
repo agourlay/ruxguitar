@@ -228,8 +228,8 @@ impl MidiBuilder {
             };
             let on_beat_duration = *start - grace_length;
             if grace.is_on_beat || on_beat_duration < QUARTER_TIME as usize {
-                *start += grace_length;
-                *duration -= grace_length;
+                *start = start.saturating_add(grace_length);
+                *duration = duration.saturating_sub(grace_length);
             }
             self.add_note(
                 track_id,
