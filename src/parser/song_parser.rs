@@ -921,12 +921,11 @@ pub fn parse_harmonic_effect(
     version: GpVersion,
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], HarmonicEffect> {
     move |i| {
-        log::debug!("Parsing harmonic effect");
         let mut i = i;
         let mut he = HarmonicEffect::default();
         let (inner, harmonic_type) = parse_signed_byte(i)?;
         i = inner;
-
+        log::debug!("Parsing harmonic effect {}", harmonic_type);
         match harmonic_type {
             1 => he.kind = HarmonicType::Natural,
             2 => {
@@ -941,9 +940,11 @@ pub fn parse_harmonic_effect(
             }
             3 => {
                 he.kind = HarmonicType::Tapped;
-                let (inner, fret) = parse_byte(i)?;
-                i = inner;
-                he.right_hand_fret = Some(fret as i8);
+                if version >= GpVersion::GP5 {
+                    let (inner, fret) = parse_byte(i)?;
+                    i = inner;
+                    he.right_hand_fret = Some(fret as i8);
+                }
             }
             4 => he.kind = HarmonicType::Pinch,
             5 => he.kind = HarmonicType::Semi,
