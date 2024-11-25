@@ -154,7 +154,7 @@ impl MidiBuilder {
         assert!(channel_id < 16);
         let track_offset = track.offset;
         let beat_duration = beat.duration.time() as usize;
-        for (note_offset, note) in beat.notes.iter().enumerate() {
+        for note in &beat.notes {
             if note.kind != NoteType::Tie {
                 let (string_id, string_tuning) = strings[note.string as usize - 1];
                 assert_eq!(string_id, note.string as i32);
@@ -163,8 +163,10 @@ impl MidiBuilder {
                 let initial_key = track_offset + note.value as i32 + string_tuning;
 
                 // surrounding notes on the same string on the previous & next beat
-                let previous_note = previous_beat.and_then(|b| b.notes.get(note_offset));
-                let next_note = next_beat.and_then(|b| b.notes.get(note_offset));
+                let previous_note =
+                    previous_beat.and_then(|b| b.notes.iter().find(|n| n.string == note.string));
+                let next_note =
+                    next_beat.and_then(|b| b.notes.iter().find(|n| n.string == note.string));
 
                 // apply effects on duration
                 let mut duration = apply_duration_effect(note, next_note, tempo, beat_duration);
