@@ -706,13 +706,19 @@ mod tests {
     use crate::audio::midi_event::MidiEventType;
     use crate::parser::song_parser_tests::parse_gp_file;
     use std::collections::HashSet;
+    use std::io::Write;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn test_midi_events_for_all_files() {
-        let test_dir = std::path::Path::new("test-files");
+        let test_dir = Path::new("test-files");
+        let gold_dir = Path::new("test-files/gold-generated-midi");
         for entry in std::fs::read_dir(test_dir).unwrap() {
             let entry = entry.unwrap();
             let path = entry.path();
+            if path.is_dir() {
+                continue;
+            }
             let extension = path.extension().unwrap();
             if extension != "gp5" && extension != "gp4" {
                 continue;
@@ -730,6 +736,39 @@ mod tests {
             // assert sorted by tick
             assert!(events.windows(2).all(|w| w[0].tick <= w[1].tick));
             assert_eq!(events[0].tick, 1);
+
+            // check against golden file
+            let gold_file_path = gold_dir.join(format!("{}.txt", file_name));
+            if !gold_file_path.exists() {
+                // create gold file
+                let mut file = std::fs::File::create(&gold_file_path).unwrap();
+                for event in &events {
+                    writeln!(file, "{}", print_event(event)).unwrap();
+                }
+            }
+
+            // verify against gold file
+            validate_gold_rendered_result(&events, gold_file_path);
+        }
+    }
+
+    fn print_event(event: &MidiEvent) -> String {
+        format!("{:?} {:?} {:?}", event.tick, event.event, event.track)
+    }
+
+    fn validate_gold_rendered_result(events: &[MidiEvent], gold_path: PathBuf) {
+        let gold = std::fs::read_to_string(gold_path).expect("gold file not found!");
+        let mut expected_lines = events.iter().map(print_event);
+        for (i1, l1) in gold.lines().enumerate() {
+            let l2 = expected_lines.next().unwrap();
+            if l1.trim_end() != l2.trim_end() {
+                println!("## GOLD line {} ##", i1 + 1);
+                println!("{}", l1.trim_end());
+                println!("## ACTUAL ##");
+                println!("{}", l2.trim_end());
+                println!("#####");
+                assert_eq!(l1, l2);
+            }
         }
     }
 
