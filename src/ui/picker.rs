@@ -13,6 +13,7 @@ pub async fn open_file_dialog() -> Result<(Vec<u8>, String), FilePickerError> {
     let picked_file = rfd::AsyncFileDialog::new()
         .add_filter("Guitar Pro files", &["gp5", "gp4"])
         .set_title("Pick a GP file")
+        //.set_directory() TODO remember last directory and set it here
         .pick_file()
         .await
         .ok_or(FilePickerError::DialogClosed)?;
