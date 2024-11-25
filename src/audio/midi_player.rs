@@ -280,7 +280,7 @@ fn new_output_stream(
                 let last_tick = sequencer_guard.get_last_tick();
                 if !events.is_empty() {
                     log::debug!(
-                        "Increase {} ticks [{} -> {}] ({} events)",
+                        "---> Increase {} ticks [{} -> {}] ({} events)",
                         tick - last_tick,
                         last_tick,
                         tick,
@@ -303,7 +303,8 @@ fn new_output_stream(
                                 }
                             }
                             log::debug!(
-                                "Note on: channel={}, key={}, velocity={}",
+                                "[{}] Note on: channel={}, key={}, velocity={}",
+                                midi_event.tick,
                                 channel,
                                 key,
                                 velocity
@@ -311,7 +312,12 @@ fn new_output_stream(
                             synthesizer_guard.note_on(channel, key, velocity as i32);
                         }
                         MidiEventType::NoteOff(channel, key) => {
-                            log::debug!("Note off: channel={}, key={}", channel, key);
+                            log::debug!(
+                                "[{}] Note off: channel={}, key={}",
+                                midi_event.tick,
+                                channel,
+                                key
+                            );
                             synthesizer_guard.note_off(channel, key);
                         }
                         MidiEventType::TempoChange(tempo) => {
@@ -320,7 +326,8 @@ fn new_output_stream(
                         }
                         MidiEventType::MidiMessage(channel, command, data1, data2) => {
                             log::debug!(
-                                "Midi message: channel={}, command={}, data1={}, data2={}",
+                                "[{}] Midi message: channel={}, command={}, data1={}, data2={}",
+                                midi_event.tick,
                                 channel,
                                 command,
                                 data1,
