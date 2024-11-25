@@ -1030,4 +1030,99 @@ mod tests {
             MidiEventType::MidiMessage(2, 224, 0, 64)
         ));
     }
+
+    #[test]
+    fn test_midi_events_for_bleed() {
+        const FILE_PATH: &str = "test-files/Meshuggah - Bleed.gp5";
+        let song = parse_gp_file(FILE_PATH).unwrap();
+        let song = Rc::new(song);
+        let builder = MidiBuilder::new();
+        let events = builder.build_for_song(&song);
+
+        //assert_eq!(events.len(), 44973);
+        assert_eq!(events[0].tick, 1);
+        assert_eq!(events.iter().last().unwrap().tick, 795840);
+
+        // assert number of tracks
+        let track_count = song.tracks.len();
+        let unique_tracks: HashSet<_> = events.iter().map(|event| event.track).collect();
+        assert_eq!(unique_tracks.len(), track_count);
+
+        // skip MIDI program messages
+        let rhythm_track_events: Vec<_> = events
+            .iter()
+            .filter(|e| e.track == Some(0))
+            .skip(6)
+            .collect();
+
+        // print 60 first for debugging
+        // for (i, event) in rhythm_track_events.iter().enumerate().take(100) {
+        //     eprintln!("{} {:?}", i, event);
+        // }
+
+        let event = &rhythm_track_events[44];
+        assert_eq!(event.tick, 4800);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOn(0, 39, 95)));
+
+        let event = &rhythm_track_events[45];
+        assert_eq!(event.tick, 4915);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOff(0, 39)));
+
+        let event = &rhythm_track_events[46];
+        assert_eq!(event.tick, 5040);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOn(0, 39, 95)));
+
+        let event = &rhythm_track_events[47];
+        assert_eq!(event.tick, 5155);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOff(0, 39)));
+
+        let event = &rhythm_track_events[48];
+        assert_eq!(event.tick, 5280);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOn(0, 39, 95)));
+
+        let event = &rhythm_track_events[49];
+        assert_eq!(event.tick, 5395);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOff(0, 39)));
+
+        let event = &rhythm_track_events[50];
+        assert_eq!(event.tick, 5400);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOn(0, 39, 95)));
+
+        let event = &rhythm_track_events[51];
+        assert_eq!(event.tick, 5515);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOff(0, 39)));
+
+        let event = &rhythm_track_events[52];
+        assert_eq!(event.tick, 5520);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOn(0, 39, 95)));
+
+        let event = &rhythm_track_events[50];
+        assert_eq!(event.tick, 5400);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOn(0, 39, 95)));
+
+        let event = &rhythm_track_events[51];
+        assert_eq!(event.tick, 5515);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOff(0, 39)));
+
+        let event = &rhythm_track_events[52];
+        assert_eq!(event.tick, 5520);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOn(0, 39, 95)));
+
+        let event = &rhythm_track_events[53];
+        assert_eq!(event.tick, 5635);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOff(0, 39)));
+    }
 }

@@ -17,7 +17,8 @@ pub fn parse_gp_file(file_path: &str) -> Result<Song, RuxError> {
 mod tests {
     use super::*;
     use crate::parser::song_parser::{
-        Duration, GpVersion, KeySignature, Marker, Padding, Point, TripletFeel,
+        BendEffect, BendPoint, Duration, GpVersion, KeySignature, Marker, NoteType, Padding, Point,
+        TripletFeel,
     };
 
     fn init_logger() {
@@ -33,6 +34,9 @@ mod tests {
         for entry in std::fs::read_dir(test_dir).unwrap() {
             let entry = entry.unwrap();
             let path = entry.path();
+            if path.is_dir() {
+                continue;
+            }
             if path.extension().unwrap() != with_extension {
                 continue;
             }
@@ -310,6 +314,322 @@ mod tests {
         assert_eq!(song.midi_channels[3].channel_id, 3);
         assert_eq!(song.midi_channels[3].effect_channel_id, 0);
         assert_eq!(song.midi_channels[3].instrument, 30);
+    }
+
+    #[test]
+    fn parse_gp5_10_bleed() {
+        const FILE_PATH: &str = "test-files/Meshuggah - Bleed.gp5";
+        let song = parse_gp_file(FILE_PATH).unwrap();
+        assert_eq!(song.version, GpVersion::GP5_10);
+        assert_eq!(song.song_info.name, "Bleed");
+
+        assert_eq!(song.tracks.len(), 7);
+        assert_eq!(song.tracks[0].name, "Fredrik Thordendal (Guitar 1)");
+        assert_eq!(song.tracks[1].name, "Marten Hagstrom (Guitar 2)");
+        assert_eq!(song.tracks[2].name, "Dick Lovgren (Bass)");
+        assert_eq!(song.tracks[3].name, "Tomas Haake (Drums)");
+        assert_eq!(song.tracks[4].name, "Fredrik Thodendal (Solo/Atmospheric)");
+        assert_eq!(song.tracks[5].name, "(bass tone)");
+        assert_eq!(song.tracks[6].name, "(more atmosphere)");
+
+        // inspect headers
+        assert_eq!(song.measure_headers.len(), 209);
+        assert_eq!(song.tracks[0].measures.len(), 209);
+
+        let header = &song.measure_headers[0];
+        assert_eq!(header.start, 960);
+        assert_eq!(header.tempo.value, 115);
+        assert_eq!(header.time_signature.numerator, 4);
+        assert_eq!(
+            header.time_signature.denominator,
+            Duration {
+                value: 4,
+                dotted: false,
+                double_dotted: false,
+                tuplet_enters: 1,
+                tuplet_times: 1,
+            }
+        );
+        assert_eq!(header.time_signature.denominator.time(), 960);
+        // In a 4/4 time signature, the total measure duration is the equivalent of 4 quarter notes.
+        // In this case, the duration of a quarter note is 960 ticks.
+        // Therefore, the total measure duration is 3840 ticks.
+        // 4*960 = 3840
+        assert_eq!(header.length(), 3840);
+        assert_eq!(
+            header.marker,
+            Some(Marker {
+                title: "\u{5}BLEED".to_string(),
+                color: 0
+            })
+        );
+        assert!(!header.repeat_open);
+        assert_eq!(header.repeat_close, 0);
+        assert_eq!(header.triplet_feel, TripletFeel::None);
+
+        let header = &song.measure_headers[1];
+        // 3840 + 960 (offset of previous measure) = 4800
+        assert_eq!(header.start, 4800);
+        assert_eq!(header.tempo.value, 115);
+        assert_eq!(header.time_signature.numerator, 4);
+        assert_eq!(header.length(), 3840);
+        assert_eq!(header.marker, None);
+        assert!(!header.repeat_open);
+        assert_eq!(header.repeat_close, 0);
+        assert_eq!(header.triplet_feel, TripletFeel::None);
+
+        let header = &song.measure_headers[2];
+        assert_eq!(header.start, 8640);
+        assert_eq!(header.tempo.value, 115);
+        assert_eq!(header.time_signature.numerator, 4);
+        assert_eq!(header.length(), 3840);
+        assert_eq!(header.marker, None);
+        assert!(!header.repeat_open);
+        assert_eq!(header.repeat_close, 0);
+        assert_eq!(header.triplet_feel, TripletFeel::None);
+
+        // second measure with the low bends
+        let measure = &song.tracks[0].measures[1];
+        assert_eq!(measure.track_index, 0);
+        assert_eq!(measure.voices.len(), 2);
+
+        assert_eq!(measure.voices[1].beats.len(), 1);
+        assert_eq!(measure.voices[1].beats[0].notes.len(), 0);
+        assert_eq!(measure.voices[1].beats[0].start, 4800);
+        assert!(measure.voices[1].beats[0].empty);
+
+        assert_eq!(measure.voices[0].beats.len(), 21);
+
+        assert_eq!(measure.voices[0].beats[0].start, 4800);
+        assert_eq!(measure.voices[0].beats[0].duration.time(), 240);
+        assert!(!measure.voices[0].beats[0].empty);
+        assert_eq!(measure.voices[0].beats[0].notes.len(), 1);
+
+        assert_eq!(measure.voices[0].beats[1].start, 5040);
+        assert_eq!(measure.voices[0].beats[1].duration.time(), 240);
+        assert!(!measure.voices[0].beats[1].empty);
+        assert_eq!(measure.voices[0].beats[1].notes.len(), 1);
+
+        assert_eq!(measure.voices[0].beats[2].start, 5280);
+        assert_eq!(measure.voices[0].beats[2].duration.time(), 120);
+        assert!(!measure.voices[0].beats[2].empty);
+        assert_eq!(measure.voices[0].beats[2].notes.len(), 1);
+
+        assert_eq!(measure.voices[0].beats[3].start, 5400);
+        assert_eq!(measure.voices[0].beats[3].duration.time(), 120);
+        assert!(!measure.voices[0].beats[3].empty);
+        assert_eq!(measure.voices[0].beats[3].notes.len(), 1);
+
+        assert_eq!(measure.voices[0].beats[4].start, 5520);
+        assert_eq!(measure.voices[0].beats[4].duration.time(), 240);
+        assert_eq!(
+            measure.voices[0].beats[4].duration,
+            Duration {
+                value: 16,
+                dotted: false,
+                double_dotted: false,
+                tuplet_enters: 1,
+                tuplet_times: 1
+            }
+        );
+        assert!(!measure.voices[0].beats[4].empty);
+        assert_eq!(measure.voices[0].beats[4].notes.len(), 1);
+        let note = &measure.voices[0].beats[4].notes[0];
+        assert_eq!(note.value, 5);
+        assert_eq!(note.string, 6);
+        assert_eq!(note.effect.bend, None);
+        assert_eq!(note.velocity, 95);
+        assert_eq!(note.kind, NoteType::Normal);
+        assert!(note.effect.palm_mute);
+
+        assert_eq!(measure.voices[0].beats[5].start, 5760);
+        assert_eq!(measure.voices[0].beats[5].duration.time(), 240);
+        assert_eq!(
+            measure.voices[0].beats[5].duration,
+            Duration {
+                value: 16,
+                dotted: false,
+                double_dotted: false,
+                tuplet_enters: 1,
+                tuplet_times: 1
+            }
+        );
+        assert!(!measure.voices[0].beats[5].empty);
+        assert_eq!(measure.voices[0].beats[5].notes.len(), 1);
+        let note = &measure.voices[0].beats[5].notes[0];
+        assert_eq!(note.value, 5);
+        assert_eq!(note.string, 6);
+        assert_eq!(note.velocity, 95);
+        assert_eq!(note.kind, NoteType::Normal);
+        assert!(note.effect.palm_mute);
+        assert_eq!(
+            note.effect.bend,
+            Some(BendEffect {
+                points: vec![
+                    BendPoint {
+                        position: 0,
+                        value: 0
+                    },
+                    BendPoint {
+                        position: 12,
+                        value: 1
+                    }
+                ]
+            })
+        );
+
+        assert_eq!(measure.voices[0].beats[6].start, 6000);
+        assert_eq!(measure.voices[0].beats[6].duration.time(), 120);
+        assert_eq!(
+            measure.voices[0].beats[6].duration,
+            Duration {
+                value: 32,
+                dotted: false,
+                double_dotted: false,
+                tuplet_enters: 1,
+                tuplet_times: 1
+            }
+        );
+        assert!(!measure.voices[0].beats[6].empty);
+        assert_eq!(measure.voices[0].beats[6].notes.len(), 1);
+        let note = &measure.voices[0].beats[6].notes[0];
+        assert_eq!(note.value, 5);
+        assert_eq!(note.string, 6);
+        assert_eq!(note.velocity, 95);
+        assert_eq!(note.kind, NoteType::Normal);
+        assert!(note.effect.palm_mute);
+        assert_eq!(
+            note.effect.bend,
+            Some(BendEffect {
+                points: vec![
+                    BendPoint {
+                        position: 0,
+                        value: 1
+                    },
+                    BendPoint {
+                        position: 12,
+                        value: 1
+                    }
+                ]
+            })
+        );
+
+        assert_eq!(measure.voices[0].beats[7].start, 6120);
+        assert_eq!(measure.voices[0].beats[7].duration.time(), 120);
+        assert!(!measure.voices[0].beats[7].empty);
+        assert_eq!(measure.voices[0].beats[7].notes.len(), 1);
+        let note = &measure.voices[0].beats[7].notes[0];
+        assert_eq!(note.value, 5);
+        assert_eq!(note.string, 6);
+        assert_eq!(note.velocity, 95);
+        assert_eq!(note.kind, NoteType::Normal);
+        assert!(note.effect.palm_mute);
+        assert_eq!(
+            note.effect.bend,
+            Some(BendEffect {
+                points: vec![
+                    BendPoint {
+                        position: 0,
+                        value: 1
+                    },
+                    BendPoint {
+                        position: 3,
+                        value: 1
+                    },
+                    BendPoint {
+                        position: 12,
+                        value: 1
+                    }
+                ]
+            })
+        );
+
+        assert_eq!(measure.voices[0].beats[8].start, 6240);
+        assert_eq!(measure.voices[0].beats[8].duration.time(), 240);
+        assert!(!measure.voices[0].beats[8].empty);
+        assert_eq!(measure.voices[0].beats[8].notes.len(), 1);
+        let note = &measure.voices[0].beats[8].notes[0];
+        assert_eq!(note.value, 5);
+        assert_eq!(note.string, 6);
+        assert_eq!(note.velocity, 95);
+        assert_eq!(note.kind, NoteType::Normal);
+        assert!(note.effect.palm_mute);
+        assert_eq!(
+            note.effect.bend,
+            Some(BendEffect {
+                points: vec![
+                    BendPoint {
+                        position: 0,
+                        value: 1
+                    },
+                    BendPoint {
+                        position: 12,
+                        value: 1
+                    }
+                ]
+            })
+        );
+
+        assert_eq!(measure.voices[0].beats[9].start, 6480);
+        assert_eq!(measure.voices[0].beats[9].duration.time(), 240);
+        assert!(!measure.voices[0].beats[9].empty);
+        assert_eq!(measure.voices[0].beats[9].notes.len(), 1);
+        let note = &measure.voices[0].beats[9].notes[0];
+        assert_eq!(note.value, 5);
+        assert_eq!(note.string, 6);
+        assert_eq!(note.velocity, 95);
+        assert_eq!(note.kind, NoteType::Normal);
+        assert!(note.effect.palm_mute);
+        assert_eq!(
+            note.effect.bend,
+            Some(BendEffect {
+                points: vec![
+                    BendPoint {
+                        position: 0,
+                        value: 1
+                    },
+                    BendPoint {
+                        position: 3,
+                        value: 1
+                    },
+                    BendPoint {
+                        position: 12,
+                        value: 1
+                    }
+                ]
+            })
+        );
+
+        assert_eq!(measure.voices[0].beats[10].start, 6720);
+        assert_eq!(measure.voices[0].beats[10].start, 6720);
+        assert_eq!(measure.voices[0].beats[10].duration.time(), 120);
+        assert!(!measure.voices[0].beats[10].empty);
+        assert_eq!(measure.voices[0].beats[10].notes.len(), 1);
+        let note = &measure.voices[0].beats[10].notes[0];
+        assert_eq!(note.value, 5);
+        assert_eq!(note.string, 6);
+        assert_eq!(note.velocity, 95);
+        assert_eq!(note.kind, NoteType::Normal);
+        assert!(note.effect.palm_mute);
+        assert_eq!(
+            note.effect.bend,
+            Some(BendEffect {
+                points: vec![
+                    BendPoint {
+                        position: 0,
+                        value: 1
+                    },
+                    BendPoint {
+                        position: 3,
+                        value: 1
+                    },
+                    BendPoint {
+                        position: 12,
+                        value: 1
+                    }
+                ]
+            })
+        );
     }
 
     #[test]
