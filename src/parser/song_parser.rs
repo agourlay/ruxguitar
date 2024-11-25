@@ -1111,8 +1111,8 @@ pub fn parse_bend_effect(i: &[u8]) -> IResult<&[u8], BendEffect> {
             bend_position as f32 * BEND_EFFECT_MAX_POSITION_LENGTH / GP_BEND_POSITION;
         let point_value = bend_value as f32 * SEMITONE_LENGTH / GP_BEND_SEMITONE;
         bend_effect.points.push(BendPoint {
-            position: point_position as u8,
-            value: point_value as i8,
+            position: point_position.round() as u8,
+            value: point_value.round() as i8,
         });
     }
     Ok((i, bend_effect))
@@ -1131,8 +1131,8 @@ pub fn parse_tremolo_bar(i: &[u8]) -> IResult<&[u8], TremoloBarEffect> {
         let point_position = position as f32 * BEND_EFFECT_MAX_POSITION_LENGTH / GP_BEND_POSITION;
         let point_value = value as f32 / GP_BEND_SEMITONE * 2.0f32;
         tremolo_bar_effect.points.push(BendPoint {
-            position: point_position as u8,
-            value: point_value as i8,
+            position: point_position.round() as u8,
+            value: point_value.round() as i8,
         });
     }
     Ok((i, tremolo_bar_effect))
