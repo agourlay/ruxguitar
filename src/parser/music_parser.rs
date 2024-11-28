@@ -23,7 +23,7 @@ impl MusicParser {
         std::mem::take(&mut self.song)
     }
 
-    pub fn parse_music_data<'a>(&'a mut self, i: &'a [u8]) -> IResult<&[u8], ()> {
+    pub fn parse_music_data<'a>(&'a mut self, i: &'a [u8]) -> IResult<&'a [u8], ()> {
         let mut i = i;
         let song_version = self.song.version;
 

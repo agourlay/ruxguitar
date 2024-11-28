@@ -1,3 +1,4 @@
+/// Thanks to `TuxGuitar` for the reference implementation in `MidiSequenceParser.java`
 use crate::audio::midi_event::MidiEvent;
 use crate::audio::FIRST_TICK;
 use crate::parser::song_parser::{
@@ -6,8 +7,6 @@ use crate::parser::song_parser::{
     VELOCITY_INCREMENT,
 };
 use std::rc::Rc;
-
-/// Thanks to `TuxGuitar` for the reference implementation in `MidiSequenceParser.java`
 
 const DEFAULT_DURATION_DEAD: i32 = 30;
 const DEFAULT_DURATION_PM: i32 = 60;
