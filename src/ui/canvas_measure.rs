@@ -528,7 +528,10 @@ fn note_value(note: &Note) -> String {
                 note.value.to_string()
             }
         }
-        NoteType::Tie => String::new(),
+        NoteType::Tie => {
+            // https://unicodeplus.com/U+2040
+            std::char::from_u32(0x2040).unwrap().into()
+        }
         NoteType::Dead => "x".to_string(),
         NoteType::Unknown(i) => {
             log::warn!("NoteType Unknown({})", i);
