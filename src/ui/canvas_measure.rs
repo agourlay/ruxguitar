@@ -380,8 +380,12 @@ fn draw_beat(
         frame.fill_text(note_effect_text);
     };
 
+    // Annotate note effect above (same position for all notes)
+    let mut beat_annotations = Vec::new();
+
     // draw notes for beat
     for note in &beat.notes {
+        beat_annotations.extend(above_note_effect_annotation(&note.effect));
         draw_note(
             frame,
             measure_start_y,
@@ -390,6 +394,23 @@ fn draw_beat(
             note,
             beat_color,
         );
+    }
+
+    // merge and display beat annotations
+    if !beat_annotations.is_empty() {
+        beat_annotations.sort_unstable();
+        beat_annotations.dedup();
+        let merged_annotations = beat_annotations.join("\n");
+        let y_position = NOTE_EFFECT_ANNOTATION_Y - 4.0 * (beat_annotations.len() - 1) as f32;
+        let note_effect_text = Text {
+            shaping: Advanced, // required for printing unicode
+            content: merged_annotations,
+            color: Color::WHITE,
+            size: 9.0.into(),
+            position: Point::new(beat_position_x - 3.0, y_position),
+            ..Text::default()
+        };
+        frame.fill_text(note_effect_text);
     }
 }
 
@@ -401,21 +422,6 @@ fn draw_note(
     note: &Note,
     beat_color: Color,
 ) {
-    // Annotate note effect above (same position for all notes)
-    let annotations = above_note_effect_annotation(&note.effect);
-    if !annotations.is_empty() {
-        let merged_annotations = annotations.join("\n");
-        let y_position = NOTE_EFFECT_ANNOTATION_Y - 4.0 * (annotations.len() - 1) as f32;
-        let note_effect_text = Text {
-            content: merged_annotations,
-            color: Color::WHITE,
-            size: 9.0.into(),
-            position: Point::new(beat_position_x - 3.0, y_position),
-            ..Text::default()
-        };
-        frame.fill_text(note_effect_text);
-    }
-
     // note label (pushed down on the right string)
     let note_label = note_value(note);
     let local_beat_position_y = (note.string as f32 - 1.0) * STRING_LINE_HEIGHT;
@@ -423,6 +429,7 @@ fn draw_note(
     let note_position_x = beat_position_x + 3.0 - note_label.chars().count() as f32 / 2.0;
     let note_position_y = measure_start_y + local_beat_position_y - 5.0;
     let note_text = Text {
+        shaping: Advanced, // required for printing unicode
         content: note_label,
         color: beat_color,
         size: 10.0.into(),
