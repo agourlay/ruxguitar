@@ -1,5 +1,7 @@
 use iced::widget::{column, container, horizontal_space, pick_list, row, text};
-use iced::{keyboard, stream, window, Alignment, Element, Size, Subscription, Task, Theme};
+use iced::{
+    keyboard, stream, window, Alignment, Border, Color, Element, Size, Subscription, Task, Theme,
+};
 use std::borrow::Cow;
 use std::fmt::Display;
 
@@ -424,6 +426,15 @@ impl RuxApplication {
         ]
         .spacing(10)
         .align_y(Alignment::Center);
+
+        let controls = container(controls)
+            .padding(10)
+            .style(|_theme| container::Style {
+                border: Border::default()
+                    .color(Color::from_rgb8(0x40, 0x44, 0x4B)) // gray
+                    .width(1),
+                ..Default::default()
+            });
 
         let status = row![
             text(if let Some(song) = &self.song_info {
