@@ -72,6 +72,7 @@ impl MidiBuilder {
         let strings = &track.strings;
         let mut prev_tempo = song_tempo;
         assert_eq!(track.measures.len(), measure_headers.len());
+        let mut uses_triplet_feel = false;
         for (measure, measure_header) in track.measures.iter().zip(measure_headers) {
             // add song info events once for all tracks
             if track_id == 0 {
@@ -90,7 +91,13 @@ impl MidiBuilder {
                 measure_header,
                 midi_channel,
                 strings,
-            )
+            );
+            if measure_header.triplet_feel != TripletFeel::None {
+                uses_triplet_feel = true;
+            }
+        }
+        if uses_triplet_feel {
+            log::warn!("Triplet feel not supported on track {track_id}");
         }
     }
 
@@ -142,9 +149,6 @@ impl MidiBuilder {
         next_beat: Option<&Beat>,
         strings: &[(i32, i32)],
     ) {
-        if measure_header.triplet_feel != TripletFeel::None {
-            log::warn!("Triplet feel not supported");
-        }
         let _stroke = &beat.effect.stroke;
         let mut start = beat.start as usize;
         let channel_id = midi_channel.channel_id;
@@ -157,9 +161,6 @@ impl MidiBuilder {
             if note.kind != NoteType::Tie {
                 let (string_id, string_tuning) = strings[note.string as usize - 1];
                 assert_eq!(string_id, note.string as i32);
-
-                // compute key without effect
-                let initial_key = track_offset + note.value as i32 + string_tuning;
 
                 // surrounding notes on the same string on the previous & next beat
                 let previous_note =
@@ -177,13 +178,14 @@ impl MidiBuilder {
                 // apply effects on key
                 if let Some(key) = self.add_key_effect(
                     track_id,
+                    track_offset,
+                    string_tuning,
                     &mut start,
                     &mut duration,
                     tempo,
                     note,
                     next_note,
                     next_beat,
-                    initial_key,
                     velocity,
                     midi_channel,
                 ) {
@@ -197,18 +199,22 @@ impl MidiBuilder {
     fn add_key_effect(
         &mut self,
         track_id: usize,
+        track_offset: i32,
+        string_tuning: i32,
         start: &mut usize,
         duration: &mut usize,
         tempo: i32,
         note: &Note,
         next_note: Option<&Note>,
         next_beat: Option<&Beat>,
-        initial_key: i32,
         velocity: i16,
         midi_channel: &MidiChannel,
     ) -> Option<i32> {
         let channel_id = midi_channel.channel_id as i32;
         let is_percussion = midi_channel.is_percussion();
+
+        // compute key without effect
+        let initial_key = track_offset + note.value as i32 + string_tuning;
 
         // key with effect
         let mut key = initial_key;
@@ -229,7 +235,7 @@ impl MidiBuilder {
 
         // grace note
         if let Some(grace) = &note.effect.grace {
-            let grace_key = initial_key + grace.fret as i32;
+            let grace_key = track_offset + grace.fret as i32 + string_tuning;
             let grace_length = grace.duration_time() as usize;
             let grace_velocity = grace.velocity;
             let grace_duration = if grace.is_dead {
@@ -255,7 +261,7 @@ impl MidiBuilder {
         // trill
         if let Some(trill) = &note.effect.trill {
             if !is_percussion {
-                let trill_key = trill.fret as i32 + initial_key - note.value as i32;
+                let trill_key = track_offset + trill.fret as i32 + string_tuning;
                 let mut trill_length = trill.duration.time() as usize;
 
                 let trill_tick_limit = *start + *duration;
