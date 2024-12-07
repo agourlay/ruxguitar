@@ -214,7 +214,17 @@ impl MidiBuilder {
         let mut key = initial_key;
 
         if note.effect.fade_in {
-            // TODO fade_in
+            let mut expression = 31;
+            let expression_increment = 1;
+            let mut tick = *start;
+            let tick_increment = *duration / ((127 - expression) / expression_increment);
+            while tick < (*start + *duration) && expression < 127 {
+                self.add_expression(tick, track_id, channel_id, expression as i32);
+                tick += tick_increment;
+                expression += expression_increment;
+            }
+            // normalize the expression
+            self.add_expression(*start + *duration, track_id, channel_id, 127);
         }
 
         // grace note
@@ -586,6 +596,11 @@ impl MidiBuilder {
         let data1 = midi_value & 0x7F;
         let data2 = midi_value >> 7;
         let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xE0, data1, data2);
+        self.add_event(event);
+    }
+
+    fn add_expression(&mut self, tick: usize, track_id: usize, channel: i32, expression: i32) {
+        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x0B, expression);
         self.add_event(event);
     }
 

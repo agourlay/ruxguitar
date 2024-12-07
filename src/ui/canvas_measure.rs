@@ -464,6 +464,9 @@ fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<String> {
     if note_effect.let_ring {
         annotations.push("L.R".to_string());
     }
+    if note_effect.fade_in {
+        annotations.push("<".to_string());
+    }
     if let Some(harmonic) = &note_effect.harmonic {
         match harmonic.kind {
             HarmonicType::Natural => annotations.push("N.H".to_string()),
