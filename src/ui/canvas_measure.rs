@@ -476,9 +476,9 @@ fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<String> {
             HarmonicType::Semi => annotations.push("S.H".to_string()),
         }
     }
-    // TODO use a nice unicode sign instead
     if note_effect.vibrato {
-        annotations.push("~~~".to_string());
+        let vibrato = std::char::from_u32(0x301C).unwrap().to_string(); // https://unicodeplus.com/U+301C
+        annotations.push(vibrato.repeat(2));
     }
     if note_effect.trill.is_some() {
         annotations.push("Tr".to_string());
