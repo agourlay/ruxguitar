@@ -676,11 +676,7 @@ fn apply_velocity_effect(
     } else if effect.heavy_accentuated_note {
         velocity = MIN_VELOCITY.max(velocity + VELOCITY_INCREMENT * 2);
     }
-    if velocity > 127 {
-        127
-    } else {
-        velocity
-    }
+    velocity.min(127)
 }
 
 fn apply_duration_effect(
@@ -713,11 +709,7 @@ fn apply_duration_effect(
 
 fn apply_static_duration(tempo: i32, duration: i32, maximum: usize) -> usize {
     let value = (tempo * duration / 60) as usize;
-    if value < maximum {
-        value
-    } else {
-        maximum
-    }
+    value.min(maximum)
 }
 
 #[cfg(test)]
