@@ -146,13 +146,13 @@ mod tests {
         assert_eq!(result, 192);
     }
     #[test]
-    fn test_sequence_song() {
+    fn test_sequence_demo_song() {
         const FILE_PATH: &str = "test-files/Demo v5.gp5";
         let song = parse_gp_file(FILE_PATH).unwrap();
         let song = Rc::new(song);
         let builder = MidiBuilder::new();
         let events = builder.build_for_song(&song);
-        let events_len = 4431;
+        let events_len = 4451;
         assert_eq!(events.len(), events_len);
         assert_eq!(events[0].tick, 1);
         assert_eq!(events.iter().last().unwrap().tick, 189_120);

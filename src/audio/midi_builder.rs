@@ -122,7 +122,13 @@ impl MidiBuilder {
                 } else {
                     beats.get(beat_id - 1)
                 };
-                let next_beat = beats.get(beat_id + 1);
+                let next_beat = beats.get(beat_id + 1).or_else(|| {
+                    // check next measure if it was the last beat
+                    track
+                        .measures
+                        .get(voice.measure_index as usize + 1)
+                        .and_then(|next_measure| next_measure.voices[0].beats.first())
+                });
                 self.add_notes(
                     track_id,
                     track,
@@ -168,6 +174,9 @@ impl MidiBuilder {
                 let next_note =
                     next_beat.and_then(|b| b.notes.iter().find(|n| n.string == note.string));
 
+                // pack with beat to propagate duration
+                let next_note = next_beat.zip(next_note);
+
                 // apply effects on duration
                 let mut duration = apply_duration_effect(note, next_note, tempo, beat_duration);
                 assert_ne!(duration, 0);
@@ -185,7 +194,6 @@ impl MidiBuilder {
                     tempo,
                     note,
                     next_note,
-                    next_beat,
                     velocity,
                     midi_channel,
                 ) {
@@ -205,8 +213,7 @@ impl MidiBuilder {
         duration: &mut usize,
         tempo: i32,
         note: &Note,
-        next_note: Option<&Note>,
-        next_beat: Option<&Beat>,
+        next_note_beat: Option<(&Beat, &Note)>,
         velocity: i16,
         midi_channel: &MidiChannel,
     ) -> Option<i32> {
@@ -334,7 +341,7 @@ impl MidiBuilder {
         // slide
         if let Some(_slide) = &note.effect.slide {
             if !is_percussion {
-                if let Some((next_note, next_beat)) = next_note.zip(next_beat) {
+                if let Some((next_beat, next_note)) = next_note_beat {
                     let value_1 = note.value as i32;
                     let value_2 = next_note.value as i32;
 
@@ -681,15 +688,18 @@ fn apply_velocity_effect(
 
 fn apply_duration_effect(
     note: &Note,
-    next_note: Option<&Note>,
+    next_note_beat: Option<(&Beat, &Note)>,
     tempo: i32,
     mut duration: usize,
 ) -> usize {
     let note_type = &note.kind;
-    if let Some(next_note) = next_note {
+    // TODO handle chain of ties and not just the next one
+    if let Some((next_beat, next_note)) = next_note_beat {
         if next_note.kind == NoteType::Tie {
-            // approximation?
-            duration += duration;
+            duration += next_beat.duration.time() as usize
+        }
+        if note.effect.let_ring {
+            duration += next_beat.duration.time() as usize;
         }
     }
     if note_type == &NoteType::Dead {
@@ -700,9 +710,6 @@ fn apply_duration_effect(
     }
     if note.effect.staccato {
         return ((duration * 50) as f64 / 100.00) as usize;
-    }
-    if note.effect.let_ring {
-        return duration * 2;
     }
     duration
 }
@@ -792,7 +799,7 @@ mod tests {
         let builder = MidiBuilder::new();
         let events = builder.build_for_song(&song);
 
-        assert_eq!(events.len(), 4431);
+        assert_eq!(events.len(), 4451);
         assert_eq!(events[0].tick, 1);
         assert_eq!(events.iter().last().unwrap().tick, 189_120);
 
