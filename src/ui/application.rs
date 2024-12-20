@@ -36,6 +36,7 @@ pub struct RuxApplication {
     sound_font_file: Option<PathBuf>,           // sound font file
     beat_sender: Arc<Sender<usize>>,            // beat notifier
     beat_receiver: Arc<Mutex<Receiver<usize>>>, // beat receiver
+    file_picker_folder: Option<PathBuf>,        // last folder used in file picker,
 }
 
 #[derive(Debug)]
@@ -114,10 +115,10 @@ impl Display for TrackSelection {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    OpenFileDialog,                                         // open file dialog
-    OpenFile(PathBuf),                                      // open file path
-    FileOpened(Result<(Vec<u8>, String), FilePickerError>), // file content & file name
-    TrackSelected(TrackSelection),                          // track selection
+    OpenFileDialog,    // open file dialog
+    OpenFile(PathBuf), // open file path
+    FileOpened(Result<(Vec<u8>, Option<PathBuf>, String), FilePickerError>), // file content, parent folder & file name
+    TrackSelected(TrackSelection),                                           // track selection
     FocusMeasure(usize),           // used when clicking on measure in tablature
     FocusTick(usize),              // focus on a specific tick in the tablature
     PlayPause,                     // toggle play/pause
@@ -145,6 +146,7 @@ impl RuxApplication {
             sound_font_file,
             beat_receiver: Arc::new(Mutex::new(beat_receiver)),
             beat_sender: Arc::new(beat_sender),
+            file_picker_folder: None, // TODO store last folder used in $user/home/.ruxguitar
         }
     }
 
@@ -192,7 +194,10 @@ impl RuxApplication {
                     Task::none()
                 } else {
                     self.tab_file_is_loading = true;
-                    Task::perform(open_file_dialog(), Message::FileOpened)
+                    Task::perform(
+                        open_file_dialog(self.file_picker_folder.clone()),
+                        Message::FileOpened,
+                    )
                 }
             }
             Message::OpenFile(path) => {
@@ -206,7 +211,8 @@ impl RuxApplication {
                     audio_player.stop();
                 }
                 match result {
-                    Ok((contents, file_name)) => {
+                    Ok((contents, parent_folder, file_name)) => {
+                        self.file_picker_folder = parent_folder;
                         if let Ok(song) = parse_gp_data(&contents) {
                             // build all tracks selection
                             let track_selections: Vec<_> = song

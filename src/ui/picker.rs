@@ -9,11 +9,18 @@ pub enum FilePickerError {
 }
 
 /// Opens a file dialog and returns the content of the picked file.
-pub async fn open_file_dialog() -> Result<(Vec<u8>, String), FilePickerError> {
-    let picked_file = rfd::AsyncFileDialog::new()
+pub async fn open_file_dialog(
+    picker_folder: Option<PathBuf>,
+) -> Result<(Vec<u8>, Option<PathBuf>, String), FilePickerError> {
+    let mut picker = rfd::AsyncFileDialog::new()
         .add_filter("Guitar Pro files", &["gp5", "gp4"])
-        .set_title("Pick a GP file")
-        //.set_directory() TODO remember last directory and set it here
+        .set_title("Select a Guitar Pro file");
+
+    if let Some(folder) = picker_folder {
+        picker = picker.set_directory(folder);
+    }
+
+    let picked_file = picker
         .pick_file()
         .await
         .ok_or(FilePickerError::DialogClosed)?;
@@ -23,7 +30,9 @@ pub async fn open_file_dialog() -> Result<(Vec<u8>, String), FilePickerError> {
 /// Loads the content of a file at the given path.
 ///
 /// Return the content of the file and its name.
-pub async fn load_file(path: impl Into<PathBuf>) -> Result<(Vec<u8>, String), FilePickerError> {
+pub async fn load_file(
+    path: impl Into<PathBuf>,
+) -> Result<(Vec<u8>, Option<PathBuf>, String), FilePickerError> {
     let path = path.into();
     let file_extension = path
         .extension()
@@ -41,9 +50,10 @@ pub async fn load_file(path: impl Into<PathBuf>) -> Result<(Vec<u8>, String), Fi
         .and_then(|f| f.to_str())
         .map(|f| f.to_string())
         .unwrap_or_default();
+    let parent_folder = path.parent().map(|p| p.into());
     log::info!("Loading file: {:?}", file_name);
     tokio::fs::read(&path)
         .await
         .map_err(|error| FilePickerError::IoError(error.to_string()))
-        .map(|content| (content, file_name))
+        .map(|content| (content, parent_folder, file_name))
 }
