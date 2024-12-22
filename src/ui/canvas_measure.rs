@@ -198,13 +198,14 @@ impl canvas::Program<Message> for CanvasMeasure {
             if self.measure_id == 0
                 || measure_header.tempo != previous_measure_header.unwrap().tempo
             {
-                // TODO use https://unicodeplus.com/U+1D15F
-                let tempo_label = format!("bpm={}", measure_header.tempo.value);
+                let tempo_sign = std::char::from_u32(0x1D15F).unwrap(); // https://unicodeplus.com/U+1D15F
+                let tempo_label = format!("{} = {}", tempo_sign, measure_header.tempo.value);
                 tempo_label_len = tempo_label.chars().count() * 10;
                 let tempo_text = Text {
+                    shaping: Advanced, // required for printing unicode
                     content: tempo_label,
                     color: Color::WHITE,
-                    size: 10.0.into(),
+                    size: 11.0.into(),
                     position: Point::new(measure_start_x, MEASURE_ANNOTATION_Y),
                     ..Text::default()
                 };
