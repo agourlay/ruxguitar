@@ -1058,7 +1058,7 @@ mod tests {
         let builder = MidiBuilder::new();
         let events = builder.build_for_song(&song);
 
-        //assert_eq!(events.len(), 44973);
+        assert_eq!(events.len(), 43702);
         assert_eq!(events[0].tick, 1);
         assert_eq!(events.iter().last().unwrap().tick, 795840);
 

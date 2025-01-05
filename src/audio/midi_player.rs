@@ -6,6 +6,7 @@ use crate::audio::FIRST_TICK;
 use crate::parser::song_parser::Song;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::DefaultStreamConfigError;
+use itertools::Itertools;
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 use std::fs::File;
 use std::path::PathBuf;
@@ -256,14 +257,13 @@ fn new_output_stream(
     drop(synthesizer_guard);
 
     // Size left and right buffers according to sample rate.
-    // Each side gets half of the buffer.
     // The buffer accounts for 0.1 second of audio.
     // e.g. 4410 samples at 44100 Hz is 0.1 second
-    let init_mono_sample_count = sample_rate / 10 / 2;
+    let channel_sample_count = sample_rate / 10;
 
     // reuse buffer for left and right channels across all calls
-    let mut left: Vec<f32> = vec![0_f32; init_mono_sample_count as usize];
-    let mut right: Vec<f32> = vec![0_f32; init_mono_sample_count as usize];
+    let mut left: Vec<f32> = vec![0_f32; channel_sample_count as usize];
+    let mut right: Vec<f32> = vec![0_f32; channel_sample_count as usize];
 
     let err_fn = |err| log::error!("an error occurred on stream: {}", err);
 
@@ -362,10 +362,13 @@ fn new_output_stream(
             drop(player_params_guard);
 
             // Interleave the left and right channels into the output buffer.
-            let stereo_interleaved = left.iter().zip(right.iter());
-            for (i, (l, r)) in stereo_interleaved.take(output_channel_len).enumerate() {
-                output[i * 2] = *l;
-                output[i * 2 + 1] = *r;
+            for (i, value) in left
+                .iter()
+                .interleave(right.iter())
+                .take(output.len())
+                .enumerate()
+            {
+                output[i] = *value;
             }
         },
         err_fn,
