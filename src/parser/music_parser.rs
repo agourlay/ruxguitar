@@ -8,8 +8,7 @@ use crate::parser::song_parser::{
     NoteType, Song, Track, Voice, MAX_VOICES, QUARTER_TIME,
 };
 use nom::multi::count;
-use nom::sequence::tuple;
-use nom::IResult;
+use nom::{IResult, Parser};
 
 pub struct MusicParser {
     song: Song,
@@ -32,10 +31,11 @@ impl MusicParser {
             i = skip(i, 42);
         }
 
-        let (i, (measure_count, track_count)) = tuple((
+        let (i, (measure_count, track_count)) = (
             parse_int, // Measure count
             parse_int, // Track count
-        ))(i)?;
+        )
+            .parse(i)?;
 
         log::debug!(
             "Parsing music data -> track_count: {} measure_count {}",
@@ -110,7 +110,7 @@ impl MusicParser {
             log::debug!("String count: {}", string_count);
 
             // tunings
-            let (inner, tunings) = count(parse_int, 7)(i)?;
+            let (inner, tunings) = count(parse_int, 7).parse(i)?;
             i = inner;
             log::debug!("Tunings: {:?}", tunings);
             track.strings = tunings
@@ -168,7 +168,7 @@ impl MusicParser {
     pub fn parse_track_channel(&mut self) -> impl FnMut(&[u8]) -> IResult<&[u8], i32> + '_ {
         log::debug!("Parsing track channel");
         |i| {
-            let (i, (mut gm_channel_1, mut gm_channel_2)) = tuple((parse_int, parse_int))(i)?;
+            let (i, (mut gm_channel_1, mut gm_channel_2)) = (parse_int, parse_int).parse(i)?;
             gm_channel_1 -= 1;
             gm_channel_2 -= 1;
 
@@ -419,14 +419,15 @@ impl MusicParser {
                 i = skip(i, 16);
             }
 
-            let (inner, (volume, pan, chorus, reverb, phaser, tremolo)) = tuple((
+            let (inner, (volume, pan, chorus, reverb, phaser, tremolo)) = (
                 parse_signed_byte,
                 parse_signed_byte,
                 parse_signed_byte,
                 parse_signed_byte,
                 parse_signed_byte,
                 parse_signed_byte,
-            ))(i)?;
+            )
+                .parse(i)?;
             i = inner;
 
             let mut tempo_name: String = String::new();
@@ -480,7 +481,7 @@ impl MusicParser {
                 i = skip(i, 1);
                 if self.song.version > GpVersion::GP5 {
                     let (inner, _) =
-                        tuple((parse_int_byte_sized_string, parse_int_byte_sized_string))(i)?;
+                        (parse_int_byte_sized_string, parse_int_byte_sized_string).parse(i)?;
                     i = inner;
                 }
             }

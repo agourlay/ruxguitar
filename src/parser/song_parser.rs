@@ -7,8 +7,9 @@ use crate::RuxError;
 use nom::bytes::complete::take;
 use nom::combinator::{cond, flat_map, map};
 use nom::multi::count;
-use nom::sequence::{preceded, tuple};
+use nom::sequence::preceded;
 use nom::IResult;
+use nom::Parser;
 use std::fmt::Debug;
 
 // GP4 docs at <https://dguitar.sourceforge.net/GP4format.html>
@@ -857,7 +858,7 @@ pub fn parse_note_effects(
     move |i| {
         log::debug!("Parsing note effects");
         let mut i = i;
-        let (inner, (flags1, flags2)) = tuple((parse_byte, parse_byte))(i)?;
+        let (inner, (flags1, flags2)) = (parse_byte, parse_byte).parse(i)?;
         i = inner;
         note.effect.hammer = (flags1 & 0x02) == 0x02;
         note.effect.let_ring = (flags1 & 0x08) == 0x08;
@@ -910,7 +911,7 @@ pub fn parse_trill_effect(i: &[u8]) -> IResult<&[u8], TrillEffect> {
     log::debug!("Parsing trill effect");
     let mut i = i;
     let mut trill_effect = TrillEffect::default();
-    let (inner, (fret, period)) = tuple((parse_signed_byte, parse_signed_byte))(i)?;
+    let (inner, (fret, period)) = (parse_signed_byte, parse_signed_byte).parse(i)?;
     i = inner;
     trill_effect.fret = fret;
     trill_effect.duration.value = TrillEffect::from_trill_period(period);
@@ -932,7 +933,7 @@ pub fn parse_harmonic_effect(
                 he.kind = HarmonicType::Artificial;
                 if version >= GpVersion::GP5 {
                     let (inner, (semitone, accidental, octave)) =
-                        tuple((parse_byte, parse_signed_byte, parse_byte))(i)?;
+                        (parse_byte, parse_signed_byte, parse_byte).parse(i)?;
                     i = inner;
                     he.pitch = Some(PitchClass::from(semitone as i8, Some(accidental), None));
                     he.octave = Some(Octave::get_octave(octave));
@@ -993,7 +994,8 @@ pub fn parse_slide_type(i: &[u8]) -> IResult<&[u8], Option<SlideType>> {
         } else {
             None
         }
-    })(i)
+    })
+    .parse(i)
 }
 
 pub fn parse_tremolo_picking(i: &[u8]) -> IResult<&[u8], TremoloPickingEffect> {
@@ -1003,7 +1005,8 @@ pub fn parse_tremolo_picking(i: &[u8]) -> IResult<&[u8], TremoloPickingEffect> {
         let mut tremolo_picking_effect = TremoloPickingEffect::default();
         tremolo_picking_effect.duration.value = value;
         tremolo_picking_effect
-    })(i)
+    })
+    .parse(i)
 }
 
 pub fn parse_grace_effect(version: GpVersion) -> impl FnMut(&[u8]) -> IResult<&[u8], GraceEffect> {
@@ -1051,7 +1054,7 @@ pub fn parse_beat_effects<'a>(
     move |i| {
         log::debug!("Parsing beat effects");
         let mut i = i;
-        let (inner, (flags1, flags2)) = tuple((parse_byte, parse_byte))(i)?;
+        let (inner, (flags1, flags2)) = (parse_byte, parse_byte).parse(i)?;
         i = inner;
 
         note_effect.fade_in = flags1 & 0x10 != 0;
@@ -1076,7 +1079,7 @@ pub fn parse_beat_effects<'a>(
 
         if flags1 & 0x40 != 0 {
             let (inner, (stroke_up, stroke_down)) =
-                tuple((parse_signed_byte, parse_signed_byte))(i)?;
+                (parse_signed_byte, parse_signed_byte).parse(i)?;
             i = inner;
             if stroke_up > 0 {
                 beat.effect.stroke.value = stroke_up as u16;
@@ -1104,7 +1107,7 @@ pub fn parse_bend_effect(i: &[u8]) -> IResult<&[u8], BendEffect> {
     i = inner;
     for _ in 0..num_points {
         let (inner, (bend_position, bend_value, _vibrato)) =
-            tuple((parse_int, parse_int, parse_byte))(i)?;
+            (parse_int, parse_int, parse_byte).parse(i)?;
         i = inner;
 
         let point_position =
@@ -1125,7 +1128,7 @@ pub fn parse_tremolo_bar(i: &[u8]) -> IResult<&[u8], TremoloBarEffect> {
     let (inner, num_points) = parse_int(i)?;
     i = inner;
     for _ in 0..num_points {
-        let (inner, (position, value, _vibrato)) = tuple((parse_int, parse_int, parse_byte))(i)?;
+        let (inner, (position, value, _vibrato)) = (parse_int, parse_int, parse_byte).parse(i)?;
         i = inner;
 
         let point_position = position as f32 * BEND_EFFECT_MAX_POSITION_LENGTH / GP_BEND_POSITION;
@@ -1188,17 +1191,18 @@ pub fn parse_duration(flags: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], Duration
 pub fn parse_color(i: &[u8]) -> IResult<&[u8], i32> {
     log::debug!("Parsing RGB color");
     map(
-        tuple((parse_byte, parse_byte, parse_byte, parse_byte)),
+        (parse_byte, parse_byte, parse_byte, parse_byte),
         |(r, g, b, _ignore)| (r as i32) << 16 | (g as i32) << 8 | b as i32,
-    )(i)
+    )
+    .parse(i)
 }
 
 pub fn parse_marker(i: &[u8]) -> IResult<&[u8], Marker> {
     log::debug!("Parsing marker");
-    map(
-        tuple((parse_int_sized_string, parse_color)),
-        |(title, color)| Marker { title, color },
-    )(i)
+    map((parse_int_sized_string, parse_color), |(title, color)| {
+        Marker { title, color }
+    })
+    .parse(i)
 }
 
 pub fn parse_triplet_feel(i: &[u8]) -> IResult<&[u8], TripletFeel> {
@@ -1208,7 +1212,8 @@ pub fn parse_triplet_feel(i: &[u8]) -> IResult<&[u8], TripletFeel> {
         1 => TripletFeel::Eighth,
         2 => TripletFeel::Sixteenth,
         x => panic!("Unknown triplet feel: {}", x),
-    })(i)
+    })
+    .parse(i)
 }
 
 /// Parse measure header.
@@ -1319,7 +1324,8 @@ pub fn parse_measure_headers(
             let (rest, header) = preceded(
                 cond(version >= GpVersion::GP5, parse_byte),
                 parse_measure_header(previous_time_signature, song_tempo, version),
-            )(i)?;
+            )
+            .parse(i)?;
             // propagate time signature
             previous_time_signature = header.time_signature.clone();
             i = rest;
@@ -1344,7 +1350,7 @@ pub fn parse_midi_channels(i: &[u8]) -> IResult<&[u8], Vec<MidiChannel>> {
 pub fn parse_midi_channel(channel_id: i32) -> impl FnMut(&[u8]) -> IResult<&[u8], MidiChannel> {
     move |i: &[u8]| {
         map(
-            tuple((
+            (
                 parse_int,
                 parse_signed_byte,
                 parse_signed_byte,
@@ -1354,7 +1360,7 @@ pub fn parse_midi_channel(channel_id: i32) -> impl FnMut(&[u8]) -> IResult<&[u8]
                 parse_signed_byte,
                 parse_byte,
                 parse_byte,
-            )),
+            ),
             |(
                 mut instrument,
                 volume,
@@ -1387,14 +1393,15 @@ pub fn parse_midi_channel(channel_id: i32) -> impl FnMut(&[u8]) -> IResult<&[u8]
                     bank,
                 }
             },
-        )(i)
+        )
+        .parse(i)
     }
 }
 
 pub fn parse_page_setup(i: &[u8]) -> IResult<&[u8], PageSetup> {
     log::debug!("Parsing page setup");
     map(
-        tuple((
+        (
             parse_point,
             parse_padding,
             parse_int,
@@ -1409,7 +1416,7 @@ pub fn parse_page_setup(i: &[u8]) -> IResult<&[u8], PageSetup> {
             parse_int_sized_string,
             parse_int_sized_string,
             parse_int_sized_string,
-        )),
+        ),
         |(
             page_size,
             page_margin,
@@ -1440,39 +1447,39 @@ pub fn parse_page_setup(i: &[u8]) -> IResult<&[u8], PageSetup> {
             copyright: format!("{}\n{}", copyright_1, copyright_2),
             page_number,
         },
-    )(i)
+    )
+    .parse(i)
 }
 
 pub fn parse_point(i: &[u8]) -> IResult<&[u8], Point> {
     log::debug!("Parsing point");
-    map(tuple((parse_int, parse_int)), |(x, y)| Point { x, y })(i)
+    map((parse_int, parse_int), |(x, y)| Point { x, y }).parse(i)
 }
 
 pub fn parse_padding(i: &[u8]) -> IResult<&[u8], Padding> {
     log::debug!("Parsing padding");
     map(
-        tuple((parse_int, parse_int, parse_int, parse_int)),
+        (parse_int, parse_int, parse_int, parse_int),
         |(right, top, left, bottom)| Padding {
             right,
             top,
             left,
             bottom,
         },
-    )(i)
+    )
+    .parse(i)
 }
 
 pub fn parse_lyrics(i: &[u8]) -> IResult<&[u8], Lyrics> {
     log::debug!("Parsing lyrics");
     map(
-        tuple((
-            parse_int,
-            count(tuple((parse_int, parse_int_sized_string)), 5),
-        )),
+        (parse_int, count((parse_int, parse_int_sized_string), 5)),
         |(track_choice, lines)| Lyrics {
             track_choice,
             lines,
         },
-    )(i)
+    )
+    .parse(i)
 }
 
 /// Parse the version string from the file header.
@@ -1496,7 +1503,8 @@ fn parse_notices(i: &[u8]) -> IResult<&[u8], Vec<String>> {
     flat_map(parse_int, |notice_count| {
         log::debug!("Notice count: {}", notice_count);
         count(parse_int_byte_sized_string, notice_count as usize)
-    })(i)
+    })
+    .parse(i)
 }
 
 /// Par information about the piece of music.
@@ -1505,7 +1513,7 @@ fn parse_info(version: GpVersion) -> impl FnMut(&[u8]) -> IResult<&[u8], SongInf
     move |i: &[u8]| {
         log::debug!("Parsing song info");
         map(
-            tuple((
+            (
                 parse_int_byte_sized_string,
                 parse_int_byte_sized_string,
                 parse_int_byte_sized_string,
@@ -1516,7 +1524,7 @@ fn parse_info(version: GpVersion) -> impl FnMut(&[u8]) -> IResult<&[u8], SongInf
                 parse_int_byte_sized_string,
                 parse_int_byte_sized_string,
                 parse_notices,
-            )),
+            ),
             |(
                 name,
                 subtitle,
@@ -1542,14 +1550,15 @@ fn parse_info(version: GpVersion) -> impl FnMut(&[u8]) -> IResult<&[u8], SongInf
                     notices,
                 }
             },
-        )(i)
+        )
+        .parse(i)
     }
 }
 
 pub fn parse_gp_data(file_data: &[u8]) -> Result<Song, RuxError> {
     let (rest, base_song) = flat_map(parse_gp_version, |version| {
         map(
-            tuple((
+            (
                 parse_info(version),                                     // Song info
                 cond(version < GpVersion::GP5, parse_bool),              // Triplet feel
                 cond(version >= GpVersion::GP4, parse_lyrics),           // Lyrics
@@ -1561,7 +1570,7 @@ pub fn parse_gp_data(file_data: &[u8]) -> Result<Song, RuxError> {
                 parse_signed_byte,                                       // Key signature
                 cond(version > GpVersion::GP3, parse_int),               // Octave
                 parse_midi_channels,                                     // Midi channels
-            )),
+            ),
             move |(
                 song_info,
                 triplet_feel,
@@ -1593,7 +1602,8 @@ pub fn parse_gp_data(file_data: &[u8]) -> Result<Song, RuxError> {
                 }
             },
         )
-    })(file_data)
+    })
+    .parse(file_data)
     .map_err(|_err| {
         log::error!("Failed to parse GP data");
         RuxError::ParsingError("Failed to parse GP data".to_string())

@@ -1,6 +1,6 @@
 use encoding_rs::WINDOWS_1252;
-use nom::combinator::{flat_map, map};
-use nom::{bytes, number, IResult};
+use nom::combinator::{flat_map, map, peek};
+use nom::{bytes, number, IResult, Parser};
 
 pub fn parse_signed_byte(i: &[u8]) -> IResult<&[u8], i8> {
     number::complete::le_i8(i)
@@ -11,7 +11,7 @@ pub fn parse_int(i: &[u8]) -> IResult<&[u8], i32> {
 }
 
 pub fn parse_bool(i: &[u8]) -> IResult<&[u8], bool> {
-    map(number::complete::le_u8, |b| b == 1)(i)
+    map(number::complete::le_u8, |b| b == 1).parse(i)
 }
 
 pub fn parse_short(i: &[u8]) -> IResult<&[u8], i16> {
@@ -50,22 +50,22 @@ pub fn make_string(i: &[u8]) -> String {
 pub fn parse_string(len: i32) -> impl FnMut(&[u8]) -> IResult<&[u8], String> {
     log::debug!("Parsing string of length {}", len);
     move |i: &[u8]| {
-        map(
-            bytes::complete::take(len as usize),
-            move |data: &[u8]| {
+        {
+            map(bytes::complete::take(len as usize), move |data: &[u8]| {
                 if len == 0 {
                     return String::new();
                 }
                 let sub = &data[0..len as usize];
                 make_string(sub)
-            },
-        )
-    }(i)
+            })
+        }
+        .parse(i)
+    }
 }
 
 /// Size of string encoded as Int.
 pub fn parse_int_sized_string(i: &[u8]) -> IResult<&[u8], String> {
-    flat_map(parse_int, parse_string)(i)
+    flat_map(parse_int, parse_string).parse(i)
 }
 
 /// Size of Strings provided
@@ -80,7 +80,7 @@ pub fn parse_byte_size_string(size: usize) -> impl FnMut(&[u8]) -> IResult<&[u8]
             size
         );
 
-        let (i, peeked) = nom::combinator::peek(bytes::complete::take(length))(i)?;
+        let (i, peeked) = peek(bytes::complete::take(length)).parse(i)?;
         let sub = if length > size as u8 {
             &peeked[..size]
         } else {
@@ -97,7 +97,7 @@ pub fn parse_byte_size_string(size: usize) -> impl FnMut(&[u8]) -> IResult<&[u8]
 /// Size of string encoded as Byte.
 #[allow(unused)]
 pub fn parse_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
-    flat_map(parse_byte, |str_len| parse_string(str_len as i32))(i)
+    flat_map(parse_byte, |str_len| parse_string(str_len as i32)).parse(i)
 }
 
 /// Size of string encoded as Int, but the size is encoded as a byte.
@@ -113,7 +113,8 @@ pub fn parse_int_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
                 parse_string(str_len as i32)
             }
         })
-    })(i)
+    })
+    .parse(i)
 }
 
 #[cfg(test)]
