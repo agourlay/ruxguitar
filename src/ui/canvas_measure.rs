@@ -425,7 +425,7 @@ fn draw_note(
 ) {
     // note label (pushed down on the right string)
     let note_label = note_value(note);
-    let local_beat_position_y = (note.string as f32 - 1.0) * STRING_LINE_HEIGHT;
+    let local_beat_position_y = (f32::from(note.string) - 1.0) * STRING_LINE_HEIGHT;
     // center the notes with more than one char
     let note_position_x = beat_position_x + 3.0 - note_label.chars().count() as f32 / 2.0;
     let note_position_y = measure_start_y + local_beat_position_y - 5.0;
@@ -518,7 +518,7 @@ fn inlined_note_effect_annotation(note_effect: &NoteEffect) -> String {
     }
     if let Some(_bend) = &note_effect.bend {
         // TODO display bend properly
-        annotation.push(std::char::from_u32(0x2191).unwrap()) // https://unicodeplus.com/U+2191
+        annotation.push(std::char::from_u32(0x2191).unwrap()); // https://unicodeplus.com/U+2191
     }
     annotation
 }

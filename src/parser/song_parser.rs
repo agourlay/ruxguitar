@@ -44,7 +44,7 @@ pub const VELOCITY_INCREMENT: i16 = 16;
 pub const DEFAULT_VELOCITY: i16 = MIN_VELOCITY + VELOCITY_INCREMENT * 5; // FORTE
 
 /// Convert Guitar Pro dynamic value to raw MIDI velocity
-pub fn convert_velocity(v: i16) -> i16 {
+pub const fn convert_velocity(v: i16) -> i16 {
     MIN_VELOCITY + (VELOCITY_INCREMENT * v) - VELOCITY_INCREMENT
 }
 
@@ -113,7 +113,7 @@ pub struct MidiChannel {
 }
 
 impl MidiChannel {
-    pub fn is_percussion(&self) -> bool {
+    pub const fn is_percussion(&self) -> bool {
         self.bank == DEFAULT_PERCUSSION_BANK
     }
 }
@@ -217,7 +217,7 @@ pub struct KeySignature {
 }
 
 impl KeySignature {
-    pub fn new(key: i8, is_minor: bool) -> Self {
+    pub const fn new(key: i8, is_minor: bool) -> Self {
         KeySignature { key, is_minor }
     }
 }
@@ -247,7 +247,7 @@ pub struct Tempo {
 }
 
 impl Tempo {
-    fn new(value: i32, name: Option<String>) -> Self {
+    const fn new(value: i32, name: Option<String>) -> Self {
         Tempo { value, name }
     }
 }
@@ -292,8 +292,8 @@ impl Default for MeasureHeader {
 
 impl MeasureHeader {
     pub fn length(&self) -> i64 {
-        let numerator = self.time_signature.numerator as i64;
-        let denominator = self.time_signature.denominator.time() as i64;
+        let numerator = i64::from(self.time_signature.numerator);
+        let denominator = i64::from(self.time_signature.denominator.time());
         numerator * denominator
     }
 }
@@ -342,11 +342,11 @@ impl Duration {
             self.tuplet_times,
             self.tuplet_enters
         );
-        time * self.tuplet_times as u32 / self.tuplet_enters as u32
+        time * u32::from(self.tuplet_times) / u32::from(self.tuplet_enters)
     }
 
     pub fn time(&self) -> u32 {
-        let mut time = QUARTER_TIME as f64 * (4.0 / self.value as f64);
+        let mut time = QUARTER_TIME as f64 * (4.0 / f64::from(self.value));
         if self.dotted {
             time += time / 2.0;
         } else if self.double_dotted {
@@ -364,7 +364,7 @@ pub struct BendPoint {
 
 impl BendPoint {
     pub fn get_time(&self, duration: usize) -> usize {
-        let time = duration as f32 * self.position as f32 / BEND_EFFECT_MAX_POSITION_LENGTH;
+        let time = duration as f32 * f32::from(self.position) / BEND_EFFECT_MAX_POSITION_LENGTH;
         time as usize
     }
 }
@@ -391,7 +391,7 @@ pub struct GraceEffect {
 
 impl GraceEffect {
     pub fn duration_time(&self) -> f32 {
-        (QUARTER_TIME as f32 / 16.00) * self.duration as f32
+        (QUARTER_TIME as f32 / 16.00) * f32::from(self.duration)
     }
 }
 
@@ -554,9 +554,9 @@ pub struct TrillEffect {
 impl TrillEffect {
     fn from_trill_period(period: i8) -> u16 {
         match period {
-            1 => DURATION_SIXTEENTH as u16,
-            2 => DURATION_THIRTY_SECOND as u16,
-            3 => DURATION_SIXTY_FOURTH as u16,
+            1 => u16::from(DURATION_SIXTEENTH),
+            2 => u16::from(DURATION_THIRTY_SECOND),
+            3 => u16::from(DURATION_SIXTY_FOURTH),
             _ => panic!("Cannot get trill period"),
         }
     }
@@ -570,9 +570,9 @@ pub struct TremoloPickingEffect {
 impl TremoloPickingEffect {
     fn from_tremolo_value(value: i8) -> u16 {
         match value {
-            1 => DURATION_EIGHTH as u16,
-            3 => DURATION_SIXTEENTH as u16,
-            2 => DURATION_THIRTY_SECOND as u16,
+            1 => u16::from(DURATION_EIGHTH),
+            3 => u16::from(DURATION_SIXTEENTH),
+            2 => u16::from(DURATION_THIRTY_SECOND),
             _ => panic!("Cannot get tremolo value"),
         }
     }
@@ -588,7 +588,7 @@ pub enum NoteType {
 }
 
 impl NoteType {
-    pub fn get_note_type(value: u8) -> NoteType {
+    pub const fn get_note_type(value: u8) -> NoteType {
         match value {
             0 => NoteType::Rest,
             1 => NoteType::Normal,
@@ -707,7 +707,7 @@ pub struct Note {
 }
 
 impl Note {
-    pub fn new(note_effect: NoteEffect) -> Self {
+    pub const fn new(note_effect: NoteEffect) -> Self {
         Note {
             value: 0,
             velocity: DEFAULT_VELOCITY,
@@ -810,8 +810,7 @@ pub fn parse_chord(
         if (chord_gp4_header & 0x01) == 0 {
             debug_assert!(
                 version < GpVersion::GP5,
-                "Chord header is GP4 but version is {:?}",
-                version
+                "Chord header is GP4 but version is {version:?}"
             );
             log::debug!("Parsing GP4 chord");
             let (inner, chord_name) = parse_int_byte_sized_string(i)?;
@@ -954,23 +953,23 @@ pub fn parse_harmonic_effect(
                     version < GpVersion::GP5,
                     "Cannot read artificial harmonic type for GP4"
                 );
-                he.kind = HarmonicType::Artificial
+                he.kind = HarmonicType::Artificial;
             }
             17 => {
                 assert!(
                     version < GpVersion::GP5,
                     "Cannot read artificial harmonic type for GP4"
                 );
-                he.kind = HarmonicType::Artificial
+                he.kind = HarmonicType::Artificial;
             }
             22 => {
                 assert!(
                     version < GpVersion::GP5,
                     "Cannot read artificial harmonic type for GP4"
                 );
-                he.kind = HarmonicType::Artificial
+                he.kind = HarmonicType::Artificial;
             }
-            x => panic!("Cannot read harmonic type {}", x),
+            x => panic!("Cannot read harmonic type {x}"),
         };
         Ok((i, he))
     }
@@ -1023,7 +1022,7 @@ pub fn parse_grace_effect(version: GpVersion) -> impl FnMut(&[u8]) -> IResult<&[
         // velocity
         let (inner, velocity) = parse_byte(i)?;
         i = inner;
-        grace_effect.velocity = convert_velocity(velocity as i16);
+        grace_effect.velocity = convert_velocity(i16::from(velocity));
 
         // transition
         let (inner, transition) = parse_signed_byte(i)?;
@@ -1180,7 +1179,7 @@ pub fn parse_duration(flags: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], Duration
                     d.tuplet_enters = i_tuplet as u8;
                     d.tuplet_times = 8;
                 }
-                x => panic!("Unknown tuplet: {}", x),
+                x => panic!("Unknown tuplet: {x}"),
             }
         }
 
@@ -1192,7 +1191,7 @@ pub fn parse_color(i: &[u8]) -> IResult<&[u8], i32> {
     log::debug!("Parsing RGB color");
     map(
         (parse_byte, parse_byte, parse_byte, parse_byte),
-        |(r, g, b, _ignore)| (r as i32) << 16 | (g as i32) << 8 | b as i32,
+        |(r, g, b, _ignore)| (i32::from(r) << 16) | (i32::from(g) << 8) | i32::from(b),
     )
     .parse(i)
 }
@@ -1211,7 +1210,7 @@ pub fn parse_triplet_feel(i: &[u8]) -> IResult<&[u8], TripletFeel> {
         0 => TripletFeel::None,
         1 => TripletFeel::Eighth,
         2 => TripletFeel::Sixteenth,
-        x => panic!("Unknown triplet feel: {}", x),
+        x => panic!("Unknown triplet feel: {x}"),
     })
     .parse(i)
 }
@@ -1444,7 +1443,7 @@ pub fn parse_page_setup(i: &[u8]) -> IResult<&[u8], PageSetup> {
             words,
             music,
             word_and_music,
-            copyright: format!("{}\n{}", copyright_1, copyright_2),
+            copyright: format!("{copyright_1}\n{copyright_2}"),
             page_number,
         },
     )
@@ -1495,7 +1494,7 @@ pub fn parse_gp_version(i: &[u8]) -> IResult<&[u8], GpVersion> {
         "FICHIER GUITAR PRO v4.06" => (i, GpVersion::GP4_06),
         "FICHIER GUITAR PRO v5.00" => (i, GpVersion::GP5),
         "FICHIER GUITAR PRO v5.10" => (i, GpVersion::GP5_10),
-        _ => panic!("Unsupported GP version: {}", version_string),
+        _ => panic!("Unsupported GP version: {version_string}"),
     })
 }
 

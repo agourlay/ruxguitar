@@ -37,20 +37,19 @@ pub async fn load_file(
     let file_extension = path
         .extension()
         .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase())
+        .map(str::to_lowercase)
         .unwrap_or_default();
     if file_extension != "gp5" && file_extension != "gp4" {
         return Err(FilePickerError::IoError(format!(
-            "Unsupported file extension: {}",
-            file_extension
+            "Unsupported file extension: {file_extension}"
         )));
     }
     let file_name = path
         .file_name()
         .and_then(|f| f.to_str())
-        .map(|f| f.to_string())
+        .map(std::string::ToString::to_string)
         .unwrap_or_default();
-    let parent_folder = path.parent().map(|p| p.into());
+    let parent_folder = path.parent().map(std::convert::Into::into);
     log::info!("Loading file: {:?}", file_name);
     tokio::fs::read(&path)
         .await

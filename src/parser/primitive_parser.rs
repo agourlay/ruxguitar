@@ -97,7 +97,7 @@ pub fn parse_byte_size_string(size: usize) -> impl FnMut(&[u8]) -> IResult<&[u8]
 /// Size of string encoded as Byte.
 #[allow(unused)]
 pub fn parse_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
-    flat_map(parse_byte, |str_len| parse_string(str_len as i32)).parse(i)
+    flat_map(parse_byte, |str_len| parse_string(i32::from(str_len))).parse(i)
 }
 
 /// Size of string encoded as Int, but the size is encoded as a byte.
@@ -109,8 +109,8 @@ pub fn parse_int_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
                 log::info!("Negative string length: {}", str_len);
                 parse_string(len - 1)
             } else {
-                assert_eq!(len - 1, str_len as i32, "String length mismatch");
-                parse_string(str_len as i32)
+                assert_eq!(len - 1, i32::from(str_len), "String length mismatch");
+                parse_string(i32::from(str_len))
             }
         })
     })

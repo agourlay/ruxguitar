@@ -43,11 +43,11 @@ impl MidiSequencer {
         self.last_tick = 0;
     }
 
-    pub fn get_tick(&self) -> usize {
+    pub const fn get_tick(&self) -> usize {
         self.current_tick
     }
 
-    pub fn get_last_tick(&self) -> usize {
+    pub const fn get_last_tick(&self) -> usize {
         self.last_tick
     }
 
@@ -116,7 +116,7 @@ impl MidiSequencer {
 }
 
 fn tick_increase(tempo_bpm: i32, elapsed_seconds: f64) -> usize {
-    let tempo_bps = tempo_bpm as f64 / 60.0;
+    let tempo_bps = f64::from(tempo_bpm) / 60.0;
     let bump = QUARTER_TIME * tempo_bps * elapsed_seconds;
     bump as usize
 }
@@ -172,11 +172,13 @@ mod tests {
         let batch = sequencer.get_next_events().unwrap();
         // assert no duplicates
         for b in batch {
-            assert!(seen.insert(b.clone()), "duplicate event {:?}", b);
+            assert!(seen.insert(b.clone()), "duplicate event {b:?}");
         }
         let count_1 = batch.len();
         assert_eq!(&events[0..count_1], batch);
-        assert!(batch.iter().all(|e| e.is_midi_message()));
+        assert!(batch
+            .iter()
+            .all(super::super::midi_event::MidiEvent::is_midi_message));
 
         let mut pos = count_1;
         loop {
@@ -189,7 +191,7 @@ mod tests {
             if let Some(batch) = sequencer.get_next_events() {
                 // assert no duplicates
                 for (id, b) in batch.iter().enumerate() {
-                    assert!(seen.insert(b.clone()), "duplicate event at {} {:?}", id, b);
+                    assert!(seen.insert(b.clone()), "duplicate event at {id} {b:?}");
                 }
 
                 let count = batch.len();

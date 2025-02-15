@@ -75,7 +75,10 @@ impl Tablature {
             self.song.get_measure_beat_for_tick(self.track_id, tick);
         let current_focus_id = self.focused_measure;
         let current_canvas = self.canvas_measures.get_mut(current_focus_id).unwrap();
-        if current_focus_id != new_measure_id {
+        if current_focus_id == new_measure_id {
+            // focus on beat id within the same measure
+            current_canvas.focus_beat(new_beat_id);
+        } else {
             // move to next measure
             current_canvas.toggle_focused();
             let next_focus_id = new_measure_id;
@@ -98,9 +101,6 @@ impl Tablature {
                 );
                 return Some(estimated_y);
             }
-        } else {
-            // focus on beat id within the same measure
-            current_canvas.focus_beat(new_beat_id);
         }
         None
     }

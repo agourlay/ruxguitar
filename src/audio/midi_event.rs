@@ -9,15 +9,15 @@ pub struct MidiEvent {
 }
 
 impl MidiEvent {
-    pub fn is_midi_message(&self) -> bool {
+    pub const fn is_midi_message(&self) -> bool {
         matches!(self.event, MidiEventType::MidiMessage(_, _, _, _))
     }
 
-    pub fn is_tempo_change(&self) -> bool {
+    pub const fn is_tempo_change(&self) -> bool {
         matches!(self.event, MidiEventType::TempoChange(_))
     }
 
-    pub fn is_note_event(&self) -> bool {
+    pub const fn is_note_event(&self) -> bool {
         !self.is_tempo_change() || !self.is_midi_message()
     }
 
@@ -82,19 +82,19 @@ pub enum MidiEventType {
 }
 
 impl MidiEventType {
-    fn note_on(channel: i32, key: i32, velocity: i16) -> Self {
+    const fn note_on(channel: i32, key: i32, velocity: i16) -> Self {
         Self::NoteOn(channel, key, velocity)
     }
 
-    fn note_off(channel: i32, key: i32) -> Self {
+    const fn note_off(channel: i32, key: i32) -> Self {
         Self::NoteOff(channel, key)
     }
 
-    fn tempo_change(tempo: i32) -> Self {
+    const fn tempo_change(tempo: i32) -> Self {
         Self::TempoChange(tempo)
     }
 
-    fn midi_message(channel: i32, command: i32, data1: i32, data2: i32) -> Self {
+    const fn midi_message(channel: i32, command: i32, data1: i32, data2: i32) -> Self {
         Self::MidiMessage(channel, command, data1, data2)
     }
 }

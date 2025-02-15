@@ -6,7 +6,7 @@ pub struct MidiPlayerParams {
 }
 
 impl MidiPlayerParams {
-    pub fn new(tempo: i32, tempo_percentage: usize, solo_track_id: Option<usize>) -> Self {
+    pub const fn new(tempo: i32, tempo_percentage: usize, solo_track_id: Option<usize>) -> Self {
         Self {
             tempo,
             tempo_percentage,
@@ -14,7 +14,7 @@ impl MidiPlayerParams {
         }
     }
 
-    pub fn solo_track_id(&self) -> Option<usize> {
+    pub const fn solo_track_id(&self) -> Option<usize> {
         self.solo_track_id
     }
 

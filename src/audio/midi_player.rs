@@ -87,7 +87,7 @@ impl AudioPlayer {
         Synthesizer::new(&sound_font, &synthesizer_settings).unwrap()
     }
 
-    pub fn is_playing(&self) -> bool {
+    pub const fn is_playing(&self) -> bool {
         self.is_playing
     }
 
@@ -108,7 +108,7 @@ impl AudioPlayer {
 
     pub fn set_tempo_percentage(&self, new_tempo_percentage: usize) {
         let mut params_guard = self.player_params.lock().unwrap();
-        params_guard.set_tempo_percentage(new_tempo_percentage)
+        params_guard.set_tempo_percentage(new_tempo_percentage);
     }
 
     pub fn stop(&mut self) {
@@ -128,6 +128,7 @@ impl AudioPlayer {
         // stop all sound in synthesizer
         let mut synthesizer_guard = self.synthesizer.lock().unwrap();
         synthesizer_guard.note_off_all(false);
+        drop(synthesizer_guard);
 
         // Drop stream
         self.stream.take();
@@ -288,7 +289,10 @@ fn new_output_stream(
                     );
                 }
                 let solo_track_id = player_params_guard.solo_track_id();
-                if events.iter().any(|event| event.is_note_event()) {
+                if events
+                    .iter()
+                    .any(super::midi_event::MidiEvent::is_note_event)
+                {
                     beat_notifier
                         .send(tick)
                         .expect("Failed to send beat notification");
@@ -309,7 +313,7 @@ fn new_output_stream(
                                 key,
                                 velocity
                             );
-                            synthesizer_guard.note_on(channel, key, velocity as i32);
+                            synthesizer_guard.note_on(channel, key, i32::from(velocity));
                         }
                         MidiEventType::NoteOff(channel, key) => {
                             log::debug!(
@@ -333,7 +337,7 @@ fn new_output_stream(
                                 data1,
                                 data2
                             );
-                            synthesizer_guard.process_midi_message(channel, command, data1, data2)
+                            synthesizer_guard.process_midi_message(channel, command, data1, data2);
                         }
                     }
                 }
@@ -347,7 +351,7 @@ fn new_output_stream(
                     output_channel_len,
                     left.len()
                 );
-                output_channel_len = left.len()
+                output_channel_len = left.len();
             }
 
             // Render the waveform.

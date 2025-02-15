@@ -41,40 +41,33 @@ mod tests {
                 continue;
             }
             let file_name = path.file_name().unwrap().to_str().unwrap();
-            eprintln!("Parsing file: {}", file_name);
+            eprintln!("Parsing file: {file_name}");
             let file_path = path.to_str().unwrap();
             let song = parse_gp_file(file_path)
-                .unwrap_or_else(|err| panic!("Failed to parse file: {}\n{}", file_name, err));
+                .unwrap_or_else(|err| panic!("Failed to parse file: {file_name}\n{err}"));
             // no empty tracks
-            assert!(!song.tracks.is_empty(), "File: {}", file_name);
+            assert!(!song.tracks.is_empty(), "File: {file_name}");
             // assert global invariant across all measures
             for (t_id, t) in song.tracks.iter().enumerate() {
                 assert_eq!(
                     t.measures.len(),
                     song.measure_headers.len(),
-                    "Track:{} File:{}",
-                    t_id,
-                    file_name
+                    "Track:{t_id} File:{file_name}"
                 );
                 for (m_id, m) in t.measures.iter().enumerate() {
                     assert_eq!(
                         m.track_index, t_id,
-                        "Track:{} Measure:{} File:{}",
-                        t_id, m_id, file_name
+                        "Track:{t_id} Measure:{m_id} File:{file_name}"
                     );
                     assert_eq!(
                         m.header_index, m_id,
-                        "Track:{} Measure:{} File:{}",
-                        t_id, m_id, file_name
+                        "Track:{t_id} Measure:{m_id} File:{file_name}"
                     );
                     let voice_count = if with_extension == "gp4" { 1 } else { 2 };
                     assert_eq!(
                         m.voices.len(),
                         voice_count,
-                        "Track:{} Measure:{} File:{}",
-                        t_id,
-                        m_id,
-                        file_name
+                        "Track:{t_id} Measure:{m_id} File:{file_name}"
                     );
                     let measure_header = &song.measure_headers[m_id];
                     let measure_start = measure_header.start;
@@ -82,13 +75,9 @@ mod tests {
                         v.beats.iter().enumerate().for_each(|(i, b)| {
                             assert!(
                                 b.start >= measure_start,
-                                "track:{} measure:{} beat:{} file:{}",
-                                t_id,
-                                m_id,
-                                i,
-                                file_name
+                                "track:{t_id} measure:{m_id} beat:{i} file:{file_name}"
                             );
-                        })
+                        });
                     }
                 }
             }

@@ -33,7 +33,7 @@ pub fn main_result() -> Result<(), RuxError> {
     // check if sound font file exists
     if let Some(sound_font_file) = &sound_font_file {
         if !sound_font_file.exists() {
-            let err = ConfigError(format!("Sound font file not found {:?}", sound_font_file));
+            let err = ConfigError(format!("Sound font file not found {sound_font_file:?}"));
             return Err(err);
         }
         log::info!("Starting with custom sound font file {:?}", sound_font_file);
@@ -42,7 +42,7 @@ pub fn main_result() -> Result<(), RuxError> {
     // check if tab file exists
     if let Some(tab_file_path) = &tab_file_path {
         if !tab_file_path.exists() {
-            let err = ConfigError(format!("Tab file not found {:?}", tab_file_path));
+            let err = ConfigError(format!("Tab file not found {tab_file_path:?}"));
             return Err(err);
         }
         log::info!("Starting with tab file {:?}", tab_file_path);

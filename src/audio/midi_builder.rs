@@ -27,7 +27,7 @@ pub struct MidiBuilder {
 }
 
 impl MidiBuilder {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { events: Vec::new() }
     }
 
@@ -166,7 +166,7 @@ impl MidiBuilder {
         for note in &beat.notes {
             if note.kind != NoteType::Tie {
                 let (string_id, string_tuning) = strings[note.string as usize - 1];
-                assert_eq!(string_id, note.string as i32);
+                assert_eq!(string_id, i32::from(note.string));
 
                 // surrounding notes on the same string on the previous & next beat
                 let previous_note =
@@ -197,7 +197,14 @@ impl MidiBuilder {
                     velocity,
                     midi_channel,
                 ) {
-                    self.add_note(track_id, key, start, duration, velocity, channel_id as i32)
+                    self.add_note(
+                        track_id,
+                        key,
+                        start,
+                        duration,
+                        velocity,
+                        i32::from(channel_id),
+                    );
                 }
             }
         }
@@ -217,11 +224,11 @@ impl MidiBuilder {
         velocity: i16,
         midi_channel: &MidiChannel,
     ) -> Option<i32> {
-        let channel_id = midi_channel.channel_id as i32;
+        let channel_id = i32::from(midi_channel.channel_id);
         let is_percussion = midi_channel.is_percussion();
 
         // compute key without effect
-        let initial_key = track_offset + note.value as i32 + string_tuning;
+        let initial_key = track_offset + i32::from(note.value) + string_tuning;
 
         // key with effect
         let mut key = initial_key;
@@ -242,7 +249,7 @@ impl MidiBuilder {
 
         // grace note
         if let Some(grace) = &note.effect.grace {
-            let grace_key = track_offset + grace.fret as i32 + string_tuning;
+            let grace_key = track_offset + i32::from(grace.fret) + string_tuning;
             let grace_length = grace.duration_time() as usize;
             let grace_velocity = grace.velocity;
             let grace_duration = if grace.is_dead {
@@ -262,13 +269,13 @@ impl MidiBuilder {
                 grace_duration,
                 grace_velocity,
                 channel_id,
-            )
+            );
         }
 
         // trill
         if let Some(trill) = &note.effect.trill {
             if !is_percussion {
-                let trill_key = track_offset + trill.fret as i32 + string_tuning;
+                let trill_key = track_offset + i32::from(trill.fret) + string_tuning;
                 let mut trill_length = trill.duration.time() as usize;
 
                 let trill_tick_limit = *start + *duration;
@@ -288,10 +295,7 @@ impl MidiBuilder {
                 }
                 assert!(
                     counter > 0,
-                    "No trill notes published! trill_length: {}, tick: {}, trill_tick_limit: {}",
-                    trill_length,
-                    tick,
-                    trill_tick_limit
+                    "No trill notes published! trill_length: {trill_length}, tick: {tick}, trill_tick_limit: {trill_tick_limit}"
                 );
 
                 // all notes published - the caller does not need to publish the note
@@ -315,10 +319,7 @@ impl MidiBuilder {
             }
             assert!(
                 counter > 0,
-                "No tremolo notes published! tp_length: {}, tick: {}, tp_tick_limit: {}",
-                tp_length,
-                tick,
-                tp_tick_limit
+                "No tremolo notes published! tp_length: {tp_length}, tick: {tick}, tp_tick_limit: {tp_tick_limit}"
             );
             // all notes published - the caller does not need to publish the note
             return None;
@@ -327,14 +328,14 @@ impl MidiBuilder {
         // bend
         if let Some(bend_effect) = &note.effect.bend {
             if !is_percussion {
-                self.add_bend(track_id, *start, *duration, channel_id, bend_effect)
+                self.add_bend(track_id, *start, *duration, channel_id, bend_effect);
             }
         }
 
         // tremolo bar
         if let Some(tremolo_bar) = &note.effect.tremolo_bar {
             if !is_percussion {
-                self.add_tremolo_bar(track_id, *start, *duration, channel_id, tremolo_bar)
+                self.add_tremolo_bar(track_id, *start, *duration, channel_id, tremolo_bar);
             }
         }
 
@@ -342,8 +343,8 @@ impl MidiBuilder {
         if let Some(_slide) = &note.effect.slide {
             if !is_percussion {
                 if let Some((next_beat, next_note)) = next_note_beat {
-                    let value_1 = note.value as i32;
-                    let value_2 = next_note.value as i32;
+                    let value_1 = i32::from(note.value);
+                    let value_2 = i32::from(next_note.value);
 
                     let tick1 = *start;
                     let tick2 = next_beat.start as usize;
@@ -377,7 +378,7 @@ impl MidiBuilder {
                     HarmonicType::Natural => {
                         for (harmonic_value, harmonic_frequency) in NATURAL_FREQUENCIES {
                             if note.value % 12 == (harmonic_value % 12) as i16 {
-                                key = (initial_key + harmonic_frequency) - note.value as i32;
+                                key = (initial_key + harmonic_frequency) - i32::from(note.value);
                                 break;
                             }
                         }
@@ -400,7 +401,8 @@ impl MidiBuilder {
                     HarmonicType::Tapped => {
                         if let Some(right_hand_fret) = harmonic.right_hand_fret {
                             for (harmonic_value, harmonic_frequency) in NATURAL_FREQUENCIES {
-                                if right_hand_fret as i16 - note.value == harmonic_value as i16 {
+                                if i16::from(right_hand_fret) - note.value == harmonic_value as i16
+                                {
                                     key = initial_key + harmonic_frequency;
                                     break;
                                 }
@@ -450,7 +452,7 @@ impl MidiBuilder {
     ) {
         for (point_id, point) in bend.points.iter().enumerate() {
             let value =
-                DEFAULT_BEND + (point.value as f32 * DEFAULT_BEND_SEMI_TONE / SEMITONE_LENGTH);
+                DEFAULT_BEND + (f32::from(point.value) * DEFAULT_BEND_SEMI_TONE / SEMITONE_LENGTH);
             let value = value.clamp(0.0, 127.0) as i32;
             let bend_start = start + point.get_time(duration);
             self.add_pitch_bend(bend_start, track_id, channel_id, value);
@@ -458,7 +460,7 @@ impl MidiBuilder {
             // look ahead to next bend point
             if let Some(next_point) = bend.points.get(point_id + 1) {
                 let next_value = DEFAULT_BEND
-                    + (next_point.value as f32 * DEFAULT_BEND_SEMI_TONE / SEMITONE_LENGTH);
+                    + (f32::from(next_point.value) * DEFAULT_BEND_SEMI_TONE / SEMITONE_LENGTH);
                 self.process_next_bend_values(
                     track_id,
                     channel_id,
@@ -471,7 +473,7 @@ impl MidiBuilder {
                 );
             }
         }
-        self.add_pitch_bend(start + duration, track_id, channel_id, DEFAULT_BEND as i32)
+        self.add_pitch_bend(start + duration, track_id, channel_id, DEFAULT_BEND as i32);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -522,7 +524,7 @@ impl MidiBuilder {
         tremolo_bar: &TremoloBarEffect,
     ) {
         for (point_id, point) in tremolo_bar.points.iter().enumerate() {
-            let value = DEFAULT_BEND + (point.value as f32 * DEFAULT_BEND_SEMI_TONE * 2.0);
+            let value = DEFAULT_BEND + (f32::from(point.value) * DEFAULT_BEND_SEMI_TONE * 2.0);
             let value = value.clamp(0.0, 127.0) as i32;
             let bend_start = start + point.get_time(duration);
             self.add_pitch_bend(bend_start, track_id, channel_id, value);
@@ -530,7 +532,7 @@ impl MidiBuilder {
             // look ahead to next bend point
             if let Some(next_point) = tremolo_bar.points.get(point_id + 1) {
                 let next_value =
-                    DEFAULT_BEND + (next_point.value as f32 * DEFAULT_BEND_SEMI_TONE * 2.0);
+                    DEFAULT_BEND + (f32::from(next_point.value) * DEFAULT_BEND_SEMI_TONE * 2.0);
                 self.process_next_bend_values(
                     track_id,
                     channel_id,
@@ -543,7 +545,7 @@ impl MidiBuilder {
                 );
             }
         }
-        self.add_pitch_bend(start + duration, track_id, channel_id, DEFAULT_BEND as i32)
+        self.add_pitch_bend(start + duration, track_id, channel_id, DEFAULT_BEND as i32);
     }
 
     fn add_note(
@@ -629,32 +631,32 @@ impl MidiBuilder {
         self.add_volume_selection(
             info_tick,
             track_id,
-            channel_id as i32,
-            midi_channel.volume as i32,
+            i32::from(channel_id),
+            i32::from(midi_channel.volume),
         );
-        self.add_expression_selection(info_tick, track_id, channel_id as i32, 127);
+        self.add_expression_selection(info_tick, track_id, i32::from(channel_id), 127);
         self.add_chorus_selection(
             info_tick,
             track_id,
-            channel_id as i32,
-            midi_channel.chorus as i32,
+            i32::from(channel_id),
+            i32::from(midi_channel.chorus),
         );
         self.add_reverb_selection(
             info_tick,
             track_id,
-            channel_id as i32,
-            midi_channel.reverb as i32,
+            i32::from(channel_id),
+            i32::from(midi_channel.reverb),
         );
         self.add_bank_selection(
             info_tick,
             track_id,
-            channel_id as i32,
-            midi_channel.bank as i32,
+            i32::from(channel_id),
+            i32::from(midi_channel.bank),
         );
         self.add_program_selection(
             info_tick,
             track_id,
-            channel_id as i32,
+            i32::from(channel_id),
             midi_channel.instrument,
         );
     }
@@ -696,7 +698,7 @@ fn apply_duration_effect(
     // TODO handle chain of ties and not just the next one
     if let Some((next_beat, next_note)) = next_note_beat {
         if next_note.kind == NoteType::Tie {
-            duration += next_beat.duration.time() as usize
+            duration += next_beat.duration.time() as usize;
         }
         if note.effect.let_ring {
             duration += next_beat.duration.time() as usize;
@@ -743,21 +745,21 @@ mod tests {
                 continue;
             }
             let file_name = path.file_name().unwrap().to_str().unwrap();
-            eprintln!("Parsing file: {}", file_name);
+            eprintln!("Parsing file: {file_name}");
             let file_path = path.to_str().unwrap();
             let song = parse_gp_file(file_path)
-                .unwrap_or_else(|err| panic!("Failed to parse file: {}\n{}", file_name, err));
+                .unwrap_or_else(|err| panic!("Failed to parse file: {file_name}\n{err}"));
             let song = Rc::new(song);
             let builder = MidiBuilder::new();
             let events = builder.build_for_song(&song);
-            assert!(!events.is_empty(), "No events found for {}", file_name);
+            assert!(!events.is_empty(), "No events found for {file_name}");
 
             // assert sorted by tick
             assert!(events.windows(2).all(|w| w[0].tick <= w[1].tick));
             assert_eq!(events[0].tick, 1);
 
             // check against golden file
-            let gold_file_path = gold_dir.join(format!("{}.txt", file_name));
+            let gold_file_path = gold_dir.join(format!("{file_name}.txt"));
             if !gold_file_path.exists() {
                 // create gold file
                 let mut file = std::fs::File::create(&gold_file_path).unwrap();
@@ -901,7 +903,7 @@ mod tests {
 
         //print 100 first for debugging
         for (i, event) in solo_track_events.iter().enumerate().take(100) {
-            eprintln!("{} {:?}", i, event);
+            eprintln!("{i} {event:?}");
         }
 
         // trill ON
@@ -1060,7 +1062,7 @@ mod tests {
 
         assert_eq!(events.len(), 43702);
         assert_eq!(events[0].tick, 1);
-        assert_eq!(events.iter().last().unwrap().tick, 795840);
+        assert_eq!(events.iter().last().unwrap().tick, 795_840);
 
         // assert number of tracks
         let track_count = song.tracks.len();

@@ -102,7 +102,7 @@ pub struct TrackSelection {
 }
 
 impl TrackSelection {
-    fn new(index: usize, name: String) -> Self {
+    const fn new(index: usize, name: String) -> Self {
         Self { index, name }
     }
 }
@@ -167,8 +167,7 @@ impl RuxApplication {
             (
                 RuxApplication::new(args.sound_font_bank.clone()),
                 args.tab_file_path
-                    .map(|f| Task::done(Message::OpenFile(f)))
-                    .unwrap_or_else(Task::none),
+                    .map_or_else(Task::none, |f| Task::done(Message::OpenFile(f))),
             )
         })
     }
@@ -335,7 +334,7 @@ impl RuxApplication {
             }
             Message::TempoSelected(tempos_selection) => {
                 if let Some(audio_player) = &self.audio_player {
-                    audio_player.set_tempo_percentage(tempos_selection.percentage)
+                    audio_player.set_tempo_percentage(tempos_selection.percentage);
                 }
                 self.tempo_selection = tempos_selection;
                 Task::none()
@@ -460,7 +459,7 @@ impl RuxApplication {
         let tablature_view = self
             .tablature
             .as_ref()
-            .map_or(untitled_text_table_box().into(), |t| t.view());
+            .map_or_else(|| untitled_text_table_box().into(), |t| t.view());
 
         let tablature = container(tablature_view).id(self.tablature_id.clone());
 
@@ -470,7 +469,8 @@ impl RuxApplication {
             .into()
     }
 
-    fn theme(&self) -> Theme {
+    #[allow(clippy::unused_self)]
+    const fn theme(&self) -> Theme {
         Theme::Dark
     }
 

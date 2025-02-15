@@ -15,7 +15,7 @@ pub struct MusicParser {
 }
 
 impl MusicParser {
-    pub fn new(song: Song) -> Self {
+    pub const fn new(song: Song) -> Self {
         Self { song }
     }
     pub fn take_song(&mut self) -> Song {
@@ -145,12 +145,12 @@ impl MusicParser {
 
             if self.song.version == GpVersion::GP5 {
                 // skip 44
-                i = skip(i, 44)
+                i = skip(i, 44);
             }
 
             if self.song.version > GpVersion::GP5 {
                 // skip 49
-                i = skip(i, 49)
+                i = skip(i, 49);
             };
 
             if self.song.version > GpVersion::GP5 {
@@ -181,7 +181,7 @@ impl MusicParser {
                 }
             } else {
                 log::debug!("channel {} not found", gm_channel_1);
-                debug_assert!(false, "channel {} not found", gm_channel_1)
+                debug_assert!(false, "channel {gm_channel_1} not found");
             }
             Ok((i, gm_channel_1))
         }
@@ -291,7 +291,7 @@ impl MusicParser {
                 log::debug!("Parsing beat {}", b);
                 let (inner, beat) = self.parse_beat(beat_start, track_index, measure_index)(i)?;
                 if !beat.empty {
-                    beat_start += beat.duration.time() as i64;
+                    beat_start += i64::from(beat.duration.time());
                 }
                 i = inner;
                 voice.beats.push(beat);
@@ -321,7 +321,7 @@ impl MusicParser {
             if (flags & 0x40) == 0x40 {
                 let (inner, beat_type) = parse_byte(i)?;
                 i = inner;
-                beat.empty = beat_type & 0x02 == 0
+                beat.empty = beat_type & 0x02 == 0;
             }
 
             // beat duration is an eighth note
@@ -365,7 +365,7 @@ impl MusicParser {
             log::debug!("Parsing notes for beat ({} strings)", track.strings.len());
             assert!(!track.strings.is_empty());
             for (string_id, string_value) in track.strings.iter().enumerate() {
-                if (string_flags & 1 << (7 - string_value.0)) > 0 {
+                if string_flags & (1 << (7 - string_value.0)) > 0 {
                     log::debug!("Parsing note for string {}", string_id + 1);
                     let mut note = Note::new(note_effect.clone());
                     let (inner, ()) = self.parse_note(&mut note, string_value, track_index)(i)?;
@@ -430,14 +430,14 @@ impl MusicParser {
                 .parse(i)?;
             i = inner;
 
-            let mut tempo_name: String = String::new();
-
-            if self.song.version >= GpVersion::GP5 {
+            let tempo_name = if self.song.version >= GpVersion::GP5 {
                 let (inner, tempo_name_tmp) = parse_int_byte_sized_string(i)?;
                 log::debug!("Tempo name: {}", tempo_name_tmp);
                 i = inner;
-                tempo_name = tempo_name_tmp;
-            }
+                tempo_name_tmp
+            } else {
+                String::new()
+            };
 
             let (inner, tempo_value) = parse_int(i)?;
             i = inner;
@@ -518,7 +518,7 @@ impl MusicParser {
             if (flags & 0x10) == 0x10 {
                 let (inner, velocity) = parse_signed_byte(i)?;
                 i = inner;
-                note.velocity = convert_velocity(velocity as i16);
+                note.velocity = convert_velocity(i16::from(velocity));
             }
 
             // note value
@@ -529,7 +529,7 @@ impl MusicParser {
                 let value = if note.kind == NoteType::Tie {
                     self.get_tied_note_value(string, track_index)
                 } else {
-                    fret as i16
+                    i16::from(fret)
                 };
                 // value is between 0 and 99
                 if (0..100).contains(&value) {
