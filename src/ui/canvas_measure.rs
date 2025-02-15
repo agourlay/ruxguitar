@@ -153,14 +153,15 @@ impl canvas::Program<Message> for CanvasMeasure {
             let color_gray = Color::from_rgb8(0x40, 0x44, 0x4B);
             let color_dark_red = Color::from_rgb8(200, 50, 50);
 
-            // draw first measure vertical line
-            // TODO draw only for the first measure because the end measure will be the start of the next measure
-            draw_measure_vertical_line(
-                frame,
-                vertical_measure_height,
-                measure_start_x,
-                measure_start_y,
-            );
+            // draw first vertical line only for measure at the of rows
+            if bounds.x == MEASURE_NOTES_PADDING {
+                draw_measure_vertical_line(
+                    frame,
+                    vertical_measure_height,
+                    measure_start_x,
+                    measure_start_y,
+                );
+            }
 
             // draw focused box
             if self.is_focused {
