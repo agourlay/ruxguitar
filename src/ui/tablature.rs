@@ -43,8 +43,22 @@ impl Tablature {
         let track = &self.song.tracks[self.track_id];
         let measures = track.measures.len();
         for i in 0..measures {
+            let measure_header = &self.song.measure_headers[i];
+            let previous_measure_header = if i > 0 {
+                Some(&self.song.measure_headers[i - 1])
+            } else {
+                None
+            };
             let focused = self.focused_measure == i;
-            let measure = CanvasMeasure::new(i, self.track_id, self.song.clone(), focused);
+            let has_time_signature = i == 0
+                || measure_header.time_signature != previous_measure_header.unwrap().time_signature;
+            let measure = CanvasMeasure::new(
+                i,
+                self.track_id,
+                self.song.clone(),
+                focused,
+                has_time_signature,
+            );
             if i == 0 {
                 // all measures have the same height - grab first one
                 self.canvas_measure_height = measure.vertical_measure_height;
