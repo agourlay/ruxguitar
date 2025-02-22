@@ -176,9 +176,7 @@ mod tests {
         }
         let count_1 = batch.len();
         assert_eq!(&events[0..count_1], batch);
-        assert!(batch
-            .iter()
-            .all(MidiEvent::is_midi_message));
+        assert!(batch.iter().all(MidiEvent::is_midi_message));
 
         let mut pos = count_1;
         loop {
