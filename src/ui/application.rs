@@ -1,4 +1,6 @@
-use iced::widget::{column, container, horizontal_space, pick_list, row, text};
+use iced::widget::{
+    center, column, container, horizontal_space, mouse_area, opaque, pick_list, row, stack, text,
+};
 use iced::{
     keyboard, stream, window, Alignment, Border, Color, Element, Size, Subscription, Task, Theme,
 };
@@ -37,6 +39,7 @@ pub struct RuxApplication {
     beat_sender: Arc<Sender<usize>>,            // beat notifier
     beat_receiver: Arc<Mutex<Receiver<usize>>>, // beat receiver
     file_picker_folder: Option<PathBuf>,        // last folder used in file picker,
+    error_message: Option<String>,              // error message to display
 }
 
 #[derive(Debug)]
@@ -129,6 +132,8 @@ pub enum Message {
     TempoSelected(TempoSelection), // tempo selected
     IncreaseTempo,                 // increase tempo
     DecreaseTempo,                 // decrease selection
+    ClearError,                    // clear error message
+    ReportError(String),           // report error message
 }
 
 impl RuxApplication {
@@ -147,6 +152,7 @@ impl RuxApplication {
             beat_receiver: Arc::new(Mutex::new(beat_receiver)),
             beat_sender: Arc::new(beat_sender),
             file_picker_folder: None, // TODO store last folder used in $user/home/.ruxguitar
+            error_message: None,
         }
     }
 
@@ -223,9 +229,9 @@ impl RuxApplication {
                                 })
                                 .collect();
                             if track_selections.is_empty() {
-                                log::warn!("No tracks found in GP file");
-                                // TODO show alert popup
-                                return Task::none();
+                                return Task::done(Message::ReportError(
+                                    "No tracks found in GP file".to_string(),
+                                ));
                             }
                             self.all_tracks.clone_from(&track_selections);
                             self.song_info = Some(SongDisplayInfo::new(&song, file_name));
@@ -255,15 +261,11 @@ impl RuxApplication {
                             // reset tablature scroll
                             scroll_to(tablature_scroll_id, AbsoluteOffset::default())
                         } else {
-                            log::warn!("Failed to parse GP file");
-                            // TODO show alert popup
-                            Task::none()
+                            Task::done(Message::ReportError("Failed to parse GP file".to_string()))
                         }
                     }
                     Err(err) => {
-                        log::warn!("Failed to read GP file: {}", err);
-                        // TODO show alert popup
-                        Task::none()
+                        Task::done(Message::ReportError(format!("Failed to open file: {err}")))
                     }
                 }
             }
@@ -361,6 +363,15 @@ impl RuxApplication {
                         return Task::done(Message::TempoSelected(previous_tempo));
                     }
                 }
+                Task::none()
+            }
+            Message::ClearError => {
+                self.error_message = None;
+                Task::none()
+            }
+            Message::ReportError(error) => {
+                log::warn!("{error}");
+                self.error_message = Some(error);
                 Task::none()
             }
         }
@@ -463,10 +474,18 @@ impl RuxApplication {
 
         let tablature = container(tablature_view).id(self.tablature_id.clone());
 
-        column![controls, tablature, status,]
+        let base = column![controls, tablature, status,]
             .spacing(20)
             .padding(10)
-            .into()
+            .into();
+
+        // add error modal if any
+        if let Some(error_message) = &self.error_message {
+            let error_view = text(error_message).size(20);
+            Self::modal(base, error_view, Message::ClearError)
+        } else {
+            base
+        }
     }
 
     #[allow(clippy::unused_self)]
@@ -515,5 +534,34 @@ impl RuxApplication {
         subscriptions.push(window_resized);
 
         Subscription::batch(subscriptions)
+    }
+
+    fn modal<'a, Message>(
+        base: impl Into<Element<'a, Message>>,
+        content: impl Into<Element<'a, Message>>,
+        on_blur: Message,
+    ) -> Element<'a, Message>
+    where
+        Message: Clone + 'a,
+    {
+        stack![
+            base.into(),
+            opaque(
+                mouse_area(center(opaque(content)).style(|_theme| {
+                    container::Style {
+                        background: Some(
+                            Color {
+                                a: 0.8,
+                                ..Color::BLACK
+                            }
+                            .into(),
+                        ),
+                        ..container::Style::default()
+                    }
+                }))
+                .on_press(on_blur)
+            )
+        ]
+        .into()
     }
 }
