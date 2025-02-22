@@ -47,7 +47,7 @@ pub async fn load_file(
     let file_name = path
         .file_name()
         .and_then(|f| f.to_str())
-        .map(std::string::ToString::to_string)
+        .map(ToString::to_string)
         .unwrap_or_default();
     let parent_folder = path.parent().map(std::convert::Into::into);
     log::info!("Loading file: {:?}", file_name);

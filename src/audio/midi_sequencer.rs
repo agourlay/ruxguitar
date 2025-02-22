@@ -178,7 +178,7 @@ mod tests {
         assert_eq!(&events[0..count_1], batch);
         assert!(batch
             .iter()
-            .all(super::super::midi_event::MidiEvent::is_midi_message));
+            .all(MidiEvent::is_midi_message));
 
         let mut pos = count_1;
         loop {
