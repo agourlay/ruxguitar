@@ -45,7 +45,7 @@ impl Tablature {
         for i in 0..measures {
             let measure_header = &self.song.measure_headers[i];
             let previous_measure_header = if i > 0 {
-                Some(&self.song.measure_headers[i - 1])
+                self.song.measure_headers.get(i - 1)
             } else {
                 None
             };

@@ -9,7 +9,7 @@ use iced::event::Status;
 use iced::mouse::{Cursor, Interaction};
 use iced::widget::canvas::{Cache, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::{canvas, Canvas};
-use iced::{Color, Element, Font, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
 use std::ops::Div;
 use std::rc::Rc;
 
@@ -486,7 +486,7 @@ fn draw_time_signature(
 ) {
     let position_x = 12.0;
     let position_y = if string_count > 4 {
-        (STRING_LINE_HEIGHT * (string_count - 4) as f32 ).div(2.0)
+        (STRING_LINE_HEIGHT * (string_count - 4) as f32).div(2.0)
     } else {
         0.0
     };
@@ -495,12 +495,11 @@ fn draw_time_signature(
     let tempo_text = Text {
         content: format!("{numerator}\n{denominator}"),
         color: Color::WHITE,
-        size: 19.into(),
-        font: Font {
-            weight: iced::font::Weight::Semibold,
-            ..Font::default()
-        },
-        position: Point::new(measure_start_x + position_x, (FIRST_STRING_Y - 3.0) + position_y),
+        size: 17.into(),
+        position: Point::new(
+            measure_start_x + position_x,
+            (FIRST_STRING_Y - 1.0) + position_y,
+        ),
         ..Text::default()
     };
     frame.fill_text(tempo_text);
