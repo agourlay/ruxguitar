@@ -1,4 +1,6 @@
-use crate::parser::song_parser::{Beat, HarmonicType, Note, NoteEffect, NoteType, SlideType, Song};
+use crate::parser::song_parser::{
+    Beat, HarmonicType, Note, NoteEffect, NoteType, SlideType, Song, TimeSignature,
+};
 use crate::ui::application::Message;
 use iced::advanced::mouse;
 use iced::advanced::text::Shaping::Advanced;
@@ -8,6 +10,7 @@ use iced::mouse::{Cursor, Interaction};
 use iced::widget::canvas::{Cache, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::{canvas, Canvas};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
+use std::ops::Div;
 use std::rc::Rc;
 
 // Drawing constants
@@ -47,16 +50,27 @@ pub struct CanvasMeasure {
     measure_len: f32,
     pub total_measure_len: f32,
     pub vertical_measure_height: f32,
+    has_time_signature: bool,
 }
 
 impl CanvasMeasure {
-    pub fn new(measure_id: usize, track_id: usize, song: Rc<Song>, focused: bool) -> Self {
+    pub fn new(
+        measure_id: usize,
+        track_id: usize,
+        song: Rc<Song>,
+        focused: bool,
+        has_time_signature: bool,
+    ) -> Self {
         let track = &song.tracks[track_id];
         let measure = &track.measures[measure_id];
         let beat_count = measure.voices[0].beats.len();
         let measure_len = MIN_MEASURE_WIDTH.max(beat_count as f32 * BEAT_LENGTH);
         // total length of measure (padding on both sides)
-        let total_measure_len = measure_len + MEASURE_NOTES_PADDING * 2.0;
+        let total_measure_len = if has_time_signature {
+            measure_len + MEASURE_NOTES_PADDING * 2.0 + BEAT_LENGTH
+        } else {
+            measure_len + MEASURE_NOTES_PADDING * 2.0
+        };
         let string_count = track.strings.len();
         // total height of measure (same for all measures in track)
         let vertical_measure_height = STRING_LINE_HEIGHT * (string_count - 1) as f32;
@@ -71,6 +85,7 @@ impl CanvasMeasure {
             measure_len,
             total_measure_len,
             vertical_measure_height,
+            has_time_signature,
         }
     }
 
@@ -182,13 +197,13 @@ impl canvas::Program<Message> for CanvasMeasure {
             };
 
             // display time signature (if first measure OR if it changed)
-            if self.measure_id == 0
-                || measure_header.time_signature != previous_measure_header.unwrap().time_signature
-            {
-                let numerator = measure_header.time_signature.numerator;
-                let denominator = measure_header.time_signature.denominator.value;
-                log::debug!("time signature change {} / {}", numerator, denominator);
-                // TODO draw time signature
+            if self.has_time_signature {
+                draw_time_signature(
+                    frame,
+                    &measure_header.time_signature,
+                    measure_start_x,
+                    string_count,
+                );
             }
 
             // TODO draw repeat annotations
@@ -269,11 +284,16 @@ impl canvas::Program<Message> for CanvasMeasure {
                 } else {
                     Color::WHITE
                 };
+                let beat_start = if self.has_time_signature {
+                    measure_start_x + BEAT_LENGTH
+                } else {
+                    measure_start_x
+                };
                 // draw beat
                 draw_beat(
                     frame,
                     self.measure_len,
-                    measure_start_x,
+                    beat_start,
                     measure_start_y,
                     beats_len,
                     b_id,
@@ -456,6 +476,33 @@ fn draw_note(
         ..Text::default()
     };
     frame.fill_text(note_effect_text);
+}
+
+fn draw_time_signature(
+    frame: &mut Frame<Renderer>,
+    time_signature: &TimeSignature,
+    measure_start_x: f32,
+    string_count: usize,
+) {
+    let position_x = 12.0;
+    let position_y = if string_count > 4 {
+        (STRING_LINE_HEIGHT * (string_count - 4) as f32).div(2.0)
+    } else {
+        0.0
+    };
+    let numerator = time_signature.numerator;
+    let denominator = time_signature.denominator.value;
+    let tempo_text = Text {
+        content: format!("{numerator}\n{denominator}"),
+        color: Color::WHITE,
+        size: 17.into(),
+        position: Point::new(
+            measure_start_x + position_x,
+            (FIRST_STRING_Y - 1.0) + position_y,
+        ),
+        ..Text::default()
+    };
+    frame.fill_text(tempo_text);
 }
 
 // Similar to `https://www.tuxguitar.app/files/1.6.0/desktop/help/edit_effects.html`
