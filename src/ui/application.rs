@@ -1,6 +1,4 @@
-use iced::widget::{
-    center, column, container, horizontal_space, mouse_area, opaque, pick_list, row, stack, text,
-};
+use iced::widget::{column, container, horizontal_space, pick_list, row, text};
 use iced::{
     keyboard, stream, window, Alignment, Border, Color, Element, Size, Subscription, Task, Theme,
 };
@@ -12,7 +10,7 @@ use crate::parser::song_parser::{parse_gp_data, GpVersion, Song};
 use crate::ui::icons::{open_icon, pause_icon, play_icon, solo_icon, stop_icon};
 use crate::ui::picker::{load_file, open_file_dialog, FilePickerError};
 use crate::ui::tablature::Tablature;
-use crate::ui::utils::{action_gated, action_toggle, untitled_text_table_box};
+use crate::ui::utils::{action_gated, action_toggle, modal, untitled_text_table_box};
 use crate::ApplicationArgs;
 use iced::futures::{SinkExt, Stream};
 use iced::keyboard::key::Named::{ArrowDown, ArrowUp, Space};
@@ -482,7 +480,7 @@ impl RuxApplication {
         // add error modal if any
         if let Some(error_message) = &self.error_message {
             let error_view = text(error_message).size(20);
-            Self::modal(base, error_view, Message::ClearError)
+            modal(base, error_view, Message::ClearError)
         } else {
             base
         }
@@ -534,34 +532,5 @@ impl RuxApplication {
         subscriptions.push(window_resized);
 
         Subscription::batch(subscriptions)
-    }
-
-    fn modal<'a, Message>(
-        base: impl Into<Element<'a, Message>>,
-        content: impl Into<Element<'a, Message>>,
-        on_blur: Message,
-    ) -> Element<'a, Message>
-    where
-        Message: Clone + 'a,
-    {
-        stack![
-            base.into(),
-            opaque(
-                mouse_area(center(opaque(content)).style(|_theme| {
-                    container::Style {
-                        background: Some(
-                            Color {
-                                a: 0.8,
-                                ..Color::BLACK
-                            }
-                            .into(),
-                        ),
-                        ..container::Style::default()
-                    }
-                }))
-                .on_press(on_blur)
-            )
-        ]
-        .into()
     }
 }
