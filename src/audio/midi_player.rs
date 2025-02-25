@@ -6,7 +6,6 @@ use crate::audio::FIRST_TICK;
 use crate::parser::song_parser::Song;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::DefaultStreamConfigError;
-use itertools::Itertools;
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 use std::fs::File;
 use std::path::PathBuf;
@@ -366,13 +365,9 @@ fn new_output_stream(
             drop(player_params_guard);
 
             // Interleave the left and right channels into the output buffer.
-            for (i, value) in left
-                .iter()
-                .interleave(right.iter())
-                .take(output.len())
-                .enumerate()
-            {
-                output[i] = *value;
+            for i in 0..output_channel_len {
+                output[i * 2] = left[i];
+                output[i * 2 + 1] = right[i];
             }
         },
         err_fn,
