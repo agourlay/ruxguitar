@@ -60,7 +60,7 @@ impl MidiBuilder {
 
     fn add_track_events(
         &mut self,
-        song_tempo: i32,
+        song_tempo: u32,
         track_id: usize,
         track: &Track,
         measure_headers: &[MeasureHeader],
@@ -218,7 +218,7 @@ impl MidiBuilder {
         string_tuning: i32,
         start: &mut u32,
         duration: &mut u32,
-        tempo: i32,
+        tempo: u32,
         note: &Note,
         next_note_beat: Option<(&Beat, &Note)>,
         velocity: i16,
@@ -566,7 +566,7 @@ impl MidiBuilder {
         }
     }
 
-    fn add_tempo_change(&mut self, tick: u32, tempo: i32) {
+    fn add_tempo_change(&mut self, tick: u32, tempo: u32) {
         let event = MidiEvent::new_tempo_change(tick, tempo);
         self.add_event(event);
     }
@@ -691,7 +691,7 @@ fn apply_velocity_effect(
 fn apply_duration_effect(
     note: &Note,
     next_note_beat: Option<(&Beat, &Note)>,
-    tempo: i32,
+    tempo: u32,
     mut duration: u32,
 ) -> u32 {
     let note_type = &note.kind;
@@ -716,8 +716,8 @@ fn apply_duration_effect(
     duration
 }
 
-fn apply_static_duration(tempo: i32, duration: u32, maximum: u32) -> u32 {
-    let value = tempo as u32 * duration / 60;
+fn apply_static_duration(tempo: u32, duration: u32, maximum: u32) -> u32 {
+    let value = tempo * duration / 60;
     value.min(maximum)
 }
 

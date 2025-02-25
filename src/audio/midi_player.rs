@@ -32,8 +32,8 @@ pub struct AudioPlayer {
 impl AudioPlayer {
     pub fn new(
         song: Rc<Song>,
-        song_tempo: i32,
-        tempo_percentage: usize,
+        song_tempo: u32,
+        tempo_percentage: u32,
         sound_font_file: Option<PathBuf>,
         beat_sender: Arc<Sender<u32>>,
     ) -> Self {
@@ -105,7 +105,7 @@ impl AudioPlayer {
         }
     }
 
-    pub fn set_tempo_percentage(&self, new_tempo_percentage: usize) {
+    pub fn set_tempo_percentage(&self, new_tempo_percentage: u32) {
         let mut params_guard = self.player_params.lock().unwrap();
         params_guard.set_tempo_percentage(new_tempo_percentage);
     }

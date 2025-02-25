@@ -242,12 +242,12 @@ pub enum TripletFeel {
 
 #[derive(Debug, PartialEq)]
 pub struct Tempo {
-    pub value: i32,
+    pub value: u32,
     pub name: Option<String>,
 }
 
 impl Tempo {
-    const fn new(value: i32, name: Option<String>) -> Self {
+    const fn new(value: u32, name: Option<String>) -> Self {
         Tempo { value, name }
     }
 }
@@ -346,7 +346,7 @@ impl Duration {
     }
 
     pub fn time(&self) -> u32 {
-        let mut time = f64::from(QUARTER_TIME) * (4.0 / f64::from(self.value));
+        let mut time = QUARTER_TIME as f32 * (4.0 / self.value as f32);
         if self.dotted {
             time += time / 2.0;
         } else if self.double_dotted {
@@ -1219,7 +1219,7 @@ pub fn parse_triplet_feel(i: &[u8]) -> IResult<&[u8], TripletFeel> {
 /// the time signature is propagated to the next measure
 pub fn parse_measure_header(
     previous_time_signature: TimeSignature,
-    song_tempo: i32,
+    song_tempo: u32,
     song_version: GpVersion,
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], MeasureHeader> {
     move |i: &[u8]| {
@@ -1309,7 +1309,7 @@ pub fn parse_measure_header(
 
 pub fn parse_measure_headers(
     measure_count: i32,
-    song_tempo: i32,
+    song_tempo: u32,
     version: GpVersion,
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], Vec<MeasureHeader>> {
     move |i: &[u8]| {
@@ -1584,7 +1584,7 @@ pub fn parse_gp_data(file_data: &[u8]) -> Result<Song, RuxError> {
                 midi_channels,
             )| {
                 // init base song
-                let tempo = Tempo::new(tempo, tempo_name);
+                let tempo = Tempo::new(tempo as u32, tempo_name);
                 Song {
                     version,
                     song_info,

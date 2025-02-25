@@ -466,7 +466,7 @@ impl MusicParser {
                 self.song.measure_headers[measure_index..]
                     .iter_mut()
                     .for_each(|mh| {
-                        mh.tempo.value = tempo_value;
+                        mh.tempo.value = tempo_value as u32;
                         mh.tempo.name = Some(tempo_name.clone());
                     });
                 i = skip(i, 1);

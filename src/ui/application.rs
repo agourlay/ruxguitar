@@ -61,7 +61,7 @@ impl SongDisplayInfo {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct TempoSelection {
-    percentage: usize,
+    percentage: u32,
 }
 
 impl Default for TempoSelection {
@@ -71,7 +71,7 @@ impl Default for TempoSelection {
 }
 
 impl TempoSelection {
-    const fn new(percentage: usize) -> Self {
+    const fn new(percentage: u32) -> Self {
         Self { percentage }
     }
 

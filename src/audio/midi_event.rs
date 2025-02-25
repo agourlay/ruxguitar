@@ -45,7 +45,7 @@ impl MidiEvent {
         }
     }
 
-    pub const fn new_tempo_change(tick: u32, tempo: i32) -> Self {
+    pub const fn new_tempo_change(tick: u32, tempo: u32) -> Self {
         let event = MidiEventType::tempo_change(tempo);
         Self {
             tick,
@@ -75,7 +75,7 @@ impl MidiEvent {
 pub enum MidiEventType {
     NoteOn(i32, i32, i16),           // channel, note, velocity
     NoteOff(i32, i32),               // channel, note
-    TempoChange(i32),                // tempo in BPM
+    TempoChange(u32),                // tempo in BPM
     MidiMessage(i32, i32, i32, i32), // channel: i32, command: i32, data1: i32, data2: i32
 }
 
@@ -88,7 +88,7 @@ impl MidiEventType {
         Self::NoteOff(channel, key)
     }
 
-    const fn tempo_change(tempo: i32) -> Self {
+    const fn tempo_change(tempo: u32) -> Self {
         Self::TempoChange(tempo)
     }
 

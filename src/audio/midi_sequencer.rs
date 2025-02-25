@@ -1,7 +1,7 @@
 use crate::audio::midi_event::MidiEvent;
 use std::time::Instant;
 
-const QUARTER_TIME: f64 = 960.0; // 1 quarter note = 960 ticks
+const QUARTER_TIME: f32 = 960.0; // 1 quarter note = 960 ticks
 
 pub struct MidiSequencer {
     current_tick: u32,             // current Midi tick
@@ -91,7 +91,7 @@ impl MidiSequencer {
         Some(&self.sorted_events[start_index..=end_index])
     }
 
-    pub fn advance(&mut self, tempo: i32) {
+    pub fn advance(&mut self, tempo: u32) {
         // init sequencer if first advance after reset
         if self.current_tick == self.last_tick {
             self.current_tick += 1;
@@ -101,7 +101,7 @@ impl MidiSequencer {
         // check how many ticks have passed since last advance
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_time);
-        let elapsed_secs = elapsed.as_secs_f64();
+        let elapsed_secs = elapsed.as_secs_f32();
         let tick_increase = tick_increase(tempo, elapsed_secs);
         self.last_time = now;
         self.last_tick = self.current_tick;
@@ -115,8 +115,8 @@ impl MidiSequencer {
     }
 }
 
-fn tick_increase(tempo_bpm: i32, elapsed_seconds: f64) -> u32 {
-    let tempo_bps = f64::from(tempo_bpm) / 60.0;
+fn tick_increase(tempo_bpm: u32, elapsed_seconds: f32) -> u32 {
+    let tempo_bps = tempo_bpm as f32 / 60.0;
     let bump = QUARTER_TIME * tempo_bps * elapsed_seconds;
     bump as u32
 }
@@ -133,7 +133,7 @@ mod tests {
     fn test_tick_increase() {
         let tempo = 100;
         let elapsed = Duration::from_millis(32);
-        let result = tick_increase(tempo, elapsed.as_secs_f64());
+        let result = tick_increase(tempo, elapsed.as_secs_f32());
         assert_eq!(result, 51);
     }
 
@@ -141,7 +141,7 @@ mod tests {
     fn test_tick_increase_bis() {
         let tempo = 120;
         let elapsed = Duration::from_millis(100);
-        let result = tick_increase(tempo, elapsed.as_secs_f64());
+        let result = tick_increase(tempo, elapsed.as_secs_f32());
         assert_eq!(result, 192);
     }
     #[test]
