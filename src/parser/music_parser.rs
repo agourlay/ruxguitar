@@ -235,7 +235,7 @@ impl MusicParser {
 
     pub fn parse_measure(
         &mut self,
-        measure_start: i64,
+        measure_start: u32,
         measure_index: usize,
         track_index: usize,
     ) -> impl FnMut(&[u8]) -> IResult<&[u8], Measure> + '_ {
@@ -272,7 +272,7 @@ impl MusicParser {
 
     pub fn parse_voice(
         &mut self,
-        mut beat_start: i64,
+        mut beat_start: u32,
         track_index: usize,
         measure_index: usize,
     ) -> impl FnMut(&[u8]) -> IResult<&[u8], Voice> + '_ {
@@ -291,7 +291,7 @@ impl MusicParser {
                 log::debug!("Parsing beat {}", b);
                 let (inner, beat) = self.parse_beat(beat_start, track_index, measure_index)(i)?;
                 if !beat.empty {
-                    beat_start += i64::from(beat.duration.time());
+                    beat_start += beat.duration.time();
                 }
                 i = inner;
                 voice.beats.push(beat);
@@ -302,7 +302,7 @@ impl MusicParser {
 
     pub fn parse_beat(
         &mut self,
-        start: i64,
+        start: u32,
         track_index: usize,
         measure_index: usize,
     ) -> impl FnMut(&[u8]) -> IResult<&[u8], Beat> + '_ {

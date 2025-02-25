@@ -4,8 +4,8 @@ use std::time::Instant;
 const QUARTER_TIME: f64 = 960.0; // 1 quarter note = 960 ticks
 
 pub struct MidiSequencer {
-    current_tick: usize,           // current Midi tick
-    last_tick: usize,              // last Midi tick
+    current_tick: u32,             // current Midi tick
+    last_tick: u32,                // last Midi tick
     last_time: Instant,            // last time in milliseconds
     sorted_events: Vec<MidiEvent>, // sorted Midi events
 }
@@ -29,7 +29,7 @@ impl MidiSequencer {
         &self.sorted_events
     }
 
-    pub fn set_tick(&mut self, tick: usize) {
+    pub fn set_tick(&mut self, tick: u32) {
         self.last_tick = tick;
         self.current_tick = tick;
     }
@@ -43,11 +43,11 @@ impl MidiSequencer {
         self.last_tick = 0;
     }
 
-    pub const fn get_tick(&self) -> usize {
+    pub const fn get_tick(&self) -> u32 {
         self.current_tick
     }
 
-    pub const fn get_last_tick(&self) -> usize {
+    pub const fn get_last_tick(&self) -> u32 {
         self.last_tick
     }
 
@@ -109,16 +109,16 @@ impl MidiSequencer {
     }
 
     #[cfg(test)]
-    pub fn advance_tick(&mut self, tick: usize) {
+    pub fn advance_tick(&mut self, tick: u32) {
         self.last_tick = self.current_tick;
         self.current_tick += tick;
     }
 }
 
-fn tick_increase(tempo_bpm: i32, elapsed_seconds: f64) -> usize {
+fn tick_increase(tempo_bpm: i32, elapsed_seconds: f64) -> u32 {
     let tempo_bps = f64::from(tempo_bpm) / 60.0;
     let bump = QUARTER_TIME * tempo_bps * elapsed_seconds;
-    bump as usize
+    bump as u32
 }
 
 #[cfg(test)]

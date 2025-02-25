@@ -17,7 +17,7 @@ use std::fmt::Debug;
 
 pub const MAX_VOICES: usize = 2;
 
-pub const QUARTER_TIME: i64 = 960;
+pub const QUARTER_TIME: u32 = 960;
 pub const QUARTER: u16 = 4;
 
 pub const DURATION_EIGHTH: u8 = 8;
@@ -75,12 +75,12 @@ pub struct Song {
 }
 
 impl Song {
-    pub fn get_measure_beat_for_tick(&self, track_id: usize, tick: usize) -> (usize, usize) {
+    pub fn get_measure_beat_for_tick(&self, track_id: usize, tick: u32) -> (usize, usize) {
         let mut measure_index = 0;
         let mut beat_index = 0;
         // TODO could pre-compute boundaries with btree map
         for (i, measure) in self.measure_headers.iter().enumerate() {
-            if measure.start > tick as i64 {
+            if measure.start > tick {
                 break;
             } else {
                 measure_index = i;
@@ -88,7 +88,7 @@ impl Song {
         }
         let voice = &self.tracks[track_id].measures[measure_index].voices[0];
         for (j, beat) in voice.beats.iter().enumerate() {
-            if beat.start > tick as i64 {
+            if beat.start > tick {
                 break;
             } else {
                 beat_index = j;
@@ -263,7 +263,7 @@ impl Default for Tempo {
 
 #[derive(Debug, PartialEq)]
 pub struct MeasureHeader {
-    pub start: i64,
+    pub start: u32,
     pub time_signature: TimeSignature,
     pub tempo: Tempo,
     pub marker: Option<Marker>,
@@ -291,16 +291,16 @@ impl Default for MeasureHeader {
 }
 
 impl MeasureHeader {
-    pub fn length(&self) -> i64 {
-        let numerator = i64::from(self.time_signature.numerator);
-        let denominator = i64::from(self.time_signature.denominator.time());
+    pub fn length(&self) -> u32 {
+        let numerator = u32::from(self.time_signature.numerator);
+        let denominator = self.time_signature.denominator.time();
         numerator * denominator
     }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TimeSignature {
-    pub numerator: i8,
+    pub numerator: u8,
     pub denominator: Duration,
 }
 
@@ -346,7 +346,7 @@ impl Duration {
     }
 
     pub fn time(&self) -> u32 {
-        let mut time = QUARTER_TIME as f64 * (4.0 / f64::from(self.value));
+        let mut time = f64::from(QUARTER_TIME) * (4.0 / f64::from(self.value));
         if self.dotted {
             time += time / 2.0;
         } else if self.double_dotted {
@@ -363,9 +363,9 @@ pub struct BendPoint {
 }
 
 impl BendPoint {
-    pub fn get_time(&self, duration: usize) -> usize {
+    pub fn get_time(&self, duration: u32) -> u32 {
         let time = duration as f32 * f32::from(self.position) / BEND_EFFECT_MAX_POSITION_LENGTH;
-        time as usize
+        time as u32
     }
 }
 
@@ -726,7 +726,7 @@ pub struct Beat {
     pub duration: Duration,
     pub empty: bool,
     pub text: String,
-    pub start: i64,
+    pub start: u32,
     pub effect: BeatEffects,
 }
 
@@ -1237,7 +1237,7 @@ pub fn parse_measure_header(
             log::debug!("Parsing numerator");
             let (inner, numerator) = parse_signed_byte(i)?;
             i = inner;
-            mh.time_signature.numerator = numerator;
+            mh.time_signature.numerator = numerator as u8;
         }
 
         // Denominator of the (key) signature

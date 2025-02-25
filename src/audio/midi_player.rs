@@ -27,7 +27,7 @@ pub struct AudioPlayer {
     player_params: Arc<Mutex<MidiPlayerParams>>, // Use to communicate play changes to sequencer
     synthesizer: Arc<Mutex<Synthesizer>>,        // Synthesizer for audio output
     sound_font: Arc<SoundFont>,                  // Sound font for synthesizer
-    beat_sender: Arc<Sender<usize>>,             // Notify beat changes
+    beat_sender: Arc<Sender<u32>>,               // Notify beat changes
 }
 
 impl AudioPlayer {
@@ -36,7 +36,7 @@ impl AudioPlayer {
         song_tempo: i32,
         tempo_percentage: usize,
         sound_font_file: Option<PathBuf>,
-        beat_sender: Arc<Sender<usize>>,
+        beat_sender: Arc<Sender<u32>>,
     ) -> Self {
         // default to no solo track
         let solo_track_id = None;
@@ -179,7 +179,7 @@ impl AudioPlayer {
 
         // move sequencer to measure start tick
         let mut sequencer_guard = self.sequencer.lock().unwrap();
-        sequencer_guard.set_tick(measure_start_tick as usize);
+        sequencer_guard.set_tick(measure_start_tick);
         drop(sequencer_guard);
 
         // stop current sound
@@ -207,7 +207,7 @@ fn new_output_stream(
     player_params: Arc<Mutex<MidiPlayerParams>>,
     synthesizer: Arc<Mutex<Synthesizer>>,
     sound_font: Arc<SoundFont>,
-    beat_notifier: Arc<Sender<usize>>,
+    beat_notifier: Arc<Sender<u32>>,
 ) -> Result<cpal::Stream, AudioStreamError> {
     let host = cpal::default_host();
     let Some(device) = host.default_output_device() else {

@@ -1,7 +1,7 @@
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct MidiEvent {
-    /// The tick at which the event occurs. (TODO make it u32)
-    pub tick: usize,
+    /// The tick at which the event occurs.
+    pub tick: u32,
     /// The type of the event.
     pub event: MidiEventType,
     /// The track number of the event. None = info event. (TODO make it u8)
@@ -22,7 +22,7 @@ impl MidiEvent {
     }
 
     pub const fn new_note_on(
-        tick: usize,
+        tick: u32,
         track: usize,
         key: i32,
         velocity: i16,
@@ -36,7 +36,7 @@ impl MidiEvent {
         }
     }
 
-    pub const fn new_note_off(tick: usize, track: usize, key: i32, channel: i32) -> Self {
+    pub const fn new_note_off(tick: u32, track: usize, key: i32, channel: i32) -> Self {
         let event = MidiEventType::note_off(channel, key);
         Self {
             tick,
@@ -45,7 +45,7 @@ impl MidiEvent {
         }
     }
 
-    pub const fn new_tempo_change(tick: usize, tempo: i32) -> Self {
+    pub const fn new_tempo_change(tick: u32, tempo: i32) -> Self {
         let event = MidiEventType::tempo_change(tempo);
         Self {
             tick,
@@ -55,7 +55,7 @@ impl MidiEvent {
     }
 
     pub const fn new_midi_message(
-        tick: usize,
+        tick: u32,
         track: usize,
         channel: i32,
         command: i32,

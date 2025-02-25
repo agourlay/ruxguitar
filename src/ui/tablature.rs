@@ -84,7 +84,7 @@ impl Tablature {
     /// Focus on the beat at the given tick
     ///
     /// Returns the amount of scroll needed to focus on the beat
-    pub fn focus_on_tick(&mut self, tick: usize) -> Option<f32> {
+    pub fn focus_on_tick(&mut self, tick: u32) -> Option<f32> {
         let (new_measure_id, new_beat_id) =
             self.song.get_measure_beat_for_tick(self.track_id, tick);
         let current_focus_id = self.focused_measure;
@@ -122,7 +122,7 @@ impl Tablature {
     pub fn focus_on_measure(&mut self, new_measure_id: usize) {
         let measure_headers = &self.song.measure_headers[new_measure_id];
         let tick = measure_headers.start;
-        self.focus_on_tick(tick as usize);
+        self.focus_on_tick(tick);
     }
 
     pub fn view(&self) -> Element<Message> {

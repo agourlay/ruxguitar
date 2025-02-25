@@ -27,19 +27,19 @@ use tokio::sync::Mutex;
 const ICONS_FONT: &[u8] = include_bytes!("../../resources/icons.ttf");
 
 pub struct RuxApplication {
-    song_info: Option<SongDisplayInfo>,         // parsed song
-    track_selection: TrackSelection,            // selected track
-    all_tracks: Vec<TrackSelection>,            // all possible tracks
-    tablature: Option<Tablature>,               // loaded tablature
-    tablature_id: container::Id,                // tablature container id
-    tempo_selection: TempoSelection,            // tempo percentage for playback
-    audio_player: Option<AudioPlayer>,          // audio player
-    tab_file_is_loading: bool,                  // file loading flag in progress
-    sound_font_file: Option<PathBuf>,           // sound font file
-    beat_sender: Arc<Sender<usize>>,            // beat notifier
-    beat_receiver: Arc<Mutex<Receiver<usize>>>, // beat receiver
-    file_picker_folder: Option<PathBuf>,        // last folder used in file picker,
-    error_message: Option<String>,              // error message to display
+    song_info: Option<SongDisplayInfo>,       // parsed song
+    track_selection: TrackSelection,          // selected track
+    all_tracks: Vec<TrackSelection>,          // all possible tracks
+    tablature: Option<Tablature>,             // loaded tablature
+    tablature_id: container::Id,              // tablature container id
+    tempo_selection: TempoSelection,          // tempo percentage for playback
+    audio_player: Option<AudioPlayer>,        // audio player
+    tab_file_is_loading: bool,                // file loading flag in progress
+    sound_font_file: Option<PathBuf>,         // sound font file
+    beat_sender: Arc<Sender<u32>>,            // beat notifier
+    beat_receiver: Arc<Mutex<Receiver<u32>>>, // beat receiver
+    file_picker_folder: Option<PathBuf>,      // last folder used in file picker,
+    error_message: Option<String>,            // error message to display
 }
 
 #[derive(Debug)]
@@ -123,7 +123,7 @@ pub enum Message {
     FileOpened(Result<(Vec<u8>, Option<PathBuf>, String), FilePickerError>), // file content, parent folder & file name
     TrackSelected(TrackSelection),                                           // track selection
     FocusMeasure(usize),           // used when clicking on measure in tablature
-    FocusTick(usize),              // focus on a specific tick in the tablature
+    FocusTick(u32),                // focus on a specific tick in the tablature
     PlayPause,                     // toggle play/pause
     StopPlayer,                    // stop playback
     ToggleSolo,                    // toggle solo mode
@@ -138,7 +138,7 @@ pub enum Message {
 
 impl RuxApplication {
     fn new(sound_font_file: Option<PathBuf>) -> Self {
-        let (beat_sender, beat_receiver) = tokio::sync::watch::channel(0);
+        let (beat_sender, beat_receiver) = tokio::sync::watch::channel(0_u32);
         Self {
             song_info: None,
             track_selection: TrackSelection::default(),

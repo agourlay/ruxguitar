@@ -8,8 +8,8 @@ use crate::parser::song_parser::{
 };
 use std::rc::Rc;
 
-const DEFAULT_DURATION_DEAD: i32 = 30;
-const DEFAULT_DURATION_PM: i32 = 60;
+const DEFAULT_DURATION_DEAD: u32 = 30;
+const DEFAULT_DURATION_PM: u32 = 60;
 const DEFAULT_BEND: f32 = 64.0;
 const DEFAULT_BEND_SEMI_TONE: f32 = 2.75;
 
@@ -79,7 +79,7 @@ impl MidiBuilder {
                 // change tempo if necessary
                 let measure_tempo = measure_header.tempo.value;
                 if measure_tempo != prev_tempo {
-                    let tick = measure_header.start as usize;
+                    let tick = measure_header.start;
                     self.add_tempo_change(tick, measure_tempo);
                     prev_tempo = measure_tempo;
                 }
@@ -156,13 +156,13 @@ impl MidiBuilder {
         strings: &[(i32, i32)],
     ) {
         let _stroke = &beat.effect.stroke;
-        let mut start = beat.start as usize;
+        let mut start = beat.start;
         let channel_id = midi_channel.channel_id;
         let tempo = measure_header.tempo.value;
         // TODO when to use effect channel instead?
         assert!(channel_id < 16);
         let track_offset = track.offset;
-        let beat_duration = beat.duration.time() as usize;
+        let beat_duration = beat.duration.time();
         for note in &beat.notes {
             if note.kind != NoteType::Tie {
                 let (string_id, string_tuning) = strings[note.string as usize - 1];
@@ -216,8 +216,8 @@ impl MidiBuilder {
         track_id: usize,
         track_offset: i32,
         string_tuning: i32,
-        start: &mut usize,
-        duration: &mut usize,
+        start: &mut u32,
+        duration: &mut u32,
         tempo: i32,
         note: &Note,
         next_note_beat: Option<(&Beat, &Note)>,
@@ -250,7 +250,7 @@ impl MidiBuilder {
         // grace note
         if let Some(grace) = &note.effect.grace {
             let grace_key = track_offset + i32::from(grace.fret) + string_tuning;
-            let grace_length = grace.duration_time() as usize;
+            let grace_length = grace.duration_time() as u32;
             let grace_velocity = grace.velocity;
             let grace_duration = if grace.is_dead {
                 apply_static_duration(tempo, DEFAULT_DURATION_DEAD, grace_length)
@@ -258,7 +258,7 @@ impl MidiBuilder {
                 grace_length
             };
             let on_beat_duration = *start - grace_length;
-            if grace.is_on_beat || on_beat_duration < QUARTER_TIME as usize {
+            if grace.is_on_beat || on_beat_duration < QUARTER_TIME {
                 *start = start.saturating_add(grace_length);
                 *duration = duration.saturating_sub(grace_length);
             }
@@ -276,7 +276,7 @@ impl MidiBuilder {
         if let Some(trill) = &note.effect.trill {
             if !is_percussion {
                 let trill_key = track_offset + i32::from(trill.fret) + string_tuning;
-                let mut trill_length = trill.duration.time() as usize;
+                let mut trill_length = trill.duration.time();
 
                 let trill_tick_limit = *start + *duration;
                 let mut real_key = false;
@@ -305,7 +305,7 @@ impl MidiBuilder {
 
         // tremolo picking
         if let Some(tremolo_picking) = &note.effect.tremolo_picking {
-            let mut tp_length = tremolo_picking.duration.time() as usize;
+            let mut tp_length = tremolo_picking.duration.time();
             let mut tick = *start;
             let tp_tick_limit = *start + *duration;
             let mut counter = 0;
@@ -347,17 +347,17 @@ impl MidiBuilder {
                     let value_2 = i32::from(next_note.value);
 
                     let tick1 = *start;
-                    let tick2 = next_beat.start as usize;
+                    let tick2 = next_beat.start;
 
                     // make slide
                     let distance: i32 = value_2 - value_1;
                     let length: i32 = (tick2 - tick1) as i32;
-                    let points = length / (QUARTER_TIME as usize / 8) as i32;
+                    let points = length / (QUARTER_TIME / 8) as i32;
                     for p_offset in 1..=points {
                         let tone = ((length / points) * p_offset) * distance / length;
                         let bend = DEFAULT_BEND + (tone as f32 * DEFAULT_BEND_SEMI_TONE * 2.0);
                         let bend_tick = tick1 as i32 + (length / points) * p_offset;
-                        self.add_pitch_bend(bend_tick as usize, track_id, channel_id, bend as i32);
+                        self.add_pitch_bend(bend_tick as u32, track_id, channel_id, bend as i32);
                     }
 
                     // normalise the bend
@@ -420,7 +420,7 @@ impl MidiBuilder {
         Some(key)
     }
 
-    fn add_vibrato(&mut self, track_id: usize, start: usize, duration: usize, channel_id: usize) {
+    fn add_vibrato(&mut self, track_id: usize, start: u32, duration: u32, channel_id: usize) {
         let end = start + duration;
         let mut next_start = start;
         while next_start < end {
@@ -445,8 +445,8 @@ impl MidiBuilder {
     fn add_bend(
         &mut self,
         track_id: usize,
-        start: usize,
-        duration: usize,
+        start: u32,
+        duration: u32,
         channel_id: i32,
         bend: &BendEffect,
     ) {
@@ -483,15 +483,15 @@ impl MidiBuilder {
         channel_id: i32,
         mut value: i32,
         next_value: i32,
-        mut bend_start: usize,
-        start: usize,
+        mut bend_start: u32,
+        start: u32,
         next_point: &BendPoint,
-        duration: usize,
+        duration: u32,
     ) {
         if value != next_value {
             let next_bend_start = start + next_point.get_time(duration);
             let width = (next_bend_start - bend_start) as f32 / (next_value - value).abs() as f32;
-            let width = width as usize;
+            let width = width as u32;
             // ascending
             if value < next_value {
                 while value < next_value {
@@ -518,8 +518,8 @@ impl MidiBuilder {
     fn add_tremolo_bar(
         &mut self,
         track_id: usize,
-        start: usize,
-        duration: usize,
+        start: u32,
+        duration: u32,
         channel_id: i32,
         tremolo_bar: &TremoloBarEffect,
     ) {
@@ -552,8 +552,8 @@ impl MidiBuilder {
         &mut self,
         track_id: usize,
         key: i32,
-        start: usize,
-        duration: usize,
+        start: u32,
+        duration: u32,
         velocity: i16,
         channel: i32,
     ) {
@@ -566,24 +566,24 @@ impl MidiBuilder {
         }
     }
 
-    fn add_tempo_change(&mut self, tick: usize, tempo: i32) {
+    fn add_tempo_change(&mut self, tick: u32, tempo: i32) {
         let event = MidiEvent::new_tempo_change(tick, tempo);
         self.add_event(event);
     }
 
-    fn add_bank_selection(&mut self, tick: usize, track_id: usize, channel: i32, bank: i32) {
+    fn add_bank_selection(&mut self, tick: u32, track_id: usize, channel: i32, bank: i32) {
         let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x00, bank);
         self.add_event(event);
     }
 
-    fn add_volume_selection(&mut self, tick: usize, track_id: usize, channel: i32, volume: i32) {
+    fn add_volume_selection(&mut self, tick: u32, track_id: usize, channel: i32, volume: i32) {
         let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x27, volume);
         self.add_event(event);
     }
 
     fn add_expression_selection(
         &mut self,
-        tick: usize,
+        tick: u32,
         track_id: usize,
         channel: i32,
         expression: i32,
@@ -592,17 +592,17 @@ impl MidiBuilder {
         self.add_event(event);
     }
 
-    fn add_chorus_selection(&mut self, tick: usize, track_id: usize, channel: i32, chorus: i32) {
+    fn add_chorus_selection(&mut self, tick: u32, track_id: usize, channel: i32, chorus: i32) {
         let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x5D, chorus);
         self.add_event(event);
     }
 
-    fn add_reverb_selection(&mut self, tick: usize, track_id: usize, channel: i32, reverb: i32) {
+    fn add_reverb_selection(&mut self, tick: u32, track_id: usize, channel: i32, reverb: i32) {
         let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x5B, reverb);
         self.add_event(event);
     }
 
-    fn add_pitch_bend(&mut self, tick: usize, track_id: usize, channel: i32, value: i32) {
+    fn add_pitch_bend(&mut self, tick: u32, track_id: usize, channel: i32, value: i32) {
         // GP uses a value between 0 and 128
         // MIDI uses a value between 0 and 16383 (128 * 128)
         let midi_value = value * 128;
@@ -614,12 +614,12 @@ impl MidiBuilder {
         self.add_event(event);
     }
 
-    fn add_expression(&mut self, tick: usize, track_id: usize, channel: i32, expression: i32) {
+    fn add_expression(&mut self, tick: u32, track_id: usize, channel: i32, expression: i32) {
         let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x0B, expression);
         self.add_event(event);
     }
 
-    fn add_program_selection(&mut self, tick: usize, track_id: usize, channel: i32, program: i32) {
+    fn add_program_selection(&mut self, tick: u32, track_id: usize, channel: i32, program: i32) {
         let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xC0, program, 0);
         self.add_event(event);
     }
@@ -692,16 +692,16 @@ fn apply_duration_effect(
     note: &Note,
     next_note_beat: Option<(&Beat, &Note)>,
     tempo: i32,
-    mut duration: usize,
-) -> usize {
+    mut duration: u32,
+) -> u32 {
     let note_type = &note.kind;
     // TODO handle chain of ties and not just the next one
     if let Some((next_beat, next_note)) = next_note_beat {
         if next_note.kind == NoteType::Tie {
-            duration += next_beat.duration.time() as usize;
+            duration += next_beat.duration.time();
         }
         if note.effect.let_ring {
-            duration += next_beat.duration.time() as usize;
+            duration += next_beat.duration.time();
         }
     }
     if note_type == &NoteType::Dead {
@@ -711,13 +711,13 @@ fn apply_duration_effect(
         return apply_static_duration(tempo, DEFAULT_DURATION_PM, duration);
     }
     if note.effect.staccato {
-        return ((duration * 50) as f64 / 100.00) as usize;
+        return (f64::from(duration) * 50.0 / 100.00) as u32;
     }
     duration
 }
 
-fn apply_static_duration(tempo: i32, duration: i32, maximum: usize) -> usize {
-    let value = (tempo * duration / 60) as usize;
+fn apply_static_duration(tempo: i32, duration: u32, maximum: u32) -> u32 {
+    let value = tempo as u32 * duration / 60;
     value.min(maximum)
 }
 

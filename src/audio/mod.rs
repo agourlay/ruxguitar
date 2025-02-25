@@ -5,4 +5,4 @@ mod midi_player_params;
 pub mod midi_sequencer;
 
 /// First tick of a song
-pub const FIRST_TICK: usize = 1;
+pub const FIRST_TICK: u32 = 1;
