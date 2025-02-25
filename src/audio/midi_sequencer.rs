@@ -126,7 +126,6 @@ mod tests {
     use super::*;
     use crate::audio::midi_builder::MidiBuilder;
     use crate::parser::song_parser_tests::parse_gp_file;
-    use std::collections::HashSet;
     use std::rc::Rc;
     use std::time::Duration;
 
@@ -158,9 +157,6 @@ mod tests {
         assert_eq!(events.iter().last().unwrap().tick, 189_120);
         let mut sequencer = MidiSequencer::new(events.clone());
 
-        // keep track of elements seen to detect duplicates
-        let mut seen = HashSet::new();
-
         // last_tick:0 current_tick:0
         let batch = sequencer.get_next_events().unwrap();
         assert_eq!(batch.len(), 0);
@@ -170,10 +166,6 @@ mod tests {
 
         // last_tick:0 current_tick:1
         let batch = sequencer.get_next_events().unwrap();
-        // assert no duplicates
-        for b in batch {
-            assert!(seen.insert(b.clone()), "duplicate event {b:?}");
-        }
         let count_1 = batch.len();
         assert_eq!(&events[0..count_1], batch);
         assert!(batch.iter().all(MidiEvent::is_midi_message));
@@ -187,11 +179,6 @@ mod tests {
             assert_eq!(next_tick - prev_tick, 112);
 
             if let Some(batch) = sequencer.get_next_events() {
-                // assert no duplicates
-                for (id, b) in batch.iter().enumerate() {
-                    assert!(seen.insert(b.clone()), "duplicate event at {id} {b:?}");
-                }
-
                 let count = batch.len();
                 assert_eq!(&events[pos..pos + count], batch);
                 pos += count;
@@ -200,6 +187,5 @@ mod tests {
             }
         }
         assert_eq!(pos, events.len());
-        assert_eq!(seen.len(), events_len);
     }
 }

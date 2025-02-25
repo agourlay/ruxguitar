@@ -1,11 +1,11 @@
-use uuid::Uuid;
-
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct MidiEvent {
-    pub id: Uuid, // unique id for testing purpose
+    /// The tick at which the event occurs. (TODO make it u32)
     pub tick: usize,
+    /// The type of the event.
     pub event: MidiEventType,
-    pub track: Option<usize>, // None = info event
+    /// The track number of the event. None = info event. (TODO make it u8)
+    pub track: Option<usize>,
 }
 
 impl MidiEvent {
@@ -21,40 +21,40 @@ impl MidiEvent {
         !self.is_tempo_change() || !self.is_midi_message()
     }
 
-    pub fn new_note_on(tick: usize, track: usize, key: i32, velocity: i16, channel: i32) -> Self {
+    pub const fn new_note_on(
+        tick: usize,
+        track: usize,
+        key: i32,
+        velocity: i16,
+        channel: i32,
+    ) -> Self {
         let event = MidiEventType::note_on(channel, key, velocity);
-        let id = Uuid::new_v4();
         Self {
-            id,
             tick,
             event,
             track: Some(track),
         }
     }
 
-    pub fn new_note_off(tick: usize, track: usize, key: i32, channel: i32) -> Self {
+    pub const fn new_note_off(tick: usize, track: usize, key: i32, channel: i32) -> Self {
         let event = MidiEventType::note_off(channel, key);
-        let id = Uuid::new_v4();
         Self {
-            id,
             tick,
             event,
             track: Some(track),
         }
     }
 
-    pub fn new_tempo_change(tick: usize, tempo: i32) -> Self {
+    pub const fn new_tempo_change(tick: usize, tempo: i32) -> Self {
         let event = MidiEventType::tempo_change(tempo);
-        let id = Uuid::new_v4();
         Self {
-            id,
             tick,
             event,
             track: None,
         }
     }
 
-    pub fn new_midi_message(
+    pub const fn new_midi_message(
         tick: usize,
         track: usize,
         channel: i32,
@@ -63,9 +63,7 @@ impl MidiEvent {
         data2: i32,
     ) -> Self {
         let event = MidiEventType::midi_message(channel, command, data1, data2);
-        let id = Uuid::new_v4();
         Self {
-            id,
             tick,
             event,
             track: Some(track),
