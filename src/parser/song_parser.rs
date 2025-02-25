@@ -15,7 +15,7 @@ use std::fmt::Debug;
 // GP4 docs at <https://dguitar.sourceforge.net/GP4format.html>
 // GP5 docs thanks to Tuxguitar and <https://github.com/slundi/guitarpro> for the help
 
-pub const MAX_VOICES: usize = 2;
+pub const MAX_VOICES: u32 = 2;
 
 pub const QUARTER_TIME: u32 = 960;
 pub const QUARTER: u16 = 4;
@@ -346,7 +346,7 @@ impl Duration {
     }
 
     pub fn time(&self) -> u32 {
-        let mut time = QUARTER_TIME as f32 * (4.0 / self.value as f32);
+        let mut time = QUARTER_TIME as f32 * (4.0 / f32::from(self.value));
         if self.dotted {
             time += time / 2.0;
         } else if self.double_dotted {

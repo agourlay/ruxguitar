@@ -711,7 +711,7 @@ fn apply_duration_effect(
         return apply_static_duration(tempo, DEFAULT_DURATION_PM, duration);
     }
     if note.effect.staccato {
-        return (f64::from(duration) * 50.0 / 100.00) as u32;
+        return (duration as f32 * 50.0 / 100.00) as u32;
     }
     duration
 }
