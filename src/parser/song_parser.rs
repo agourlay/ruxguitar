@@ -74,30 +74,6 @@ pub struct Song {
     pub tracks: Vec<Track>,
 }
 
-impl Song {
-    pub fn get_measure_beat_for_tick(&self, track_id: usize, tick: u32) -> (usize, usize) {
-        let mut measure_index = 0;
-        let mut beat_index = 0;
-        // TODO could pre-compute boundaries with btree map
-        for (i, measure) in self.measure_headers.iter().enumerate() {
-            if measure.start > tick {
-                break;
-            } else {
-                measure_index = i;
-            }
-        }
-        let voice = &self.tracks[track_id].measures[measure_index].voices[0];
-        for (j, beat) in voice.beats.iter().enumerate() {
-            if beat.start > tick {
-                break;
-            } else {
-                beat_index = j;
-            }
-        }
-        (measure_index, beat_index)
-    }
-}
-
 #[derive(Debug, PartialEq)]
 pub struct MidiChannel {
     pub channel_id: u8,

@@ -5,6 +5,7 @@ use iced::widget::scrollable;
 use iced::widget::scrollable::Id;
 use iced::{Element, Length};
 use iced_aw::Wrap;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 const INNER_PADDING: f32 = 10.0;
@@ -17,11 +18,16 @@ pub struct Tablature {
     focused_measure: usize,
     line_tracker: LineTracker,
     pub scroll_id: Id,
+    measure_per_tick: BTreeMap<u32, usize>, // tick to measure index
 }
 
 impl Tablature {
     pub fn new(song: Rc<Song>, track_id: usize, scroll_id: Id) -> Self {
         let measure_count = song.measure_headers.len();
+        let mut measure_per_tick = BTreeMap::new();
+        for (i, measure) in song.measure_headers.iter().enumerate() {
+            measure_per_tick.insert(measure.start, i);
+        }
         let mut tab = Self {
             song,
             track_id,
@@ -30,6 +36,7 @@ impl Tablature {
             focused_measure: 0,
             line_tracker: LineTracker::default(),
             scroll_id,
+            measure_per_tick,
         };
         tab.load_measures();
         tab
@@ -81,12 +88,56 @@ impl Tablature {
         );
     }
 
+    /// Get the measure and beat indexes for the given tick
+    /// The measure index is the first measure containing the tick
+    ///
+    /// | measure 0 | measure 1 | measure 2 | measure 3 |
+    /// |-----------|-----------|-----------|-----------|
+    /// | 0         | 100       | 200       | 300       |
+    ///
+    ///
+    /// tick: 50
+    /// measure_index: 0
+    ///
+    /// tick: 100
+    /// measure_index: 1
+    ///
+    /// tick: 150
+    /// measure_index: 1
+    ///
+    /// tick: 250
+    /// measure_index: 2
+    ///
+    /// Returns the measure and beat indexes
+    pub fn get_measure_beat_indexes_for_tick(&self, track_id: usize, tick: u32) -> (usize, usize) {
+        // get first measure containing the tick
+        let measure_index = self
+            .measure_per_tick
+            .range(tick / 2..=tick) // synthetic lower bound to avoid large range
+            .next_back()
+            .map(|elem| *elem.1)
+            .unwrap_or(0);
+
+        // get beat index within the measure containing the tick
+        // only a few beats per measure, full scan is Ok.
+        let voice = &self.song.tracks[track_id].measures[measure_index].voices[0];
+        let mut beat_index = 0;
+        for (j, beat) in voice.beats.iter().enumerate() {
+            if beat.start > tick {
+                break;
+            } else {
+                beat_index = j;
+            }
+        }
+        (measure_index, beat_index)
+    }
+
     /// Focus on the beat at the given tick
     ///
     /// Returns the amount of scroll needed to focus on the beat
     pub fn focus_on_tick(&mut self, tick: u32) -> Option<f32> {
         let (new_measure_id, new_beat_id) =
-            self.song.get_measure_beat_for_tick(self.track_id, tick);
+            self.get_measure_beat_indexes_for_tick(self.track_id, tick);
         let current_focus_id = self.focused_measure;
         let current_canvas = self.canvas_measures.get_mut(current_focus_id).unwrap();
         if current_focus_id == new_measure_id {
