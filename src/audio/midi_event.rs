@@ -1,11 +1,13 @@
+/// A MIDI event.
+/// Try to keep this struct as small as possible because there will be a lot of them.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct MidiEvent {
     /// The tick at which the event occurs.
     pub tick: u32,
     /// The type of the event.
     pub event: MidiEventType,
-    /// The track number of the event. None = info event. (TODO make it u8)
-    pub track: Option<usize>,
+    /// The track number of the event. None = info event.
+    pub track: Option<u8>,
 }
 
 impl MidiEvent {
@@ -32,7 +34,7 @@ impl MidiEvent {
         Self {
             tick,
             event,
-            track: Some(track),
+            track: Some(track as u8),
         }
     }
 
@@ -41,7 +43,7 @@ impl MidiEvent {
         Self {
             tick,
             event,
-            track: Some(track),
+            track: Some(track as u8),
         }
     }
 
@@ -66,7 +68,7 @@ impl MidiEvent {
         Self {
             tick,
             event,
-            track: Some(track),
+            track: Some(track as u8),
         }
     }
 }

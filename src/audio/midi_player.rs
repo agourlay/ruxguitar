@@ -301,7 +301,7 @@ fn new_output_stream(
                         MidiEventType::NoteOn(channel, key, velocity) => {
                             if let Some(track_id) = solo_track_id {
                                 // skip note on events for other tracks in solo mode
-                                if midi_event.track != Some(track_id) {
+                                if midi_event.track != Some(track_id as u8) {
                                     continue;
                                 }
                             }
