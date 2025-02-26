@@ -368,7 +368,7 @@ impl MidiBuilder {
 
         // vibrato
         if note.effect.vibrato && !is_percussion {
-            self.add_vibrato(track_id, *start, *duration, channel_id as usize);
+            self.add_vibrato(track_id, *start, *duration, channel_id);
         }
 
         // harmonic
@@ -420,7 +420,7 @@ impl MidiBuilder {
         Some(key)
     }
 
-    fn add_vibrato(&mut self, track_id: usize, start: u32, duration: u32, channel_id: usize) {
+    fn add_vibrato(&mut self, track_id: usize, start: u32, duration: u32, channel_id: i32) {
         let end = start + duration;
         let mut next_start = start;
         while next_start < end {
@@ -429,7 +429,7 @@ impl MidiBuilder {
             } else {
                 next_start + 160
             };
-            self.add_pitch_bend(next_start, track_id, channel_id as i32, DEFAULT_BEND as i32);
+            self.add_pitch_bend(next_start, track_id, channel_id, DEFAULT_BEND as i32);
 
             next_start = if next_start + 160 > end {
                 end
@@ -437,9 +437,9 @@ impl MidiBuilder {
                 next_start + 160
             };
             let value = DEFAULT_BEND + DEFAULT_BEND_SEMI_TONE / 2.0;
-            self.add_pitch_bend(next_start, track_id, channel_id as i32, value as i32);
+            self.add_pitch_bend(next_start, track_id, channel_id, value as i32);
         }
-        self.add_pitch_bend(next_start, track_id, channel_id as i32, DEFAULT_BEND as i32);
+        self.add_pitch_bend(next_start, track_id, channel_id, DEFAULT_BEND as i32);
     }
 
     fn add_bend(

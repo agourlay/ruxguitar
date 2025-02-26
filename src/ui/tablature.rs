@@ -18,7 +18,7 @@ pub struct Tablature {
     focused_measure: usize,
     line_tracker: LineTracker,
     pub scroll_id: Id,
-    measure_per_tick: BTreeMap<u32, usize>, // tick to measure index
+    measure_per_tick: BTreeMap<u32, u32>, // tick to measure index as u32
 }
 
 impl Tablature {
@@ -26,7 +26,7 @@ impl Tablature {
         let measure_count = song.measure_headers.len();
         let mut measure_per_tick = BTreeMap::new();
         for (i, measure) in song.measure_headers.iter().enumerate() {
-            measure_per_tick.insert(measure.start, i);
+            measure_per_tick.insert(measure.start, i as u32);
         }
         let mut tab = Self {
             song,
@@ -118,6 +118,9 @@ impl Tablature {
             .map(|elem| *elem.1)
             .unwrap_or(0);
 
+        // indexed as u32 to save space
+        let measure_index = measure_index as usize;
+
         // get beat index within the measure containing the tick
         // only a few beats per measure, full scan is Ok.
         let voice = &self.song.tracks[track_id].measures[measure_index].voices[0];
@@ -206,7 +209,7 @@ impl Tablature {
 
 #[derive(Default)]
 struct LineTracker {
-    measure_to_line: Vec<usize>, // measure id to line number
+    measure_to_line: Vec<u32>, // measure id to line number
     tablature_container_width: f32,
 }
 
@@ -229,7 +232,7 @@ impl LineTracker {
         line_tracker
     }
 
-    pub fn get_line(&self, measure_id: usize) -> usize {
+    pub fn get_line(&self, measure_id: usize) -> u32 {
         self.measure_to_line[measure_id]
     }
 }
