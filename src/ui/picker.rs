@@ -49,7 +49,11 @@ pub async fn load_file(
         .and_then(|f| f.to_str())
         .map(ToString::to_string)
         .unwrap_or_default();
-    let parent_folder = path.parent().map(std::convert::Into::into);
+    let parent_folder = path.parent().and_then(|parent| {
+        // make sure relative path from CLI is returned as absolute path
+        let absolute_path = std::fs::canonicalize(parent);
+        absolute_path.ok()
+    });
     log::info!("Loading file: {:?}", file_name);
     tokio::fs::read(&path)
         .await
