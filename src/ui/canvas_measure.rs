@@ -34,7 +34,9 @@ const STRING_LINE_HEIGHT: f32 = 13.0;
 const MEASURE_NOTES_PADDING: f32 = 20.0;
 
 // Length of a beat
-const BEAT_LENGTH: f32 = 25.0;
+const BEAT_LENGTH: f32 = 24.0;
+
+const HALF_BEAT_LENGTH: f32 = BEAT_LENGTH / 2.0 + 1.0;
 
 // minimum measure width
 const MIN_MEASURE_WIDTH: f32 = 60.0;
@@ -63,14 +65,23 @@ impl CanvasMeasure {
     ) -> Self {
         let track = &song.tracks[track_id];
         let measure = &track.measures[measure_id];
+        let measure_header = &song.measure_headers[measure_id];
         let beat_count = measure.voices[0].beats.len();
         let measure_len = MIN_MEASURE_WIDTH.max(beat_count as f32 * BEAT_LENGTH);
         // total length of measure (padding on both sides)
-        let total_measure_len = if has_time_signature {
-            measure_len + MEASURE_NOTES_PADDING * 2.0 + BEAT_LENGTH
-        } else {
-            measure_len + MEASURE_NOTES_PADDING * 2.0
-        };
+        let mut total_measure_len = measure_len + MEASURE_NOTES_PADDING * 2.0;
+        // extra space for time signature
+        if has_time_signature {
+            total_measure_len += BEAT_LENGTH;
+        }
+        // extra space for repeat open bar with dots
+        if measure_header.repeat_open {
+            total_measure_len += BEAT_LENGTH + HALF_BEAT_LENGTH;
+        }
+        // extra space for repeat close bar with dots
+        if measure_header.repeat_close > 0 {
+            total_measure_len += BEAT_LENGTH + HALF_BEAT_LENGTH;
+        }
         let string_count = track.strings.len();
         // total height of measure (same for all measures in track)
         let vertical_measure_height = STRING_LINE_HEIGHT * (string_count - 1) as f32;
@@ -168,16 +179,6 @@ impl canvas::Program<Message> for CanvasMeasure {
             let color_gray = Color::from_rgb8(0x40, 0x44, 0x4B);
             let color_dark_red = Color::from_rgb8(200, 50, 50);
 
-            // draw first vertical line only for measure at the of rows
-            if bounds.x == MEASURE_NOTES_PADDING {
-                draw_measure_vertical_line(
-                    frame,
-                    vertical_measure_height,
-                    measure_start_x,
-                    measure_start_y,
-                );
-            }
-
             // draw focused box
             if self.is_focused {
                 draw_focused_box(
@@ -189,12 +190,56 @@ impl canvas::Program<Message> for CanvasMeasure {
                 );
             }
 
+            // draw string lines first (apply rest on top)
+            for (string_id, _fret) in strings.iter().enumerate() {
+                // down position
+                let local_start_y = string_id as f32 * STRING_LINE_HEIGHT;
+                // add 1 to x to avoid overlapping with vertical line
+                let start_point =
+                    Point::new(measure_start_x + 1.0, measure_start_y + local_start_y);
+                // draw at the same y until end of container
+                let end_point = Point::new(
+                    measure_start_x + self.total_measure_len,
+                    measure_start_y + local_start_y,
+                );
+                let line = Path::line(start_point, end_point);
+                let stroke = Stroke::default().with_width(0.8).with_color(color_gray);
+                frame.stroke(&line, stroke);
+            }
+
+            // measure headers
             let measure_header = &self.song.measure_headers[self.measure_id];
+            let next_measure_header = &self.song.measure_headers.get(self.measure_id + 1);
             let previous_measure_header = if self.measure_id > 0 {
                 Some(&self.song.measure_headers[self.measure_id - 1])
             } else {
                 None
             };
+
+            // display open measure bar
+            if measure_header.repeat_open {
+                draw_open_repeat(
+                    frame,
+                    measure_start_x,
+                    measure_start_y,
+                    vertical_measure_height,
+                );
+            } else if self.measure_id == 0 {
+                draw_open_section(
+                    frame,
+                    measure_start_x,
+                    measure_start_y,
+                    vertical_measure_height,
+                );
+            } else {
+                // draw first vertical line (TODO only for measure at the start of rows?)
+                draw_measure_vertical_line(
+                    frame,
+                    vertical_measure_height,
+                    measure_start_x,
+                    measure_start_y,
+                );
+            }
 
             // display time signature (if first measure OR if it changed)
             if self.has_time_signature {
@@ -203,10 +248,9 @@ impl canvas::Program<Message> for CanvasMeasure {
                     &measure_header.time_signature,
                     measure_start_x,
                     string_count,
+                    measure_header.repeat_open, // need to offset if repeat dots present
                 );
             }
-
-            // TODO draw repeat annotations
 
             // capture tempo label len to adjust next annotations
             let mut tempo_label_len = 0;
@@ -254,40 +298,25 @@ impl canvas::Program<Message> for CanvasMeasure {
             };
             frame.fill_text(measure_count_text);
 
-            // draw string lines first
-            for (string_id, _fret) in strings.iter().enumerate() {
-                // down position
-                let local_start_y = string_id as f32 * STRING_LINE_HEIGHT;
-                // add 1 to x to avoid overlapping with vertical line
-                let start_point =
-                    Point::new(measure_start_x + 1.0, measure_start_y + local_start_y);
-                // draw at the same y until end of container
-                let end_point = Point::new(
-                    measure_start_x + self.total_measure_len,
-                    measure_start_y + local_start_y,
-                );
-                let line = Path::line(start_point, end_point);
-                let stroke = Stroke::default().with_width(0.8).with_color(color_gray);
-                frame.stroke(&line, stroke);
-            }
-
             // add notes on top of strings
             let measure = &track.measures[self.measure_id];
             // TODO draw second voice if present?
             let beats = &measure.voices[0].beats;
             let beats_len = beats.len();
             log::debug!("{} beats", beats_len);
+            let mut beat_start = measure_start_x;
+            if self.has_time_signature {
+                beat_start += BEAT_LENGTH;
+            }
+            if measure_header.repeat_open {
+                beat_start += BEAT_LENGTH;
+            }
             for (b_id, beat) in beats.iter().enumerate() {
                 // pick color if beat under focus
                 let beat_color = if self.is_focused && b_id == self.focused_beat {
                     color_dark_red
                 } else {
                     Color::WHITE
-                };
-                let beat_start = if self.has_time_signature {
-                    measure_start_x + BEAT_LENGTH
-                } else {
-                    measure_start_x
                 };
                 // draw beat
                 draw_beat(
@@ -302,13 +331,31 @@ impl canvas::Program<Message> for CanvasMeasure {
                 );
             }
 
-            // vertical measure end
-            draw_measure_vertical_line(
-                frame,
-                vertical_measure_height,
-                measure_start_x + self.total_measure_len, // end of measure
-                measure_start_y,
-            );
+            // draw close measure
+            if measure_header.repeat_close > 0 {
+                draw_close_repeat(
+                    frame,
+                    measure_start_x + self.total_measure_len,
+                    measure_start_y,
+                    vertical_measure_height,
+                    measure_header.repeat_close,
+                );
+            } else if next_measure_header.is_none() {
+                draw_end_section(
+                    frame,
+                    measure_start_x + self.total_measure_len,
+                    measure_start_y,
+                    vertical_measure_height,
+                );
+            } else {
+                // vertical measure end
+                draw_measure_vertical_line(
+                    frame,
+                    vertical_measure_height,
+                    measure_start_x + self.total_measure_len, // end of measure
+                    measure_start_y,
+                );
+            }
         });
 
         vec![tab]
@@ -478,13 +525,145 @@ fn draw_note(
     frame.fill_text(note_effect_text);
 }
 
+fn draw_open_section(
+    frame: &mut Frame<Renderer>,
+    measure_start_x: f32,
+    measure_start_y: f32,
+    vertical_measure_height: f32,
+) {
+    let position_x = measure_start_x;
+
+    // draw first thick one
+    let start_point = Point::new(position_x, measure_start_y);
+    let end_point = Point::new(position_x, measure_start_y + vertical_measure_height);
+    let tick_vertical_line = Path::line(start_point, end_point);
+    let stroke = Stroke::default().with_width(4.0).with_color(Color::WHITE);
+    frame.stroke(&tick_vertical_line, stroke);
+
+    // then thin one
+    draw_measure_vertical_line(
+        frame,
+        vertical_measure_height,
+        measure_start_x + 6.0,
+        measure_start_y,
+    );
+}
+
+fn draw_open_repeat(
+    frame: &mut Frame<Renderer>,
+    measure_start_x: f32,
+    measure_start_y: f32,
+    vertical_measure_height: f32,
+) {
+    draw_open_section(
+        frame,
+        measure_start_x,
+        measure_start_y,
+        vertical_measure_height,
+    );
+    // draw repeat dots
+    draw_repeat_dots(
+        frame,
+        measure_start_x + HALF_BEAT_LENGTH,
+        measure_start_y,
+        vertical_measure_height,
+    );
+}
+
+fn draw_close_repeat(
+    frame: &mut Frame<Renderer>,
+    measure_end_x: f32,
+    measure_start_y: f32,
+    vertical_measure_height: f32,
+    repeat_count: i8,
+) {
+    draw_end_section(
+        frame,
+        measure_end_x,
+        measure_start_y,
+        vertical_measure_height,
+    );
+    // draw repeat dots
+    draw_repeat_dots(
+        frame,
+        measure_end_x - HALF_BEAT_LENGTH,
+        measure_start_y,
+        vertical_measure_height,
+    );
+    // add repeat count text
+    let repeat_count_text = Text {
+        shaping: Advanced, // required for printing unicode
+        content: format!("x{repeat_count}"),
+        color: Color::WHITE,
+        size: 9.0.into(),
+        position: Point::new(measure_end_x - 12.0, FIRST_STRING_Y - 15.0),
+        ..Text::default()
+    };
+    frame.fill_text(repeat_count_text);
+}
+
+fn draw_repeat_dots(
+    frame: &mut Frame<Renderer>,
+    start_x: f32,
+    start_y: f32,
+    vertical_measure_height: f32,
+) {
+    // top dot
+    let top_position_y = start_y + vertical_measure_height / 3.0;
+    let center = Point::new(start_x, top_position_y);
+    let circle = Path::circle(center, 1.0);
+
+    frame.stroke(
+        &circle,
+        Stroke::default().with_width(2.0).with_color(Color::WHITE),
+    );
+
+    // bottom dot
+    let bottom_position_y = start_y + (vertical_measure_height / 3.0) * 2.0;
+    let center = Point::new(start_x, bottom_position_y);
+    let circle = Path::circle(center, 1.0);
+
+    frame.stroke(
+        &circle,
+        Stroke::default().with_width(2.0).with_color(Color::WHITE),
+    );
+}
+
+fn draw_end_section(
+    frame: &mut Frame<Renderer>,
+    measure_end_x: f32,
+    measure_start_y: f32,
+    vertical_measure_height: f32,
+) {
+    // draw first thin one
+    draw_measure_vertical_line(
+        frame,
+        vertical_measure_height,
+        measure_end_x - 8.0,
+        measure_start_y,
+    );
+
+    // then thick one
+    let position_x = measure_end_x - 2.0;
+    let start_point = Point::new(position_x, measure_start_y);
+    let end_point = Point::new(position_x, measure_start_y + vertical_measure_height);
+    let thick_vertical_line = Path::line(start_point, end_point);
+    let stroke = Stroke::default().with_width(4.0).with_color(Color::WHITE);
+    frame.stroke(&thick_vertical_line, stroke);
+}
+
 fn draw_time_signature(
     frame: &mut Frame<Renderer>,
     time_signature: &TimeSignature,
     measure_start_x: f32,
     string_count: usize,
+    has_repeat: bool,
 ) {
-    let position_x = 12.0;
+    let position_x = if has_repeat {
+        BEAT_LENGTH
+    } else {
+        HALF_BEAT_LENGTH
+    };
     let position_y = if string_count > 4 {
         (STRING_LINE_HEIGHT * (string_count - 4) as f32).div(2.0)
     } else {
