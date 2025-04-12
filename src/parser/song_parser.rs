@@ -773,7 +773,7 @@ pub fn parse_chord(
     version: GpVersion,
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], Chord> {
     move |i| {
-        log::debug!("Parsing chords for {} strings", string_count);
+        log::debug!("Parsing chords for {string_count} strings");
         let mut i = i;
         let mut chord = Chord {
             strings: vec![-1; string_count.into()],
@@ -901,7 +901,7 @@ pub fn parse_harmonic_effect(
         let mut he = HarmonicEffect::default();
         let (inner, harmonic_type) = parse_signed_byte(i)?;
         i = inner;
-        log::debug!("Parsing harmonic effect {}", harmonic_type);
+        log::debug!("Parsing harmonic effect {harmonic_type}");
         match harmonic_type {
             1 => he.kind = HarmonicType::Natural,
             2 => {
@@ -1201,7 +1201,7 @@ pub fn parse_measure_header(
     move |i: &[u8]| {
         log::debug!("Parsing measure header");
         let (mut i, flags) = parse_byte(i)?;
-        log::debug!("Flags: {:08b}", flags);
+        log::debug!("Flags: {flags:08b}");
         let mut mh = MeasureHeader::default();
         mh.tempo.value = song_tempo; // value updated later when parsing beats
         mh.repeat_open = (flags & 0x04) == 0x04;
@@ -1277,7 +1277,7 @@ pub fn parse_measure_header(
             i = inner;
             mh.triplet_feel = triplet_feel;
         }
-        log::debug!("{:?}", mh);
+        log::debug!("{mh:?}");
 
         Ok((i, mh))
     }
@@ -1289,7 +1289,7 @@ pub fn parse_measure_headers(
     version: GpVersion,
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], Vec<MeasureHeader>> {
     move |i: &[u8]| {
-        log::debug!("Parsing {} measure headers", measure_count);
+        log::debug!("Parsing {measure_count} measure headers");
         // parse first header to account for the byte in between each header
         let (mut i, first_header) =
             parse_measure_header(TimeSignature::default(), song_tempo, version)(i)?;
@@ -1476,7 +1476,7 @@ pub fn parse_gp_version(i: &[u8]) -> IResult<&[u8], GpVersion> {
 
 fn parse_notices(i: &[u8]) -> IResult<&[u8], Vec<String>> {
     flat_map(parse_int, |notice_count| {
-        log::debug!("Notice count: {}", notice_count);
+        log::debug!("Notice count: {notice_count}");
         count(parse_int_byte_sized_string, notice_count as usize)
     })
     .parse(i)
@@ -1587,7 +1587,7 @@ pub fn parse_gp_data(file_data: &[u8]) -> Result<Song, RuxError> {
     // make parser and parse music data
     let mut parser = MusicParser::new(base_song);
     let (_rest, _unit) = parser.parse_music_data(rest).map_err(|e| {
-        log::error!("Failed to parse music data: {:?}", e);
+        log::error!("Failed to parse music data: {e:?}");
         RuxError::ParsingError("Failed to parse music data".to_string())
     })?;
     let song = parser.take_song();

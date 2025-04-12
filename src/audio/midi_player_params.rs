@@ -18,7 +18,7 @@ impl MidiPlayerParams {
         self.solo_track_id
     }
 
-    pub fn set_solo_track_id(&mut self, solo_track_id: Option<usize>) {
+    pub const fn set_solo_track_id(&mut self, solo_track_id: Option<usize>) {
         self.solo_track_id = solo_track_id;
     }
 
@@ -26,11 +26,11 @@ impl MidiPlayerParams {
         (self.tempo as f32 * self.tempo_percentage as f32 / 100.0) as u32
     }
 
-    pub fn set_tempo(&mut self, tempo: u32) {
+    pub const fn set_tempo(&mut self, tempo: u32) {
         self.tempo = tempo;
     }
 
-    pub fn set_tempo_percentage(&mut self, tempo_percentage: u32) {
+    pub const fn set_tempo_percentage(&mut self, tempo_percentage: u32) {
         self.tempo_percentage = tempo_percentage;
     }
 }

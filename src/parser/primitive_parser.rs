@@ -33,11 +33,11 @@ pub fn parse_byte(i: &[u8]) -> IResult<&[u8], u8> {
 pub fn make_string(i: &[u8]) -> String {
     let (cow, encoding_used, had_errors) = WINDOWS_1252.decode(i);
     if had_errors {
-        log::debug!("Error parsing string with {:?}", encoding_used);
+        log::debug!("Error parsing string with {encoding_used:?}");
         match std::str::from_utf8(i) {
             Ok(s) => s.to_string(),
             Err(e) => {
-                log::debug!("Error UTF-8 string parsing:{}", e);
+                log::debug!("Error UTF-8 string parsing:{e}");
                 String::new()
             }
         }
@@ -48,7 +48,7 @@ pub fn make_string(i: &[u8]) -> String {
 
 /// Parse string of length `len`.
 pub fn parse_string(len: i32) -> impl FnMut(&[u8]) -> IResult<&[u8], String> {
-    log::debug!("Parsing string of length {}", len);
+    log::debug!("Parsing string of length {len}");
     move |i: &[u8]| {
         {
             map(bytes::complete::take(len as usize), move |data: &[u8]| {
@@ -74,11 +74,7 @@ pub fn parse_int_sized_string(i: &[u8]) -> IResult<&[u8], String> {
 pub fn parse_byte_size_string(size: usize) -> impl FnMut(&[u8]) -> IResult<&[u8], String> {
     move |i: &[u8]| {
         let (i, length) = parse_byte(i)?;
-        log::debug!(
-            "Parsing byte sized string of length {} for String size {}",
-            length,
-            size
-        );
+        log::debug!("Parsing byte sized string of length {length} for String size {size}");
 
         let (i, peeked) = peek(bytes::complete::take(length)).parse(i)?;
         let sub = if length > size as u8 {
@@ -87,7 +83,7 @@ pub fn parse_byte_size_string(size: usize) -> impl FnMut(&[u8]) -> IResult<&[u8]
             peeked
         };
         let string = make_string(sub);
-        log::debug!("Parsed raw string:{:?}", string);
+        log::debug!("Parsed raw string:{string:?}");
         // consume size
         let (i, _) = bytes::complete::take(size)(i)?;
         Ok((i, string))
@@ -106,7 +102,7 @@ pub fn parse_int_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
     flat_map(parse_int, |len| {
         flat_map(number::complete::i8, move |str_len| {
             if str_len < 0 {
-                log::info!("Negative string length: {}", str_len);
+                log::info!("Negative string length: {str_len}");
                 parse_string(len - 1)
             } else {
                 assert_eq!(len - 1, i32::from(str_len), "String length mismatch");

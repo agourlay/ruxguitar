@@ -14,7 +14,7 @@ fn main() {
         Ok(()) => 0,
         Err(err) => {
             // use Display instead of Debug for user friendly error messages
-            log::error!("{}", err);
+            log::error!("{err}");
             1
         }
     });
@@ -36,7 +36,7 @@ pub fn main_result() -> Result<(), RuxError> {
             let err = ConfigError(format!("Sound font file not found {sound_font_file:?}"));
             return Err(err);
         }
-        log::info!("Starting with custom sound font file {:?}", sound_font_file);
+        log::info!("Starting with custom sound font file {sound_font_file:?}");
     }
 
     // check if tab file exists
@@ -45,7 +45,7 @@ pub fn main_result() -> Result<(), RuxError> {
             let err = ConfigError(format!("Tab file not found {tab_file_path:?}"));
             return Err(err);
         }
-        log::info!("Starting with tab file {:?}", tab_file_path);
+        log::info!("Starting with tab file {tab_file_path:?}");
     }
 
     let args = ApplicationArgs {

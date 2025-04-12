@@ -34,7 +34,7 @@ impl MidiBuilder {
     /// Parse song and record events
     pub fn build_for_song(mut self, song: &Rc<Song>) -> Vec<MidiEvent> {
         for (track_id, track) in song.tracks.iter().enumerate() {
-            log::debug!("building events for track {}", track_id);
+            log::debug!("building events for track {track_id}");
             let midi_channel = song
                 .midi_channels
                 .iter()

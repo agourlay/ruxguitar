@@ -54,7 +54,7 @@ pub async fn load_file(
         let absolute_path = std::fs::canonicalize(parent);
         absolute_path.ok()
     });
-    log::info!("Loading file: {:?}", file_name);
+    log::info!("Loading file: {file_name:?}");
     tokio::fs::read(&path)
         .await
         .map_err(|error| FilePickerError::IoError(error.to_string()))

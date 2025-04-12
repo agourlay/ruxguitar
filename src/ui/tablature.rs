@@ -162,11 +162,7 @@ impl Tablature {
                 if focus_line < 2 {
                     return None;
                 }
-                log::debug!(
-                    "scrolling to focus_line {} estimated_y {}",
-                    focus_line,
-                    estimated_y
-                );
+                log::debug!("scrolling to focus_line {focus_line} estimated_y {estimated_y}");
                 return Some(estimated_y);
             }
         }

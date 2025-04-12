@@ -97,10 +97,10 @@ impl AudioPlayer {
     pub fn toggle_solo_mode(&self, new_track_id: usize) {
         let mut params_guard = self.player_params.lock().unwrap();
         if params_guard.solo_track_id() == Some(new_track_id) {
-            log::info!("Disable solo mode on track {}", new_track_id);
+            log::info!("Disable solo mode on track {new_track_id}");
             params_guard.set_solo_track_id(None);
         } else {
-            log::info!("Enable solo mode on track {}", new_track_id);
+            log::info!("Enable solo mode on track {new_track_id}");
             params_guard.set_solo_track_id(Some(new_track_id));
         }
     }
@@ -162,7 +162,7 @@ impl AudioPlayer {
                     self.stream = Some(Rc::new(stream));
                 }
                 Err(err) => {
-                    log::error!("Failed to create audio stream: {}", err);
+                    log::error!("Failed to create audio stream: {err}");
                     self.is_playing = false;
                     self.stream = None;
                 }
@@ -171,7 +171,7 @@ impl AudioPlayer {
     }
 
     pub fn focus_measure(&self, measure_id: usize) {
-        log::debug!("Focus audio player on measure:{}", measure_id);
+        log::debug!("Focus audio player on measure:{measure_id}");
         let measure = &self.song.measure_headers[measure_id];
         let measure_start_tick = measure.start;
         let tempo = measure.tempo.value;
@@ -265,7 +265,7 @@ fn new_output_stream(
     let mut left: Vec<f32> = vec![0_f32; channel_sample_count as usize];
     let mut right: Vec<f32> = vec![0_f32; channel_sample_count as usize];
 
-    let err_fn = |err| log::error!("an error occurred on stream: {}", err);
+    let err_fn = |err| log::error!("an error occurred on stream: {err}");
 
     let stream = device.build_output_stream(
         &stream_config,
@@ -324,7 +324,7 @@ fn new_output_stream(
                             synthesizer_guard.note_off(channel, key);
                         }
                         MidiEventType::TempoChange(tempo) => {
-                            log::info!("Tempo changed to {}", tempo);
+                            log::info!("Tempo changed to {tempo}");
                             player_params_guard.set_tempo(tempo);
                         }
                         MidiEventType::MidiMessage(channel, command, data1, data2) => {

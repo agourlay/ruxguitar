@@ -38,9 +38,7 @@ impl MusicParser {
             .parse(i)?;
 
         log::debug!(
-            "Parsing music data -> track_count: {} measure_count {}",
-            track_count,
-            measure_count
+            "Parsing music data -> track_count: {track_count} measure_count {measure_count}"
         );
 
         let song_tempo = self.song.tempo.value;
@@ -61,7 +59,7 @@ impl MusicParser {
         tracks_count: usize,
     ) -> impl FnMut(&[u8]) -> IResult<&[u8], Vec<Track>> + '_ {
         move |i| {
-            log::debug!("Parsing {} tracks", tracks_count);
+            log::debug!("Parsing {tracks_count} tracks");
             let mut i = i;
             let mut tracks = Vec::with_capacity(tracks_count);
             for index in 1..=tracks_count {
@@ -88,7 +86,7 @@ impl MusicParser {
     ) -> impl FnMut(&[u8]) -> IResult<&[u8], Track> + '_ {
         move |i| {
             log::debug!("--------");
-            log::debug!("Parsing track {}", number);
+            log::debug!("Parsing track {number}");
             let mut i = skip(i, 1);
             let mut track = Track::default();
 
@@ -102,17 +100,17 @@ impl MusicParser {
 
             let (inner, name) = parse_byte_size_string(40)(i)?;
             i = inner;
-            log::debug!("Track name:{}", name);
+            log::debug!("Track name:{name}");
             track.name = name;
 
             let (inner, string_count) = parse_int(i)?;
             i = inner;
-            log::debug!("String count: {}", string_count);
+            log::debug!("String count: {string_count}");
 
             // tunings
             let (inner, tunings) = count(parse_int, 7).parse(i)?;
             i = inner;
-            log::debug!("Tunings: {:?}", tunings);
+            log::debug!("Tunings: {tunings:?}");
             track.strings = tunings
                 .iter()
                 .enumerate()
@@ -172,7 +170,7 @@ impl MusicParser {
             gm_channel_1 -= 1;
             gm_channel_2 -= 1;
 
-            log::debug!("Track channel gm1: {} gm2: {}", gm_channel_1, gm_channel_2);
+            log::debug!("Track channel gm1: {gm_channel_1} gm2: {gm_channel_2}");
 
             if let Some(channel) = self.song.midi_channels.get_mut(gm_channel_1 as usize) {
                 // if not percussion - set effect channel
@@ -180,7 +178,7 @@ impl MusicParser {
                     channel.effect_channel_id = gm_channel_2 as u8;
                 }
             } else {
-                log::debug!("channel {} not found", gm_channel_1);
+                log::debug!("channel {gm_channel_1} not found");
                 debug_assert!(false, "channel {gm_channel_1} not found");
             }
             Ok((i, gm_channel_1))
@@ -241,11 +239,7 @@ impl MusicParser {
     ) -> impl FnMut(&[u8]) -> IResult<&[u8], Measure> + '_ {
         move |i: &[u8]| {
             log::debug!("--------");
-            log::debug!(
-                "Parsing measure {} for track {}",
-                measure_index,
-                track_index
-            );
+            log::debug!("Parsing measure {measure_index} for track {track_index}");
             let mut i = i;
             let mut measure = Measure {
                 header_index: measure_index,
@@ -261,7 +255,7 @@ impl MusicParser {
                 // voices have the same start value
                 let beat_start = measure_start;
                 log::debug!("--------");
-                log::debug!("Parsing voice {}", voice_index);
+                log::debug!("Parsing voice {voice_index}");
                 let (inner, voice) = self.parse_voice(beat_start, track_index, measure_index)(i)?;
                 i = inner;
                 measure.voices.push(voice);
@@ -285,10 +279,10 @@ impl MusicParser {
                 ..Default::default()
             };
             log::debug!("--------");
-            log::debug!("...with {} beats", beats);
+            log::debug!("...with {beats} beats");
             for b in 0..beats {
                 log::debug!("--------");
-                log::debug!("Parsing beat {}", b);
+                log::debug!("Parsing beat {b}");
                 let (inner, beat) = self.parse_beat(beat_start, track_index, measure_index)(i)?;
                 if !beat.empty {
                     beat_start += beat.duration.time();
@@ -341,7 +335,7 @@ impl MusicParser {
             if (flags & 0x04) != 0 {
                 let (inner, text) = parse_int_byte_sized_string(i)?;
                 i = inner;
-                log::debug!("Beat text: {}", text);
+                log::debug!("Beat text: {text}");
                 beat.text = text;
             }
 
@@ -432,7 +426,7 @@ impl MusicParser {
 
             let tempo_name = if self.song.version >= GpVersion::GP5 {
                 let (inner, tempo_name_tmp) = parse_int_byte_sized_string(i)?;
-                log::debug!("Tempo name: {}", tempo_name_tmp);
+                log::debug!("Tempo name: {tempo_name_tmp}");
                 i = inner;
                 tempo_name_tmp
             } else {
@@ -497,7 +491,7 @@ impl MusicParser {
         track_index: usize,
     ) -> impl FnMut(&[u8]) -> IResult<&[u8], ()> + 'a {
         move |i| {
-            log::debug!("Parsing note {:?}", guitar_string);
+            log::debug!("Parsing note {guitar_string:?}");
             let mut i = i;
             let (inner, flags) = parse_byte(i)?;
             i = inner;

@@ -25,11 +25,12 @@ impl MidiSequencer {
         }
     }
 
+    #[allow(clippy::missing_const_for_fn)]
     pub fn events(&self) -> &[MidiEvent] {
         &self.sorted_events
     }
 
-    pub fn set_tick(&mut self, tick: u32) {
+    pub const fn set_tick(&mut self, tick: u32) {
         self.last_tick = tick;
         self.current_tick = tick;
     }
@@ -38,7 +39,7 @@ impl MidiSequencer {
         self.last_time = Instant::now();
     }
 
-    pub fn reset_ticks(&mut self) {
+    pub const fn reset_ticks(&mut self) {
         self.current_tick = 0;
         self.last_tick = 0;
     }
@@ -109,7 +110,7 @@ impl MidiSequencer {
     }
 
     #[cfg(test)]
-    pub fn advance_tick(&mut self, tick: u32) {
+    pub const fn advance_tick(&mut self, tick: u32) {
         self.last_tick = self.current_tick;
         self.current_tick += tick;
     }

@@ -303,7 +303,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             // TODO draw second voice if present?
             let beats = &measure.voices[0].beats;
             let beats_len = beats.len();
-            log::debug!("{} beats", beats_len);
+            log::debug!("{beats_len} beats");
             let mut beat_start = measure_start_x;
             if self.has_time_signature {
                 beat_start += BEAT_LENGTH;
@@ -769,7 +769,7 @@ fn note_value(note: &Note) -> String {
         }
         NoteType::Dead => "x".to_string(),
         NoteType::Unknown(i) => {
-            log::warn!("NoteType Unknown({})", i);
+            log::warn!("NoteType Unknown({i})");
             String::new()
         }
     }
