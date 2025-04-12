@@ -112,6 +112,7 @@ impl MidiSequencer {
     }
 
     #[cfg(test)]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn advance_tick(&mut self, tick: u32) {
         self.last_tick = self.current_tick;
         self.current_tick += tick;
