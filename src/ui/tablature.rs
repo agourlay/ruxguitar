@@ -86,6 +86,12 @@ impl Tablature {
             &self.canvas_measures,
             width - (INNER_PADDING * 2.0), // remove padding
         );
+        // clear measure cache to draw properly the starting vertical line of measures
+        // it should done only for the measures starting a row, otherwise it is overlapping with
+        // the end line of the previous measure
+        for cm in &self.canvas_measures {
+            cm.clear_canva_cache();
+        }
     }
 
     /// Get the measure and beat indexes for the given tick

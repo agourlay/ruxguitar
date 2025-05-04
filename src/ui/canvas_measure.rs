@@ -121,6 +121,10 @@ impl CanvasMeasure {
             self.canvas_cache.clear();
         }
     }
+
+    pub fn clear_canva_cache(&self) {
+        self.canvas_cache.clear();
+    }
 }
 
 #[derive(Debug, Default)]
@@ -232,13 +236,16 @@ impl canvas::Program<Message> for CanvasMeasure {
                     vertical_measure_height,
                 );
             } else {
-                // draw first vertical line (TODO only for measure at the start of rows?)
-                draw_measure_vertical_line(
-                    frame,
-                    vertical_measure_height,
-                    measure_start_x,
-                    measure_start_y,
-                );
+                // draw first vertical line only for measure at the of rows
+                // otherwise it is doubling with the line at the end of the previous measure
+                if bounds.x == MEASURE_NOTES_PADDING {
+                    draw_measure_vertical_line(
+                        frame,
+                        vertical_measure_height,
+                        measure_start_x,
+                        measure_start_y,
+                    );
+                }
             }
 
             // display time signature (if first measure OR if it changed)
