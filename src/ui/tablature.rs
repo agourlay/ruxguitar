@@ -74,10 +74,7 @@ impl Tablature {
         }
         // recompute line tracker with existing width
         let existing_width = self.line_tracker.tablature_container_width;
-        std::mem::swap(
-            &mut self.line_tracker,
-            &mut LineTracker::make(&self.canvas_measures, existing_width),
-        );
+        self.line_tracker = LineTracker::make(&self.canvas_measures, existing_width);
     }
 
     pub fn update_container_width(&mut self, width: f32) {
