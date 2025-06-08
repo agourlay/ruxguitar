@@ -110,6 +110,7 @@ impl MidiBuilder {
         midi_channel: &MidiChannel,
         strings: &[(i32, i32)],
     ) {
+        let measure_id = measure.voices[0].measure_index as usize;
         for voice in &measure.voices {
             let beats = &voice.beats;
             for (beat_id, beat) in beats.iter().enumerate() {
@@ -132,9 +133,11 @@ impl MidiBuilder {
                 self.add_notes(
                     track_id,
                     track,
+                    measure_id,
                     measure_header,
                     midi_channel,
                     previous_beat,
+                    beat_id,
                     beat,
                     next_beat,
                     strings,
@@ -148,9 +151,11 @@ impl MidiBuilder {
         &mut self,
         track_id: usize,
         track: &Track,
+        measure_id: usize,
         measure_header: &MeasureHeader,
         midi_channel: &MidiChannel,
         previous_beat: Option<&Beat>,
+        beat_id: usize,
         beat: &Beat,
         next_beat: Option<&Beat>,
         strings: &[(i32, i32)],
@@ -168,6 +173,18 @@ impl MidiBuilder {
                 let (string_id, string_tuning) = strings[note.string as usize - 1];
                 assert_eq!(string_id, i32::from(note.string));
 
+                // apply effects on duration
+                let mut duration = apply_duration_effect(
+                    track,
+                    measure_id,
+                    beat_id,
+                    note,
+                    next_beat,
+                    tempo,
+                    beat_duration,
+                );
+                assert_ne!(duration, 0);
+
                 // surrounding notes on the same string on the previous & next beat
                 let previous_note =
                     previous_beat.and_then(|b| b.notes.iter().find(|n| n.string == note.string));
@@ -176,10 +193,6 @@ impl MidiBuilder {
 
                 // pack with beat to propagate duration
                 let next_note = next_beat.zip(next_note);
-
-                // apply effects on duration
-                let mut duration = apply_duration_effect(note, next_note, tempo, beat_duration);
-                assert_ne!(duration, 0);
 
                 // apply effects on velocity
                 let velocity = apply_velocity_effect(note, previous_note, midi_channel);
@@ -689,19 +702,39 @@ fn apply_velocity_effect(
 }
 
 fn apply_duration_effect(
+    track: &Track,
+    measure_id: usize,
+    beat_id: usize,
     note: &Note,
-    next_note_beat: Option<(&Beat, &Note)>,
+    first_next_beat: Option<&Beat>,
     tempo: u32,
     mut duration: u32,
 ) -> u32 {
     let note_type = &note.kind;
-    // TODO handle chain of ties and not just the next one
-    if let Some((next_beat, next_note)) = next_note_beat {
-        if next_note.kind == NoteType::Tie {
-            duration += next_beat.duration.time();
+    let next_beats_in_next_measures = track.measures[measure_id..]
+        .iter()
+        .flat_map(|m| m.voices[0].beats.iter())
+        .skip(beat_id + 1); // skip current and previous beats
+
+    // handle chains of tie notes
+    for next_beat in next_beats_in_next_measures {
+        // filter for only next notes on matching string
+        if let Some(next_note) = next_beat.notes.iter().find(|n| n.string == note.string) {
+            if next_note.kind == NoteType::Tie {
+                duration += next_beat.duration.time();
+            } else {
+                // stop chain
+                break;
+            }
+        } else {
+            // break chain of tie notes
+            break;
         }
+    }
+    // hande let-ring
+    if let Some(first_next_beat) = first_next_beat {
         if note.effect.let_ring {
-            duration += next_beat.duration.time();
+            duration += first_next_beat.duration.time();
         }
     }
     if note_type == &NoteType::Dead {
@@ -1060,7 +1093,7 @@ mod tests {
         let builder = MidiBuilder::new();
         let events = builder.build_for_song(&song);
 
-        assert_eq!(events.len(), 43702);
+        assert_eq!(events.len(), 43726);
         assert_eq!(events[0].tick, 1);
         assert_eq!(events.iter().last().unwrap().tick, 795_840);
 
