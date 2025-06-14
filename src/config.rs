@@ -16,7 +16,7 @@ pub struct Config {
 
 impl Config {
     // folder placed in $HOME directory
-    const FOLDER: &str = ".ruxguitar";
+    const FOLDER: &'static str = ".ruxguitar";
 
     pub fn get_tabs_folder(&self) -> Option<PathBuf> {
         self.tabs_folder.clone()
