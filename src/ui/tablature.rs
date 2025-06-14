@@ -113,13 +113,16 @@ impl Tablature {
     ///
     /// Returns the measure and beat indexes
     pub fn get_measure_beat_indexes_for_tick(&self, track_id: usize, tick: u32) -> (usize, usize) {
-        // get first measure containing the tick
+        // range scan on `measure_per_tick` to find measure index for tick
         let measure_index = self
             .measure_per_tick
-            .range(tick / 2..=tick) // synthetic lower bound to avoid large range
+            .range(0..=tick) // range is growing but the cost is still O(log n) with size of the btreemap
             .next_back()
-            .map(|elem| *elem.1)
-            .unwrap_or(0);
+            .map(|(_event_tick, &m_id)| m_id)
+            .unwrap_or_else(|| {
+                log::warn!("No measure index found for tick:{tick}");
+                0
+            });
 
         // indexed as u32 to save space
         let measure_index = measure_index as usize;
@@ -142,8 +145,11 @@ impl Tablature {
     ///
     /// Returns the amount of scroll needed to focus on the beat
     pub fn focus_on_tick(&mut self, tick: u32) -> Option<f32> {
-        let (new_measure_id, new_beat_id) =
-            self.get_measure_beat_indexes_for_tick(self.track_id, tick);
+        let (new_measure_id, new_beat_id) = if tick == 1 {
+            (0, 0)
+        } else {
+            self.get_measure_beat_indexes_for_tick(self.track_id, tick)
+        };
         let current_focus_id = self.focused_measure;
         let current_canvas = self.canvas_measures.get_mut(current_focus_id).unwrap();
         if current_focus_id == new_measure_id {
