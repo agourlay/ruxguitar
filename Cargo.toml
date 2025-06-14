@@ -58,6 +58,6 @@ cpal = "0.16.0"
 thiserror = "2.0.12"
 clap = { version = "4.5.39", features = ["derive", "cargo"] }
 # Can't upgrade `home` as it bumps the MSRV to 1.81 which breaks the Win7 & 8 builds :s
-home = "0.5.9" # not necessary starting from Rust 1.85
+home = "=0.5.9" # not necessary starting from Rust 1.85
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
