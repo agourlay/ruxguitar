@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use std::fmt::Display;
 
 use crate::audio::midi_player::AudioPlayer;
+use crate::config::Config;
 use crate::parser::song_parser::{parse_gp_data, GpVersion, Song};
 use crate::ui::icons::{open_icon, pause_icon, play_icon, solo_icon, stop_icon};
 use crate::ui::picker::{load_file, open_file_dialog, FilePickerError};
@@ -36,7 +37,7 @@ pub struct RuxApplication {
     sound_font_file: Option<PathBuf>,         // sound font file
     beat_sender: Arc<Sender<u32>>,            // beat notifier
     beat_receiver: Arc<Mutex<Receiver<u32>>>, // beat receiver
-    file_picker_folder: Option<PathBuf>,      // last folder used in file picker,
+    config: Config,                           // local configuration
     error_message: Option<String>,            // error message to display
 }
 
@@ -135,7 +136,7 @@ pub enum Message {
 }
 
 impl RuxApplication {
-    fn new(sound_font_file: Option<PathBuf>) -> Self {
+    fn new(sound_font_file: Option<PathBuf>, config: Config) -> Self {
         let (beat_sender, beat_receiver) = tokio::sync::watch::channel(0_u32);
         Self {
             song_info: None,
@@ -149,7 +150,7 @@ impl RuxApplication {
             sound_font_file,
             beat_receiver: Arc::new(Mutex::new(beat_receiver)),
             beat_sender: Arc::new(beat_sender),
-            file_picker_folder: None, // TODO store last folder used in $user/home/.ruxguitar
+            config,
             error_message: None,
         }
     }
@@ -169,7 +170,7 @@ impl RuxApplication {
         .antialiasing(!args.no_antialiasing)
         .run_with(move || {
             (
-                RuxApplication::new(args.sound_font_bank.clone()),
+                RuxApplication::new(args.sound_font_bank.clone(), args.local_config.clone()),
                 args.tab_file_path
                     .map_or_else(Task::none, |f| Task::done(Message::OpenFile(f))),
             )
@@ -198,7 +199,7 @@ impl RuxApplication {
                 } else {
                     self.tab_file_is_loading = true;
                     Task::perform(
-                        open_file_dialog(self.file_picker_folder.clone()),
+                        open_file_dialog(self.config.get_tabs_folder()),
                         Message::FileOpened,
                     )
                 }
@@ -215,7 +216,11 @@ impl RuxApplication {
                 }
                 match result {
                     Ok((contents, parent_folder, file_name)) => {
-                        self.file_picker_folder = parent_folder;
+                        if let Err(err) = self.config.set_tabs_folder(parent_folder) {
+                            return Task::done(Message::ReportError(format!(
+                                "Failed to set tabs folder: {err}"
+                            )));
+                        }
                         if let Ok(song) = parse_gp_data(&contents) {
                             // build all tracks selection
                             let track_selections: Vec<_> = song

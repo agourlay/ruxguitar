@@ -1,10 +1,12 @@
 use crate::ui::application::RuxApplication;
 use crate::RuxError::ConfigError;
 use clap::Parser;
+use config::Config;
 use std::io;
 use std::path::PathBuf;
 
 mod audio;
+mod config;
 mod parser;
 mod ui;
 
@@ -48,10 +50,15 @@ pub fn main_result() -> Result<(), RuxError> {
         log::info!("Starting with tab file {tab_file_path:?}");
     }
 
+    // read local config
+    let local_config = Config::read_config()?;
+
+    // bundle application args
     let args = ApplicationArgs {
         sound_font_bank: sound_font_file,
         tab_file_path,
         no_antialiasing: args.no_antialiasing,
+        local_config,
     };
 
     // go!
@@ -78,6 +85,7 @@ pub struct ApplicationArgs {
     sound_font_bank: Option<PathBuf>,
     tab_file_path: Option<PathBuf>,
     no_antialiasing: bool,
+    local_config: Config,
 }
 
 #[derive(Debug, thiserror::Error)]
