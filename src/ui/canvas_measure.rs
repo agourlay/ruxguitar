@@ -283,6 +283,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             if let Some(marker) = &measure_header.marker {
                 // measure marker label
                 let marker_text = Text {
+                    shaping: Advanced, // required for printing unicode
                     content: marker.title.clone(),
                     color: color_dark_red,
                     size: 10.0.into(),
@@ -297,6 +298,7 @@ impl canvas::Program<Message> for CanvasMeasure {
 
             // measure count label
             let measure_count_text = Text {
+                shaping: Advanced, // required for printing unicode
                 content: format!("{}", self.measure_id + 1),
                 color: color_dark_red,
                 size: 10.0.into(),
@@ -679,6 +681,7 @@ fn draw_time_signature(
     let numerator = time_signature.numerator;
     let denominator = time_signature.denominator.value;
     let tempo_text = Text {
+        shaping: Advanced, // required for printing unicode
         content: format!("{numerator}\n{denominator}"),
         color: Color::WHITE,
         size: 17.into(),
