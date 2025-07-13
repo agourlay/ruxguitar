@@ -58,7 +58,9 @@ For instance I like to use `FluidR3_GM.sf2` which is present on most systems and
   - Yes, the Windows binary is built with Rust 1.75 which supports Windows 7 and Windows 8.
 
 - **Why is the sound not working on Linux?**
-  - You are most likely using `PulseAudio` which is not supported.
+  - Getting the error `The requested device is no longer available. For example, it has been unplugged`.
+  - You are most likely using `PulseAudio` or `Pipewire` which are not supported.
+  - Install compatibility packages `pulseaudio-alsa` or `pipewire-alsa` (requires a restart of the audio service).
 
 ## Installation
 
