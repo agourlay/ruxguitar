@@ -184,7 +184,7 @@ impl Tablature {
         self.focus_on_tick(tick);
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let measure_elements = self
             .canvas_measures
             .iter()

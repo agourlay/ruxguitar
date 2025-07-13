@@ -100,7 +100,7 @@ impl CanvasMeasure {
         }
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let canvas = Canvas::new(self)
             .height(self.vertical_measure_height)
             .width(Length::Fixed(self.total_measure_len));

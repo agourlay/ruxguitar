@@ -380,7 +380,7 @@ impl RuxApplication {
         }
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         let open_file = action_gated(
             open_icon(),
             "Open file",
