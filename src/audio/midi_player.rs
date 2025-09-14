@@ -49,7 +49,7 @@ impl AudioPlayer {
 
         // midi sequencer initialization
         let builder = MidiBuilder::new();
-        let events = builder.build_for_song(&song);
+        let (events, repeats) = builder.build_for_song(&song);
 
         // sound font setup
         let sound_font = if let Some(sound_font_file) = sound_font_file {
@@ -63,7 +63,7 @@ impl AudioPlayer {
 
         // build new default synthesizer for the stream
         let synthesizer = Self::make_synthesizer(sound_font.clone(), DEFAULT_SAMPLE_RATE);
-        let midi_sequencer = MidiSequencer::new(events);
+        let midi_sequencer = MidiSequencer::new(events, repeats);
 
         let synthesizer = Arc::new(Mutex::new(synthesizer));
         let sequencer = Arc::new(Mutex::new(midi_sequencer));
@@ -189,6 +189,8 @@ impl AudioPlayer {
         // set tempo for focuses measure
         let mut player_params_guard = self.player_params.lock().unwrap();
         player_params_guard.set_tempo(tempo);
+        // stop ongoing repeat as we reset playback
+        player_params_guard.unset_repeat();
     }
 }
 
@@ -272,7 +274,8 @@ fn new_output_stream(
         move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let mut player_params_guard = player_params.lock().unwrap();
             let mut sequencer_guard = sequencer.lock().unwrap();
-            sequencer_guard.advance(player_params_guard.adjusted_tempo());
+            // advance sequencer according to player params
+            sequencer_guard.advance(&mut player_params_guard);
             let mut synthesizer_guard = synthesizer.lock().unwrap();
             // process midi events for current tick
             if let Some(events) = sequencer_guard.get_next_events() {
