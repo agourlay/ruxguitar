@@ -1,4 +1,7 @@
-use crate::audio::midi_event::MidiEvent;
+use crate::audio::{
+    midi_event::MidiEvent,
+    midi_player_params::{MidiPlayerParams, Repeat},
+};
 use std::time::Instant;
 
 const QUARTER_TIME: f32 = 960.0; // 1 quarter note = 960 ticks
@@ -8,20 +11,26 @@ pub struct MidiSequencer {
     last_tick: u32,                // last Midi tick
     last_time: Instant,            // last time in milliseconds
     sorted_events: Vec<MidiEvent>, // sorted Midi events
+    sorted_repeats: Vec<Repeat>,   // sorted measure repeats by end time
 }
 
 impl MidiSequencer {
-    pub fn new(sorted_events: Vec<MidiEvent>) -> Self {
+    pub fn new(sorted_events: Vec<MidiEvent>, sorted_repeats: Vec<Repeat>) -> Self {
         // events are sorted by tick
         assert!(sorted_events
             .as_slice()
             .windows(2)
             .all(|w| w[0].tick <= w[1].tick));
+        assert!(sorted_repeats
+            .as_slice()
+            .windows(2)
+            .all(|w| w[0].back_to <= w[1].back_to));
         Self {
             current_tick: 0,
             last_tick: 0,
             last_time: Instant::now(),
             sorted_events,
+            sorted_repeats,
         }
     }
 
@@ -94,13 +103,31 @@ impl MidiSequencer {
         Some(&self.sorted_events[start_index..=end_index])
     }
 
-    pub fn advance(&mut self, tempo: u32) {
+    pub fn get_current_repeat(&self) -> Option<&Repeat> {
+        let repeat_index = match self
+            .sorted_repeats
+            .binary_search_by_key(&self.last_tick, |repeat| repeat.back_to)
+        {
+            Ok(position) => position,
+            Err(position) => position.saturating_sub(1),
+        };
+        let repeat = &self.sorted_repeats[repeat_index];
+        if repeat.back_to <= self.last_tick && repeat.end_time >= self.last_tick {
+            Some(repeat)
+        } else {
+            None
+        }
+    }
+
+    pub fn advance(&mut self, player_param: &mut MidiPlayerParams) {
+        let tempo: u32 = player_param.adjusted_tempo();
         // init sequencer if first advance after reset
         if self.current_tick == self.last_tick {
             self.current_tick += 1;
             self.last_time = Instant::now();
             return;
         }
+
         // check how many ticks have passed since last advance
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_time);
@@ -109,6 +136,25 @@ impl MidiSequencer {
         self.last_time = now;
         self.last_tick = self.current_tick;
         self.current_tick += tick_increase;
+
+        // check if we have an ongoing repeat sequence
+        if let Some(repeat) = player_param.get_repeat().cloned() {
+            if repeat.end_time <= self.last_tick {
+                // decrease remaining iter and rollback in time
+                if repeat.play_count > 1 {
+                    // Ideally call MidiPlayer::focus_measure to handle all the details :s
+                    // Dirty hack instead
+                    self.current_tick = repeat.back_to;
+                    self.last_tick = self.current_tick - tick_increase;
+                }
+                player_param.decrease_play_count();
+            }
+        } else {
+            // check if there is a new repeat to enable
+            if let Some(new_repeat) = self.get_current_repeat().cloned() {
+                player_param.set_repeat(new_repeat);
+            }
+        }
     }
 
     #[cfg(test)]
@@ -154,12 +200,12 @@ mod tests {
         let song = parse_gp_file(FILE_PATH).unwrap();
         let song = Rc::new(song);
         let builder = MidiBuilder::new();
-        let events = builder.build_for_song(&song);
+        let (events, repeats) = builder.build_for_song(&song);
         let events_len = 4451;
         assert_eq!(events.len(), events_len);
         assert_eq!(events[0].tick, 1);
         assert_eq!(events.iter().last().unwrap().tick, 189_120);
-        let mut sequencer = MidiSequencer::new(events.clone());
+        let mut sequencer = MidiSequencer::new(events.clone(), repeats);
 
         // last_tick:0 current_tick:0
         let batch = sequencer.get_next_events().unwrap();

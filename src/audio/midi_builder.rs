@@ -1,5 +1,6 @@
 /// Thanks to `TuxGuitar` for the reference implementation in `MidiSequenceParser.java`
 use crate::audio::midi_event::MidiEvent;
+use crate::audio::midi_player_params::Repeat;
 use crate::audio::FIRST_TICK;
 use crate::parser::song_parser::{
     Beat, BendEffect, BendPoint, HarmonicType, Measure, MeasureHeader, MidiChannel, Note, NoteType,
@@ -24,15 +25,19 @@ pub const NATURAL_FREQUENCIES: [(i32, i32); 6] = [
 
 pub struct MidiBuilder {
     events: Vec<MidiEvent>, // events accumulated during build
+    repeats: Vec<Repeat>,   // repeats accumulated during build
 }
 
 impl MidiBuilder {
     pub const fn new() -> Self {
-        Self { events: Vec::new() }
+        Self {
+            events: Vec::new(),
+            repeats: Vec::new(),
+        }
     }
 
     /// Parse song and record events
-    pub fn build_for_song(mut self, song: &Rc<Song>) -> Vec<MidiEvent> {
+    pub fn build_for_song(mut self, song: &Rc<Song>) -> (Vec<MidiEvent>, Vec<Repeat>) {
         for (track_id, track) in song.tracks.iter().enumerate() {
             log::debug!("building events for track {track_id}");
             let midi_channel = song
@@ -55,7 +60,48 @@ impl MidiBuilder {
         }
         // Sort events by tick
         self.events.sort_by_key(|event| event.tick);
-        self.events
+
+        // Capture repeat instructions
+        self.add_repeats(song);
+        log::info!("repeats {:?}", self.repeats);
+        (self.events, self.repeats)
+    }
+
+    fn add_repeats(&mut self, song: &Rc<Song>) {
+        let mut acc_repeat = Repeat::default();
+
+        for measure_header in song.measure_headers.iter() {
+            if measure_header.repeat_open {
+                // reset state
+                acc_repeat = Repeat::default();
+                // track new value
+                acc_repeat.back_to = measure_header.start;
+                acc_repeat.end_time = measure_header.start;
+            }
+
+            // track total repeat len.
+            if acc_repeat.back_to != 0 {
+                acc_repeat.end_time += measure_header.length();
+            }
+
+            // check if closing
+            if measure_header.repeat_close > 0 {
+                acc_repeat.play_count = measure_header.repeat_close as u8;
+                if measure_header.repeat_alternative == 0 {
+                    self.repeats.push(acc_repeat.clone());
+                }
+            }
+
+            // capture alternative ending
+            if measure_header.repeat_alternative != 0 {
+                acc_repeat
+                    .alternative_repeat
+                    .push(measure_header.repeat_alternative as u32);
+                if measure_header.repeat_alternative == acc_repeat.play_count {
+                    self.repeats.push(acc_repeat.clone());
+                }
+            }
+        }
     }
 
     fn add_track_events(
@@ -784,7 +830,7 @@ mod tests {
                 .unwrap_or_else(|err| panic!("Failed to parse file: {file_name}\n{err}"));
             let song = Rc::new(song);
             let builder = MidiBuilder::new();
-            let events = builder.build_for_song(&song);
+            let (events, _repeats) = builder.build_for_song(&song);
             assert!(!events.is_empty(), "No events found for {file_name}");
 
             // assert sorted by tick
@@ -832,7 +878,7 @@ mod tests {
         let song = parse_gp_file(FILE_PATH).unwrap();
         let song = Rc::new(song);
         let builder = MidiBuilder::new();
-        let events = builder.build_for_song(&song);
+        let (events, _repeats) = builder.build_for_song(&song);
 
         assert_eq!(events.len(), 4451);
         assert_eq!(events[0].tick, 1);
@@ -1091,7 +1137,7 @@ mod tests {
         let song = parse_gp_file(FILE_PATH).unwrap();
         let song = Rc::new(song);
         let builder = MidiBuilder::new();
-        let events = builder.build_for_song(&song);
+        let (events, _repeats) = builder.build_for_song(&song);
 
         assert_eq!(events.len(), 43726);
         assert_eq!(events[0].tick, 1);
