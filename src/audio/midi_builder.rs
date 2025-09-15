@@ -63,28 +63,43 @@ impl MidiBuilder {
 
         // Capture repeat instructions
         self.add_repeats(song);
-
+        log::info!("repeats {:?}", self.repeats);
         (self.events, self.repeats)
     }
 
     fn add_repeats(&mut self, song: &Rc<Song>) {
-        let mut open = false;
-        let mut start = 0;
-        let mut length = 0;
+        let mut acc_repeat = Repeat::default();
+
         for measure_header in song.measure_headers.iter() {
             if measure_header.repeat_open {
-                open = true;
-                start = measure_header.start;
-                length = 0;
+                // reset state
+                acc_repeat = Repeat::default();
+                // track new value
+                acc_repeat.back_to = measure_header.start;
+                acc_repeat.end_time = measure_header.start;
             }
+
             // track total repeat len.
-            if open {
-                length += measure_header.length();
+            if acc_repeat.back_to != 0 {
+                acc_repeat.end_time += measure_header.length();
             }
+
+            // check if closing
             if measure_header.repeat_close > 0 {
-                assert!(open, "must be 'open' before closing");
-                let repeat = Repeat::new(start, measure_header.repeat_close as u8, start + length);
-                self.repeats.push(repeat);
+                acc_repeat.play_count = measure_header.repeat_close as u8;
+                if measure_header.repeat_alternative == 0 {
+                    self.repeats.push(acc_repeat.clone());
+                }
+            }
+
+            // capture alternative ending
+            if measure_header.repeat_alternative != 0 {
+                acc_repeat
+                    .alternative_repeat
+                    .push(measure_header.repeat_alternative as u32);
+                if measure_header.repeat_alternative == acc_repeat.play_count {
+                    self.repeats.push(acc_repeat.clone());
+                }
             }
         }
     }

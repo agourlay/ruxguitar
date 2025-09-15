@@ -109,13 +109,7 @@ impl MidiSequencer {
             .binary_search_by_key(&self.last_tick, |repeat| repeat.back_to)
         {
             Ok(position) => position,
-            Err(position) => {
-                // exit if end reached
-                if position == self.sorted_repeats.len() {
-                    return None;
-                }
-                position.saturating_sub(1)
-            }
+            Err(position) => position.saturating_sub(1),
         };
         let repeat = &self.sorted_repeats[repeat_index];
         if repeat.back_to <= self.last_tick && repeat.end_time >= self.last_tick {
@@ -145,11 +139,6 @@ impl MidiSequencer {
 
         // check if we have an ongoing repeat sequence
         if let Some(repeat) = player_param.get_repeat().cloned() {
-            log::info!(
-                "repeat.end_time:{} <= self.last_tick:{}",
-                repeat.end_time,
-                self.last_tick
-            );
             if repeat.end_time <= self.last_tick {
                 // decrease remaining iter and rollback in time
                 if repeat.play_count > 1 {

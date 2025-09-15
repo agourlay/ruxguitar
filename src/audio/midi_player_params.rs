@@ -71,22 +71,15 @@ impl MidiPlayerParams {
 }
 
 // Holds data describing a measure repeation sequence
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct Repeat {
-    pub back_to: u32,   // time to get back to
-    pub play_count: u8, // how many times to play the sequence
-    pub end_time: u32,  // the end time of the repeated measure
+    pub back_to: u32,                 // time to get back to
+    pub play_count: u8,               // how many times to play the sequence
+    pub end_time: u32,                // the end time of the repeated measure
+    pub alternative_repeat: Vec<u32>, // time to use for the last measure
 }
 
 impl Repeat {
-    pub const fn new(back_to: u32, play_count: u8, end_time: u32) -> Self {
-        Repeat {
-            back_to,
-            play_count,
-            end_time,
-        }
-    }
-
     #[allow(clippy::missing_const_for_fn)]
     pub fn decrease_play_count(&mut self) {
         if self.play_count > 0 {

@@ -342,6 +342,7 @@ impl canvas::Program<Message> for CanvasMeasure {
 
             // draw close measure
             if measure_header.repeat_close > 0 {
+                // TODO draw reapeat_alternative
                 draw_close_repeat(
                     frame,
                     measure_start_x + self.total_measure_len,
