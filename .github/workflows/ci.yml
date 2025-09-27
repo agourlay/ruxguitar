@@ -41,6 +41,8 @@ jobs:
         run: brew install llvm
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - name: Build
         run: cargo build --verbose
       - name: Run tests
