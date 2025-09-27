@@ -753,9 +753,14 @@ fn inlined_note_effect_annotation(note_effect: &NoteEffect) -> String {
             SlideType::OutUpWards => annotation.push(std::char::from_u32(0x27CB).unwrap()), // https://unicodeplus.com/U+27CB
         }
     }
-    if let Some(_bend) = &note_effect.bend {
+    if let Some(bend) = &note_effect.bend {
+        let direction_up = bend.direction() >= 0;
         // TODO display bend properly
-        annotation.push(std::char::from_u32(0x2191).unwrap()); // https://unicodeplus.com/U+2191
+        if direction_up {
+            annotation.push(std::char::from_u32(0x2191).unwrap()); // https://unicodeplus.com/U+2191
+        } else {
+            annotation.push(std::char::from_u32(0x2193).unwrap()); // https://unicodeplus.com/U+2193
+        }
     }
     annotation
 }
