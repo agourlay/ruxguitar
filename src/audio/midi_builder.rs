@@ -637,6 +637,25 @@ impl MidiBuilder {
         self.add_event(event);
     }
 
+    fn add_pitch_bend_range(&mut self, tick: u32, track_id: usize, channel: i32) {
+        // RPN MSB: Select RPN group (usually 0)
+        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x65, 0);
+        self.add_event(event);
+
+        // RPN LSB: Select RPN 0/0 (Pitch Bend Sensitivity)
+        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x64, 0);
+        self.add_event(event);
+
+        // Data Entry MSB: Set the value (Pitch Bend Range)
+        // 12 semitones for the guitar
+        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x06, 12);
+        self.add_event(event);
+
+        // Data Entry LSB: Cents (usually 0)
+        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x26, 0);
+        self.add_event(event);
+    }
+
     fn add_track_channel_midi_control(&mut self, track_id: usize, midi_channel: &MidiChannel) {
         let channel_id = midi_channel.channel_id;
         // publish MIDI control messages for the track channel at the start
@@ -672,6 +691,7 @@ impl MidiBuilder {
             i32::from(channel_id),
             midi_channel.instrument,
         );
+        self.add_pitch_bend_range(info_tick, track_id, i32::from(channel_id));
     }
 
     fn add_event(&mut self, event: MidiEvent) {
@@ -834,7 +854,7 @@ mod tests {
         let builder = MidiBuilder::new();
         let events = builder.build_for_song(&song);
 
-        assert_eq!(events.len(), 4451);
+        assert_eq!(events.len(), 4471);
         assert_eq!(events[0].tick, 1);
         assert_eq!(events.iter().last().unwrap().tick, 189_120);
 
@@ -847,7 +867,7 @@ mod tests {
         let rhythm_track_events: Vec<_> = events
             .iter()
             .filter(|e| e.track == Some(0))
-            .skip(6)
+            .skip(10)
             .collect();
 
         // print 20 first for debugging
@@ -931,7 +951,7 @@ mod tests {
         let solo_track_events: Vec<_> = events
             .iter()
             .filter(|e| e.track == Some(1))
-            .skip(6)
+            .skip(10)
             .collect();
 
         //print 100 first for debugging
@@ -1093,7 +1113,7 @@ mod tests {
         let builder = MidiBuilder::new();
         let events = builder.build_for_song(&song);
 
-        assert_eq!(events.len(), 43726);
+        assert_eq!(events.len(), 43754);
         assert_eq!(events[0].tick, 1);
         assert_eq!(events.iter().last().unwrap().tick, 795_840);
 
@@ -1106,7 +1126,7 @@ mod tests {
         let rhythm_track_events: Vec<_> = events
             .iter()
             .filter(|e| e.track == Some(0))
-            .skip(6)
+            .skip(10)
             .collect();
 
         // print 60 first for debugging

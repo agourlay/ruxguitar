@@ -350,6 +350,23 @@ pub struct BendEffect {
     pub points: Vec<BendPoint>,
 }
 
+impl BendEffect {
+    pub fn direction(&self) -> isize {
+        if self.points.len() < 2 {
+            return 0;
+        }
+        let first = self.points.first().unwrap().value;
+        for p in &self.points[1..] {
+            match first.cmp(&p.value) {
+                std::cmp::Ordering::Greater => return -1,
+                std::cmp::Ordering::Less => return 1,
+                std::cmp::Ordering::Equal => (),
+            }
+        }
+        0
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TremoloBarEffect {
     pub points: Vec<BendPoint>,
