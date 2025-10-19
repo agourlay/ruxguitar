@@ -1056,9 +1056,9 @@ pub fn parse_beat_effects<'a>(
             let (inner, effect) = parse_byte(i)?;
             i = inner;
             note_effect.slap = match effect {
-                1 => SlapEffect::Slapping,
-                2 => SlapEffect::Popping,
-                3 => SlapEffect::Tapping,
+                1 => SlapEffect::Tapping,
+                2 => SlapEffect::Slapping,
+                3 => SlapEffect::Popping,
                 _ => SlapEffect::None,
             };
         }

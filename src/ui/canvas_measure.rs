@@ -1,5 +1,5 @@
 use crate::parser::song_parser::{
-    Beat, HarmonicType, Note, NoteEffect, NoteType, SlideType, Song, TimeSignature,
+    Beat, HarmonicType, Note, NoteEffect, NoteType, SlapEffect, SlideType, Song, TimeSignature,
 };
 use crate::ui::application::Message;
 use iced::advanced::mouse;
@@ -733,6 +733,11 @@ fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<String> {
     }
     if note_effect.tremolo_bar.is_some() {
         annotations.push("T.B".to_string());
+    }
+    match note_effect.slap {
+        SlapEffect::Tapping => annotations.push("T".to_string()),
+        SlapEffect::None => (),
+        _ => (),
     }
     annotations
 }
