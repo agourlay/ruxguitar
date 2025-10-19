@@ -1,4 +1,5 @@
-use iced::widget::{column, container, horizontal_space, pick_list, row, text};
+use iced::advanced::text::Shaping::Advanced;
+use iced::widget::{column, container, horizontal_space, pick_list, row, text, Text};
 use iced::{
     keyboard, stream, window, Alignment, Border, Color, Element, Size, Subscription, Task, Theme,
 };
@@ -455,12 +456,17 @@ impl RuxApplication {
                 ..Default::default()
             });
 
-        let status = row![
-            text(if let Some(song) = &self.song_info {
-                format!("{} by {}", song.name, song.artist)
+        let song_info = if let Some(song) = &self.song_info {
+            if !song.artist.is_empty() {
+                format!("{} - {}", song.name, song.artist)
             } else {
-                String::new()
-            }),
+                song.name.clone()
+            }
+        } else {
+            String::new()
+        };
+        let status = row![
+            Text::new(song_info).shaping(Advanced),
             horizontal_space(),
             text(if let Some(song) = &self.song_info {
                 format!("{:?}", song.gp_version)
