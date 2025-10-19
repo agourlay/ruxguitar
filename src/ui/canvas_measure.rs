@@ -449,6 +449,7 @@ fn draw_beat(
     // Annotate chord effect
     if let Some(chord) = &beat.effect.chord {
         let note_effect_text = Text {
+            shaping: Advanced, // required for printing unicode
             content: chord.name.clone(),
             color: Color::WHITE,
             size: 8.0.into(),
