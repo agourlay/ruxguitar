@@ -160,8 +160,8 @@ impl MidiBuilder {
         next_beat: Option<&Beat>,
         strings: &[(i32, i32)],
     ) {
+        // TODO handle node stroke
         let _stroke = &beat.effect.stroke;
-        let mut start = beat.start;
         let channel_id = midi_channel.channel_id;
         let tempo = measure_header.tempo.value;
         // TODO when to use effect channel instead?
@@ -172,6 +172,9 @@ impl MidiBuilder {
             if note.kind != NoteType::Tie {
                 let (string_id, string_tuning) = strings[note.string as usize - 1];
                 assert_eq!(string_id, i32::from(note.string));
+
+                // note starts on beat
+                let mut note_start = beat.start;
 
                 // apply effects on duration
                 let mut duration = apply_duration_effect(
@@ -202,7 +205,7 @@ impl MidiBuilder {
                     track_id,
                     track_offset,
                     string_tuning,
-                    &mut start,
+                    &mut note_start,
                     &mut duration,
                     tempo,
                     note,
@@ -213,7 +216,7 @@ impl MidiBuilder {
                     self.add_note(
                         track_id,
                         key,
-                        start,
+                        note_start,
                         duration,
                         velocity,
                         i32::from(channel_id),
@@ -229,7 +232,7 @@ impl MidiBuilder {
         track_id: usize,
         track_offset: i32,
         string_tuning: i32,
-        start: &mut u32,
+        note_start: &mut u32,
         duration: &mut u32,
         tempo: u32,
         note: &Note,
@@ -246,18 +249,19 @@ impl MidiBuilder {
         // key with effect
         let mut key = initial_key;
 
+        // fade in
         if note.effect.fade_in {
             let mut expression = 31;
             let expression_increment = 1;
-            let mut tick = *start;
+            let mut tick = *note_start;
             let tick_increment = *duration / ((127 - expression) / expression_increment);
-            while tick < (*start + *duration) && expression < 127 {
+            while tick < (*note_start + *duration) && expression < 127 {
                 self.add_expression(tick, track_id, channel_id, expression as i32);
                 tick += tick_increment;
                 expression += expression_increment;
             }
             // normalize the expression
-            self.add_expression(*start + *duration, track_id, channel_id, 127);
+            self.add_expression(*note_start + *duration, track_id, channel_id, 127);
         }
 
         // grace note
@@ -270,15 +274,15 @@ impl MidiBuilder {
             } else {
                 grace_length
             };
-            let on_beat_duration = *start - grace_length;
+            let on_beat_duration = *note_start - grace_length;
             if grace.is_on_beat || on_beat_duration < QUARTER_TIME {
-                *start = start.saturating_add(grace_length);
+                *note_start = note_start.saturating_add(grace_length);
                 *duration = duration.saturating_sub(grace_length);
             }
             self.add_note(
                 track_id,
                 grace_key,
-                *start - grace_length,
+                *note_start - grace_length,
                 grace_duration,
                 grace_velocity,
                 channel_id,
@@ -291,9 +295,9 @@ impl MidiBuilder {
                 let trill_key = track_offset + i32::from(trill.fret) + string_tuning;
                 let mut trill_length = trill.duration.time();
 
-                let trill_tick_limit = *start + *duration;
+                let trill_tick_limit = *note_start + *duration;
                 let mut real_key = false;
-                let mut tick = *start;
+                let mut tick = *note_start;
 
                 let mut counter = 0;
                 while tick + 10 < trill_tick_limit {
@@ -319,8 +323,8 @@ impl MidiBuilder {
         // tremolo picking
         if let Some(tremolo_picking) = &note.effect.tremolo_picking {
             let mut tp_length = tremolo_picking.duration.time();
-            let mut tick = *start;
-            let tp_tick_limit = *start + *duration;
+            let mut tick = *note_start;
+            let tp_tick_limit = *note_start + *duration;
             let mut counter = 0;
             while tick + 10 < tp_tick_limit {
                 if tick + tp_length >= tp_tick_limit {
@@ -341,14 +345,14 @@ impl MidiBuilder {
         // bend
         if let Some(bend_effect) = &note.effect.bend {
             if !is_percussion {
-                self.add_bend(track_id, *start, *duration, channel_id, bend_effect);
+                self.add_bend(track_id, *note_start, *duration, channel_id, bend_effect);
             }
         }
 
         // tremolo bar
         if let Some(tremolo_bar) = &note.effect.tremolo_bar {
             if !is_percussion {
-                self.add_tremolo_bar(track_id, *start, *duration, channel_id, tremolo_bar);
+                self.add_tremolo_bar(track_id, *note_start, *duration, channel_id, tremolo_bar);
             }
         }
 
@@ -359,7 +363,7 @@ impl MidiBuilder {
                     let value_1 = i32::from(note.value);
                     let value_2 = i32::from(next_note.value);
 
-                    let tick1 = *start;
+                    let tick1 = *note_start;
                     let tick2 = next_beat.start;
 
                     // make slide
@@ -381,7 +385,7 @@ impl MidiBuilder {
 
         // vibrato
         if note.effect.vibrato && !is_percussion {
-            self.add_vibrato(track_id, *start, *duration, channel_id);
+            self.add_vibrato(track_id, *note_start, *duration, channel_id);
         }
 
         // harmonic
@@ -401,7 +405,7 @@ impl MidiBuilder {
                         self.add_note(
                             track_id,
                             initial_key,
-                            *start,
+                            *note_start,
                             *duration,
                             velocity,
                             channel_id,
@@ -425,7 +429,14 @@ impl MidiBuilder {
                 }
                 if key - 12 > 0 {
                     let velocity = MIN_VELOCITY.max(velocity - VELOCITY_INCREMENT * 4);
-                    self.add_note(track_id, key - 12, *start, *duration, velocity, channel_id);
+                    self.add_note(
+                        track_id,
+                        key - 12,
+                        *note_start,
+                        *duration,
+                        velocity,
+                        channel_id,
+                    );
                 }
             }
         }
