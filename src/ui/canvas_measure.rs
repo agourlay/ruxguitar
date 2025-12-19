@@ -458,6 +458,9 @@ fn draw_beat(
         };
         frame.fill_text(note_effect_text);
     };
+    if !beat.effect.stroke.is_empty() {
+        // TODO display correct arrow on the chord
+    }
 
     // Annotate note effect above (same position for all notes)
     let mut beat_annotations = Vec::new();

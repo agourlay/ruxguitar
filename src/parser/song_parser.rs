@@ -661,8 +661,24 @@ pub enum BeatStrokeDirection {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct BeatStroke {
-    direction: BeatStrokeDirection,
-    value: u16,
+    pub direction: BeatStrokeDirection,
+    pub value: u16,
+}
+
+impl BeatStroke {
+    pub fn is_empty(&self) -> bool {
+        self.direction == BeatStrokeDirection::None || self.value == 0
+    }
+
+    // A small time increment that depends on note duration and stroke intensity.
+    pub fn increment_for_duration(&self, beat_duration: u32) -> u32 {
+        if self.value == 0 {
+            return 0;
+        }
+        // stroke speed is based on the smallest rhythmic value
+        let duration = beat_duration.min(QUARTER_TIME);
+        ((duration as f32 / 8.0) * (4.0 / f32::from(self.value))).round() as u32
+    }
 }
 
 impl Default for BeatStroke {

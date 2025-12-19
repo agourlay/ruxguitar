@@ -160,14 +160,14 @@ impl MidiBuilder {
         next_beat: Option<&Beat>,
         strings: &[(i32, i32)],
     ) {
-        // TODO handle node stroke
-        let _stroke = &beat.effect.stroke;
         let channel_id = midi_channel.channel_id;
         let tempo = measure_header.tempo.value;
         // TODO when to use effect channel instead?
         assert!(channel_id < 16);
         let track_offset = track.offset;
         let beat_duration = beat.duration.time();
+        let stroke = &beat.effect.stroke;
+        let _stroke_increment = stroke.increment_for_duration(beat_duration);
         for note in &beat.notes {
             if note.kind != NoteType::Tie {
                 let (string_id, string_tuning) = strings[note.string as usize - 1];
@@ -187,6 +187,8 @@ impl MidiBuilder {
                     beat_duration,
                 );
                 assert_ne!(duration, 0);
+
+                // TODO apply stroke effect
 
                 // surrounding notes on the same string on the previous & next beat
                 let previous_note =
