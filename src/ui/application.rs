@@ -524,11 +524,21 @@ impl RuxApplication {
         let mut subscriptions = Vec::with_capacity(2);
 
         // keyboard event subscription
-        let keyboard_subscription = keyboard::on_key_press(|key, modifiers| match key.as_ref() {
-            keyboard::Key::Named(Space) => Some(Message::PlayPause),
-            keyboard::Key::Named(ArrowUp) if modifiers.control() => Some(Message::IncreaseTempo),
-            keyboard::Key::Named(ArrowDown) if modifiers.control() => Some(Message::DecreaseTempo),
-            _ => None,
+        let keyboard_subscription = keyboard::listen().filter_map(|event| {
+            let keyboard::Event::KeyPressed {
+                modified_key,
+                modifiers,
+                ..
+            } = event
+            else {
+                return None;
+            };
+            match modified_key.as_ref() {
+                keyboard::Key::Named(Space) => Some(Message::PlayPause),
+                keyboard::Key::Named(ArrowUp) if modifiers.control() => Some(Message::IncreaseTempo),
+                keyboard::Key::Named(ArrowDown) if modifiers.control() => Some(Message::DecreaseTempo),
+                _ => None,
+            }
         });
         subscriptions.push(keyboard_subscription);
 
