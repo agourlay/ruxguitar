@@ -1,5 +1,5 @@
 use iced::advanced::text::Shaping::Advanced;
-use iced::widget::{column, container, horizontal_space, pick_list, row, text, Text};
+use iced::widget::{Id, Text, column, container, horizontal_space, pick_list, row, text};
 use iced::{
     keyboard, stream, window, Alignment, Border, Color, Element, Size, Subscription, Task, Theme,
 };
@@ -17,7 +17,7 @@ use crate::ApplicationArgs;
 use iced::futures::{SinkExt, Stream};
 use iced::keyboard::key::Named::{ArrowDown, ArrowUp, Space};
 use iced::widget::container::visible_bounds;
-use iced::widget::scrollable::{scroll_to, AbsoluteOffset, Id};
+use iced::widget::scrollable::{scroll_to, AbsoluteOffset};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -31,7 +31,7 @@ pub struct RuxApplication {
     track_selection: TrackSelection,          // selected track
     all_tracks: Vec<TrackSelection>,          // all possible tracks
     tablature: Option<Tablature>,             // loaded tablature
-    tablature_id: container::Id,              // tablature container id
+    tablature_id: Id,                         // tablature container id
     tempo_selection: TempoSelection,          // tempo percentage for playback
     audio_player: Option<AudioPlayer>,        // audio player
     tab_file_is_loading: bool,                // file loading flag in progress
@@ -144,7 +144,7 @@ impl RuxApplication {
             track_selection: TrackSelection::default(),
             all_tracks: vec![],
             tablature: None,
-            tablature_id: container::Id::new("tablature-outer-container"),
+            tablature_id: Id::new("tablature-outer-container"),
             tempo_selection: TempoSelection::default(),
             audio_player: None,
             tab_file_is_loading: false,
@@ -502,9 +502,8 @@ impl RuxApplication {
         Theme::Dark
     }
 
-    fn audio_player_beat_subscription(&self) -> impl Stream<Item = Message> {
-        let beat_receiver = self.beat_receiver.clone();
-        stream::channel(1, move |mut output| async move {
+    fn audio_player_beat_subscription(beat_receiver: Arc<Mutex<Receiver<u32>>>) -> impl Stream<Item = Message> {
+        stream::channel(1, async move |mut output| {
             let mut receiver = beat_receiver.lock().await;
             loop {
                 // get tick from audio player
@@ -543,10 +542,10 @@ impl RuxApplication {
         subscriptions.push(keyboard_subscription);
 
         // next beat notifier subscription
-        let audio_player_beat_subscription = self.audio_player_beat_subscription();
-        subscriptions.push(Subscription::run_with_id(
+        let beat_receiver = self.beat_receiver.clone();
+        subscriptions.push(Subscription::run_with(
             "audio-player-beat",
-            audio_player_beat_subscription,
+            |data| Self::audio_player_beat_subscription(beat_receiver),
         ));
 
         let window_resized = window::resize_events().map(|_| Message::WindowResized);
