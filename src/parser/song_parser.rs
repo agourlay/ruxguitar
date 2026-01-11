@@ -1,7 +1,7 @@
 use crate::parser::music_parser::MusicParser;
 use crate::parser::primitive_parser::{
-    parse_bool, parse_byte, parse_byte_size_string, parse_int, parse_int_byte_sized_string,
-    parse_int_sized_string, parse_short, parse_signed_byte, skip,
+    parse_bool, parse_byte_size_string, parse_i8, parse_int, parse_int_byte_sized_string,
+    parse_int_sized_string, parse_short, parse_u8, skip,
 };
 use crate::RuxError;
 use nom::bytes::complete::take;
@@ -812,7 +812,7 @@ pub fn parse_chord(
             strings: vec![-1; string_count.into()],
             ..Default::default()
         };
-        let (inner, chord_gp4_header) = parse_byte(i)?;
+        let (inner, chord_gp4_header) = parse_u8(i)?;
         i = inner;
 
         // chord header defines the version as well
@@ -866,7 +866,7 @@ pub fn parse_note_effects(
     move |i| {
         log::debug!("Parsing note effects");
         let mut i = i;
-        let (inner, (flags1, flags2)) = (parse_byte, parse_byte).parse(i)?;
+        let (inner, (flags1, flags2)) = (parse_u8, parse_u8).parse(i)?;
         i = inner;
         note.effect.hammer = (flags1 & 0x02) == 0x02;
         note.effect.let_ring = (flags1 & 0x08) == 0x08;
@@ -919,7 +919,7 @@ pub fn parse_trill_effect(i: &[u8]) -> IResult<&[u8], TrillEffect> {
     log::debug!("Parsing trill effect");
     let mut i = i;
     let mut trill_effect = TrillEffect::default();
-    let (inner, (fret, period)) = (parse_signed_byte, parse_signed_byte).parse(i)?;
+    let (inner, (fret, period)) = (parse_i8, parse_i8).parse(i)?;
     i = inner;
     trill_effect.fret = fret;
     trill_effect.duration.value = TrillEffect::from_trill_period(period);
@@ -932,7 +932,7 @@ pub fn parse_harmonic_effect(
     move |i| {
         let mut i = i;
         let mut he = HarmonicEffect::default();
-        let (inner, harmonic_type) = parse_signed_byte(i)?;
+        let (inner, harmonic_type) = parse_i8(i)?;
         i = inner;
         log::debug!("Parsing harmonic effect {harmonic_type}");
         match harmonic_type {
@@ -941,7 +941,7 @@ pub fn parse_harmonic_effect(
                 he.kind = HarmonicType::Artificial;
                 if version >= GpVersion::GP5 {
                     let (inner, (semitone, accidental, octave)) =
-                        (parse_byte, parse_signed_byte, parse_byte).parse(i)?;
+                        (parse_u8, parse_i8, parse_u8).parse(i)?;
                     i = inner;
                     he.pitch = Some(PitchClass::from(semitone as i8, Some(accidental), None));
                     he.octave = Some(Octave::get_octave(octave));
@@ -950,7 +950,7 @@ pub fn parse_harmonic_effect(
             3 => {
                 he.kind = HarmonicType::Tapped;
                 if version >= GpVersion::GP5 {
-                    let (inner, fret) = parse_byte(i)?;
+                    let (inner, fret) = parse_u8(i)?;
                     i = inner;
                     he.right_hand_fret = Some(fret as i8);
                 }
@@ -986,7 +986,7 @@ pub fn parse_harmonic_effect(
 
 pub fn parse_slide_type(i: &[u8]) -> IResult<&[u8], Option<SlideType>> {
     log::debug!("Parsing slide type");
-    map(parse_byte, |t| {
+    map(parse_u8, |t| {
         if (t & 0x01) == 0x01 {
             Some(SlideType::ShiftSlideTo)
         } else if (t & 0x02) == 0x02 {
@@ -1008,7 +1008,7 @@ pub fn parse_slide_type(i: &[u8]) -> IResult<&[u8], Option<SlideType>> {
 
 pub fn parse_tremolo_picking(i: &[u8]) -> IResult<&[u8], TremoloPickingEffect> {
     log::debug!("Parsing tremolo picking");
-    map(parse_byte, |tp| {
+    map(parse_u8, |tp| {
         let value = TremoloPickingEffect::from_tremolo_value(tp as i8);
         let mut tremolo_picking_effect = TremoloPickingEffect::default();
         tremolo_picking_effect.duration.value = value;
@@ -1024,28 +1024,28 @@ pub fn parse_grace_effect(version: GpVersion) -> impl FnMut(&[u8]) -> IResult<&[
         let mut grace_effect = GraceEffect::default();
 
         // fret
-        let (inner, fret) = parse_byte(i)?;
+        let (inner, fret) = parse_u8(i)?;
         i = inner;
         grace_effect.fret = fret as i8;
 
         // velocity
-        let (inner, velocity) = parse_byte(i)?;
+        let (inner, velocity) = parse_u8(i)?;
         i = inner;
         grace_effect.velocity = convert_velocity(i16::from(velocity));
 
         // transition
-        let (inner, transition) = parse_signed_byte(i)?;
+        let (inner, transition) = parse_i8(i)?;
         i = inner;
         grace_effect.transition = GraceEffectTransition::get_grace_effect_transition(transition);
 
         // duration
-        let (inner, duration) = parse_byte(i)?;
+        let (inner, duration) = parse_u8(i)?;
         i = inner;
         grace_effect.duration = duration;
 
         if version >= GpVersion::GP5 {
             // flags
-            let (inner, flags) = parse_byte(i)?;
+            let (inner, flags) = parse_u8(i)?;
             i = inner;
             grace_effect.is_dead = (flags & 0x01) == 0x01;
             grace_effect.is_on_beat = (flags & 0x02) == 0x02;
@@ -1062,14 +1062,14 @@ pub fn parse_beat_effects<'a>(
     move |i| {
         log::debug!("Parsing beat effects");
         let mut i = i;
-        let (inner, (flags1, flags2)) = (parse_byte, parse_byte).parse(i)?;
+        let (inner, (flags1, flags2)) = (parse_u8, parse_u8).parse(i)?;
         i = inner;
 
         note_effect.fade_in = flags1 & 0x10 != 0;
         note_effect.vibrato = flags1 & 0x02 != 0;
 
         if flags1 & 0x20 != 0 {
-            let (inner, effect) = parse_byte(i)?;
+            let (inner, effect) = parse_u8(i)?;
             i = inner;
             note_effect.slap = match effect {
                 1 => SlapEffect::Tapping,
@@ -1086,8 +1086,7 @@ pub fn parse_beat_effects<'a>(
         }
 
         if flags1 & 0x40 != 0 {
-            let (inner, (stroke_up, stroke_down)) =
-                (parse_signed_byte, parse_signed_byte).parse(i)?;
+            let (inner, (stroke_up, stroke_down)) = (parse_i8, parse_i8).parse(i)?;
             i = inner;
             if stroke_up > 0 {
                 beat.effect.stroke.value = stroke_up as u16;
@@ -1115,7 +1114,7 @@ pub fn parse_bend_effect(i: &[u8]) -> IResult<&[u8], BendEffect> {
     i = inner;
     for _ in 0..num_points {
         let (inner, (bend_position, bend_value, _vibrato)) =
-            (parse_int, parse_int, parse_byte).parse(i)?;
+            (parse_int, parse_int, parse_u8).parse(i)?;
         i = inner;
 
         let point_position =
@@ -1136,7 +1135,7 @@ pub fn parse_tremolo_bar(i: &[u8]) -> IResult<&[u8], TremoloBarEffect> {
     let (inner, num_points) = parse_int(i)?;
     i = inner;
     for _ in 0..num_points {
-        let (inner, (position, value, _vibrato)) = (parse_int, parse_int, parse_byte).parse(i)?;
+        let (inner, (position, value, _vibrato)) = (parse_int, parse_int, parse_u8).parse(i)?;
         i = inner;
 
         let point_position = position as f32 * BEND_EFFECT_MAX_POSITION_LENGTH / GP_BEND_POSITION;
@@ -1165,7 +1164,7 @@ pub fn parse_duration(flags: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], Duration
         log::debug!("Parsing duration");
         let mut i = i;
         let mut d = Duration::default();
-        let (inner, value) = parse_signed_byte(i)?;
+        let (inner, value) = parse_i8(i)?;
         i = inner;
         d.value = (2_u32.pow((value + 4) as u32) / 4) as u16;
         log::debug!("Duration value: {}", d.value);
@@ -1199,7 +1198,7 @@ pub fn parse_duration(flags: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], Duration
 pub fn parse_color(i: &[u8]) -> IResult<&[u8], i32> {
     log::debug!("Parsing RGB color");
     map(
-        (parse_byte, parse_byte, parse_byte, parse_byte),
+        (parse_u8, parse_u8, parse_u8, parse_u8),
         |(r, g, b, _ignore)| (i32::from(r) << 16) | (i32::from(g) << 8) | i32::from(b),
     )
     .parse(i)
@@ -1215,7 +1214,7 @@ pub fn parse_marker(i: &[u8]) -> IResult<&[u8], Marker> {
 
 pub fn parse_triplet_feel(i: &[u8]) -> IResult<&[u8], TripletFeel> {
     log::debug!("Parsing triplet feel");
-    map(parse_signed_byte, |triplet_feel| match triplet_feel {
+    map(parse_i8, |triplet_feel| match triplet_feel {
         0 => TripletFeel::None,
         1 => TripletFeel::Eighth,
         2 => TripletFeel::Sixteenth,
@@ -1233,7 +1232,7 @@ pub fn parse_measure_header(
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], MeasureHeader> {
     move |i: &[u8]| {
         log::debug!("Parsing measure header");
-        let (mut i, flags) = parse_byte(i)?;
+        let (mut i, flags) = parse_u8(i)?;
         log::debug!("Flags: {flags:08b}");
         let mut mh = MeasureHeader::default();
         mh.tempo.value = song_tempo; // value updated later when parsing beats
@@ -1244,7 +1243,7 @@ pub fn parse_measure_header(
         // Numerator of the (key) signature
         if (flags & 0x01) != 0 {
             log::debug!("Parsing numerator");
-            let (inner, numerator) = parse_signed_byte(i)?;
+            let (inner, numerator) = parse_i8(i)?;
             i = inner;
             mh.time_signature.numerator = numerator as u8;
         }
@@ -1252,7 +1251,7 @@ pub fn parse_measure_header(
         // Denominator of the (key) signature
         if (flags & 0x02) != 0 {
             log::debug!("Parsing denominator");
-            let (inner, denominator_value) = parse_signed_byte(i)?;
+            let (inner, denominator_value) = parse_i8(i)?;
             i = inner;
             let denominator = Duration {
                 value: denominator_value as u16,
@@ -1264,7 +1263,7 @@ pub fn parse_measure_header(
         // Beginning of repeat
         if (flags & 0x08) != 0 {
             log::debug!("Parsing repeat close");
-            let (inner, repeat_close) = parse_signed_byte(i)?;
+            let (inner, repeat_close) = parse_i8(i)?;
             i = inner;
             mh.repeat_close = repeat_close;
         }
@@ -1279,7 +1278,7 @@ pub fn parse_measure_header(
         // Number of alternate ending
         if (flags & 0x10) != 0 {
             log::debug!("Parsing repeat alternative");
-            let (inner, alternative) = parse_byte(i)?;
+            let (inner, alternative) = parse_u8(i)?;
             i = inner;
             mh.repeat_alternative = alternative;
         }
@@ -1287,10 +1286,10 @@ pub fn parse_measure_header(
         // Tonality of the measure
         if (flags & 0x40) != 0 {
             log::debug!("Parsing key signature");
-            let (inner, key_signature) = parse_signed_byte(i)?;
+            let (inner, key_signature) = parse_i8(i)?;
             mh.key_signature.key = key_signature;
             i = inner;
-            let (inner, is_minor) = parse_signed_byte(i)?;
+            let (inner, is_minor) = parse_i8(i)?;
             i = inner;
             mh.key_signature.is_minor = is_minor != 0;
         }
@@ -1330,7 +1329,7 @@ pub fn parse_measure_headers(
         let mut headers = vec![first_header];
         for _ in 1..measure_count {
             let (rest, header) = preceded(
-                cond(version >= GpVersion::GP5, parse_byte),
+                cond(version >= GpVersion::GP5, parse_u8),
                 parse_measure_header(previous_time_signature, song_tempo, version),
             )
             .parse(i)?;
@@ -1359,15 +1358,8 @@ pub fn parse_midi_channel(channel_id: i32) -> impl FnMut(&[u8]) -> IResult<&[u8]
     move |i: &[u8]| {
         map(
             (
-                parse_int,
-                parse_signed_byte,
-                parse_signed_byte,
-                parse_signed_byte,
-                parse_signed_byte,
-                parse_signed_byte,
-                parse_signed_byte,
-                parse_byte,
-                parse_byte,
+                parse_int, parse_i8, parse_i8, parse_i8, parse_i8, parse_i8, parse_i8, parse_u8,
+                parse_u8,
             ),
             |(
                 mut instrument,
@@ -1575,7 +1567,7 @@ pub fn parse_gp_data(file_data: &[u8]) -> Result<Song, RuxError> {
                 cond(version >= GpVersion::GP5, parse_int_sized_string), // Tempo name
                 parse_int,                                               // Tempo
                 cond(version > GpVersion::GP5, parse_bool),              // Tempo hide
-                parse_signed_byte,                                       // Key signature
+                parse_i8,                                                // Key signature
                 cond(version > GpVersion::GP3, parse_int),               // Octave
                 parse_midi_channels,                                     // Midi channels
             ),

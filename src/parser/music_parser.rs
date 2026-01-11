@@ -1,6 +1,5 @@
 use crate::parser::primitive_parser::{
-    parse_byte, parse_byte_size_string, parse_int, parse_int_byte_sized_string, parse_signed_byte,
-    skip,
+    parse_byte_size_string, parse_i8, parse_int, parse_int_byte_sized_string, parse_u8, skip,
 };
 use crate::parser::song_parser::{
     convert_velocity, parse_beat_effects, parse_chord, parse_color, parse_duration,
@@ -302,7 +301,7 @@ impl MusicParser {
     ) -> impl FnMut(&[u8]) -> IResult<&[u8], Beat> + '_ {
         move |i: &[u8]| {
             let mut i = i;
-            let (inner, flags) = parse_byte(i)?;
+            let (inner, flags) = parse_u8(i)?;
             i = inner;
 
             // make new beat at starting time
@@ -313,7 +312,7 @@ impl MusicParser {
 
             // beat type
             if (flags & 0x40) == 0x40 {
-                let (inner, beat_type) = parse_byte(i)?;
+                let (inner, beat_type) = parse_u8(i)?;
                 i = inner;
                 beat.empty = beat_type & 0x02 == 0;
             }
@@ -353,7 +352,7 @@ impl MusicParser {
             }
 
             // parse notes
-            let (inner, string_flags) = parse_byte(i)?;
+            let (inner, string_flags) = parse_u8(i)?;
             i = inner;
             let track = &self.song.tracks[track_index];
             log::debug!("Parsing notes for beat ({} strings)", track.strings.len());
@@ -370,7 +369,7 @@ impl MusicParser {
 
             if self.song.version >= GpVersion::GP5 {
                 i = skip(i, 1);
-                let (inner, read) = parse_byte(i)?;
+                let (inner, read) = parse_u8(i)?;
                 i = inner;
                 if (read & 0x08) != 0 {
                     i = skip(i, 1);
@@ -406,22 +405,15 @@ impl MusicParser {
             let mut i = i;
 
             // instrument
-            let (inner, _) = parse_signed_byte(i)?;
+            let (inner, _) = parse_i8(i)?;
             i = inner;
 
             if self.song.version >= GpVersion::GP5 {
                 i = skip(i, 16);
             }
 
-            let (inner, (volume, pan, chorus, reverb, phaser, tremolo)) = (
-                parse_signed_byte,
-                parse_signed_byte,
-                parse_signed_byte,
-                parse_signed_byte,
-                parse_signed_byte,
-                parse_signed_byte,
-            )
-                .parse(i)?;
+            let (inner, (volume, pan, chorus, reverb, phaser, tremolo)) =
+                (parse_i8, parse_i8, parse_i8, parse_i8, parse_i8, parse_i8).parse(i)?;
             i = inner;
 
             let tempo_name = if self.song.version >= GpVersion::GP5 {
@@ -493,7 +485,7 @@ impl MusicParser {
         move |i| {
             log::debug!("Parsing note {guitar_string:?}");
             let mut i = i;
-            let (inner, flags) = parse_byte(i)?;
+            let (inner, flags) = parse_u8(i)?;
             i = inner;
             let string = guitar_string.0 as i8;
             note.string = string;
@@ -503,21 +495,21 @@ impl MusicParser {
 
             // note type
             if (flags & 0x20) == 0x20 {
-                let (inner, note_type) = parse_byte(i)?;
+                let (inner, note_type) = parse_u8(i)?;
                 i = inner;
                 note.kind = NoteType::get_note_type(note_type);
             }
 
             // note velocity
             if (flags & 0x10) == 0x10 {
-                let (inner, velocity) = parse_signed_byte(i)?;
+                let (inner, velocity) = parse_i8(i)?;
                 i = inner;
                 note.velocity = convert_velocity(i16::from(velocity));
             }
 
             // note value
             if (flags & 0x20) == 0x20 {
-                let (inner, fret) = parse_signed_byte(i)?;
+                let (inner, fret) = parse_i8(i)?;
                 i = inner;
 
                 let value = if note.kind == NoteType::Tie {
@@ -549,7 +541,7 @@ impl MusicParser {
 
             if self.song.version >= GpVersion::GP5 {
                 // swap accidentals
-                let (inner, swap) = parse_byte(i)?;
+                let (inner, swap) = parse_u8(i)?;
                 i = inner;
                 note.swap_accidentals = swap & 0x02 == 0x02;
             }

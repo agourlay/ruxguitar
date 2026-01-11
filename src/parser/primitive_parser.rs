@@ -2,8 +2,14 @@ use encoding_rs::WINDOWS_1252;
 use nom::combinator::{flat_map, map, peek};
 use nom::{bytes, number, IResult, Parser};
 
-pub fn parse_signed_byte(i: &[u8]) -> IResult<&[u8], i8> {
+/// Parse signed bytes
+pub fn parse_i8(i: &[u8]) -> IResult<&[u8], i8> {
     number::complete::le_i8(i)
+}
+
+/// Parse unsigned bytes
+pub fn parse_u8(i: &[u8]) -> IResult<&[u8], u8> {
+    number::complete::le_u8(i)
 }
 
 pub fn parse_int(i: &[u8]) -> IResult<&[u8], i32> {
@@ -24,10 +30,6 @@ pub fn skip(i: &[u8], n: usize) -> &[u8] {
         return i;
     }
     &i[n..]
-}
-
-pub fn parse_byte(i: &[u8]) -> IResult<&[u8], u8> {
-    number::complete::le_u8(i)
 }
 
 pub fn make_string(i: &[u8]) -> String {
@@ -73,7 +75,7 @@ pub fn parse_int_sized_string(i: &[u8]) -> IResult<&[u8], String> {
 /// `length`: optional provided length (in case of blank chars after the string)
 pub fn parse_byte_size_string(size: usize) -> impl FnMut(&[u8]) -> IResult<&[u8], String> {
     move |i: &[u8]| {
-        let (i, length) = parse_byte(i)?;
+        let (i, length) = parse_u8(i)?;
         log::debug!("Parsing byte sized string of length {length} for String size {size}");
 
         let (i, peeked) = peek(bytes::complete::take(length)).parse(i)?;
@@ -93,7 +95,7 @@ pub fn parse_byte_size_string(size: usize) -> impl FnMut(&[u8]) -> IResult<&[u8]
 /// Size of string encoded as Byte.
 #[allow(unused)]
 pub fn parse_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
-    flat_map(parse_byte, |str_len| parse_string(i32::from(str_len))).parse(i)
+    flat_map(parse_u8, |str_len| parse_string(i32::from(str_len))).parse(i)
 }
 
 /// Size of string encoded as Int, but the size is encoded as a byte.
