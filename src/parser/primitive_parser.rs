@@ -102,7 +102,7 @@ pub fn parse_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
 pub fn parse_int_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
     log::debug!("Parsing int byte sized string");
     flat_map(parse_int, |len| {
-        flat_map(number::complete::i8, move |str_len| {
+        flat_map(parse_i8, move |str_len| {
             if str_len < 0 {
                 log::info!("Negative string length: {str_len}");
                 parse_string(len - 1)
