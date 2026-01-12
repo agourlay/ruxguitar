@@ -4,11 +4,10 @@ use crate::parser::song_parser::{
 use crate::ui::application::Message;
 use iced::advanced::mouse;
 use iced::advanced::text::Shaping::Advanced;
-use iced::alignment::Horizontal::Center;
-use iced::event::Status;
 use iced::mouse::{Cursor, Interaction};
 use iced::widget::canvas::{Cache, Event, Frame, Geometry, Path, Stroke, Text};
-use iced::widget::{canvas, Canvas};
+use iced::widget::text::Alignment;
+use iced::widget::{Action, Canvas, canvas};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
 use std::ops::Div;
 use std::rc::Rc;
@@ -140,21 +139,18 @@ impl canvas::Program<Message> for CanvasMeasure {
     fn update(
         &self,
         state: &mut Self::State,
-        event: Event,
+        event: &Event,
         bounds: Rectangle,
         cursor: Cursor,
-    ) -> (Status, Option<Message>) {
+    ) -> Option<Action<Message>> {
         if let Event::Mouse(mouse::Event::ButtonPressed(_)) = event {
             if let Some(_cursor_position) = cursor.position_in(bounds) {
                 log::info!("Clicked on measure {:?}", self.measure_id);
                 *state = MeasureInteraction::Clicked;
-                return (
-                    Status::Captured,
-                    Some(Message::FocusMeasure(self.measure_id)),
-                );
+                return Some(Action::publish(Message::FocusMeasure(self.measure_id)));
             };
         }
-        (Status::Ignored, None)
+        None
     }
 
     fn draw(
@@ -382,7 +378,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                     log::debug!("Mouse over measure {:?}", self.measure_id);
                 }
             }
-            Cursor::Unavailable => {}
+            Cursor::Unavailable | Cursor::Levitating(_) => {}
         }
         Interaction::default()
     }
@@ -516,7 +512,7 @@ fn draw_note(
         color: beat_color,
         size: 10.0.into(),
         position: Point::new(note_position_x, note_position_y),
-        horizontal_alignment: Center,
+        align_x: Alignment::Center,
         ..Text::default()
     };
     frame.fill_text(note_text);
