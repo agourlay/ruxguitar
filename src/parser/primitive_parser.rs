@@ -1,5 +1,5 @@
 use encoding_rs::WINDOWS_1252;
-use nom::combinator::{flat_map, map, peek};
+use nom::combinator::{flat_map, map};
 use nom::{bytes, number, IResult, Parser};
 
 /// Parse signed bytes
@@ -32,7 +32,8 @@ pub fn skip(i: &[u8], n: usize) -> &[u8] {
     &i[n..]
 }
 
-pub fn make_string(i: &[u8]) -> String {
+/// Materialize properly encoded String
+fn make_string(i: &[u8]) -> String {
     let (cow, encoding_used, had_errors) = WINDOWS_1252.decode(i);
     if had_errors {
         log::debug!("Error parsing string with {encoding_used:?}");
@@ -49,19 +50,31 @@ pub fn make_string(i: &[u8]) -> String {
 }
 
 /// Parse string of length `len`.
-pub fn parse_string(len: i32) -> impl FnMut(&[u8]) -> IResult<&[u8], String> {
-    log::debug!("Parsing string of length {len}");
+fn parse_string(len: i32) -> impl FnMut(&[u8]) -> IResult<&[u8], String> {
+    parse_string_field(len as usize, len as usize)
+}
+
+/// Parse string field of length `string_len` with total size to consume `field_size`
+fn parse_string_field(
+    field_size: usize,
+    string_len: usize,
+) -> impl FnMut(&[u8]) -> IResult<&[u8], String> {
     move |i: &[u8]| {
-        {
-            map(bytes::complete::take(len as usize), move |data: &[u8]| {
-                if len == 0 {
-                    return String::new();
-                }
-                let sub = &data[0..len as usize];
-                make_string(sub)
-            })
+        log::debug!("Parsing string field: string_len={string_len}, field_size={field_size},");
+
+        if field_size == 0 {
+            return Ok((i, String::new()));
         }
-        .parse(i)
+
+        assert!(string_len <= field_size);
+
+        // Read exactly the field size
+        let (rest, field) = bytes::complete::take(field_size)(i)?;
+
+        // Decode only the meaningful string bytes
+        let string = make_string(&field[..string_len]);
+
+        Ok((rest, string))
     }
 }
 
@@ -78,17 +91,7 @@ pub fn parse_byte_size_string(size: usize) -> impl FnMut(&[u8]) -> IResult<&[u8]
         let (i, length) = parse_u8(i)?;
         log::debug!("Parsing byte sized string of length {length} for String size {size}");
 
-        let (i, peeked) = peek(bytes::complete::take(length)).parse(i)?;
-        let sub = if length > size as u8 {
-            &peeked[..size]
-        } else {
-            peeked
-        };
-        let string = make_string(sub);
-        log::debug!("Parsed raw string:{string:?}");
-        // consume size
-        let (i, _) = bytes::complete::take(size)(i)?;
-        Ok((i, string))
+        parse_string_field(size, length as usize)(i)
     }
 }
 
