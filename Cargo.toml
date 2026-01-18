@@ -49,7 +49,7 @@ iced = { version = "0.13.0", features = [
     "debug",
 ] }
 iced_aw = { version = "0.10.0", default-features = false, features = ["wrap"] }
-tokio = { version = "1.48.0", features = ["fs", "sync"] }
+tokio = { version = "1.49.0", features = ["fs", "sync"] }
 rfd = "0.15.4"
 log = "0.4.28"
 env_logger = "0.11.8"
