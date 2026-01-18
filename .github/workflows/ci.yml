@@ -14,7 +14,7 @@ jobs:
     name: Linux CI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Update apt
         run: sudo apt update
       - name: Install alsa
@@ -36,7 +36,7 @@ jobs:
     name: macOS CI
     runs-on: macOS-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install llvm and clang
         run: brew install llvm
       - name: Install stable
@@ -54,7 +54,7 @@ jobs:
     name: windows CI
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install ASIO SDK
         env:
           LINK: https://www.steinberg.net/asiosdk

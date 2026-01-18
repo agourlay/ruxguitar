@@ -25,7 +25,7 @@ jobs:
             os: macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # Install dependencies per OS
       # copy the dependencies step from the ci.yml file
       - if: matrix.os == 'ubuntu-latest'
@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       # Install dependencies per OS
       # copy the dependencies step from the ci.yml file
       - name: Install dependencies (ubuntu-latest)
