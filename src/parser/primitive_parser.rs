@@ -63,22 +63,21 @@ fn parse_string_field(
     string_len: usize,
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], String> {
     move |i: &[u8]| {
-        log::debug!("Parsing string field: string_len={string_len}, field_size={field_size},");
+        log::debug!("Parsing string field: string_len={string_len}, field_size={field_size}");
 
-        if field_size == 0 {
-            return Ok((i, String::new()));
-        }
-
-        assert!(
-            string_len <= field_size,
-            "str_len={string_len}, field_size={field_size}"
-        );
+        let field_size = if field_size > 0 {
+            field_size
+        } else {
+            string_len
+        };
 
         // Read exactly the field size
         let (rest, field) = bytes::complete::take(field_size)(i)?;
 
+        log::debug!("Raw field raw={field:02X?}");
+
         // Decode only the meaningful string bytes
-        let string = make_string(&field[..string_len]);
+        let string = make_string(&field[..std::cmp::min(string_len, field_size)]);
 
         Ok((rest, string))
     }
@@ -88,13 +87,6 @@ fn parse_string_field(
 /// [i32 string_len][size bytes field]
 pub fn parse_int_sized_string(i: &[u8]) -> IResult<&[u8], String> {
     flat_map(parse_int, parse_string).parse(i)
-}
-
-/// Size of string encoded as Byte.
-/// [u8 string_len][size bytes field]
-#[allow(unused)]
-pub fn parse_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
-    flat_map(parse_u8, |str_len| parse_string(i32::from(str_len))).parse(i)
 }
 
 /// Size of Strings provided
@@ -110,16 +102,11 @@ pub fn parse_byte_size_string(size: usize) -> impl FnMut(&[u8]) -> IResult<&[u8]
 
 /// Size of string encoded as Int, but the size is encoded as a byte.
 pub fn parse_int_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
-    log::debug!("Parsing int byte sized string");
     flat_map(parse_int, |len| {
-        flat_map(parse_i8, move |str_len| {
-            if str_len < 0 {
-                log::info!("Negative string length: {str_len}");
-                parse_string(len - 1)
-            } else {
-                assert_eq!(len - 1, i32::from(str_len), "String length mismatch");
-                parse_string(i32::from(str_len))
-            }
+        flat_map(parse_u8, move |str_len| {
+            log::debug!("Parsing int byte sized string len={len} str_len={str_len}");
+            let len = std::cmp::max(len - 1, 0);
+            parse_string_field(len as usize, str_len as usize)
         })
     })
     .parse(i)

@@ -68,7 +68,7 @@ pub struct Song {
     pub tempo: Tempo,
     pub hide_tempo: Option<bool>,
     pub key_signature: i8,
-    pub octave: Option<i32>,
+    pub octave: Option<i8>,
     pub midi_channels: Vec<MidiChannel>,
     pub measure_headers: Vec<MeasureHeader>,
     pub tracks: Vec<Track>,
@@ -821,8 +821,9 @@ pub fn parse_chord(
                 version < GpVersion::GP5,
                 "Chord header is GP4 but version is {version:?}"
             );
-            log::debug!("Parsing GP4 chord");
+            log::debug!("Parsing GP4 style chord");
             let (inner, chord_name) = parse_int_byte_sized_string(i)?;
+            log::debug!("Chord name {chord_name}");
             i = inner;
             chord.name = chord_name;
             let (inner, first_fret) = parse_int(i)?;
@@ -838,9 +839,11 @@ pub fn parse_chord(
                 }
             }
         } else {
+            log::debug!("Parsing modern style chord");
             i = skip(i, 16);
             let (inner, chord_name) = parse_byte_size_string(21)(i)?;
             i = inner;
+            log::debug!("Chord name {chord_name}");
             chord.name = chord_name;
             i = skip(i, 4);
             let (inner, first_fret) = parse_int(i)?;
@@ -1199,16 +1202,17 @@ pub fn parse_color(i: &[u8]) -> IResult<&[u8], i32> {
     log::debug!("Parsing RGB color");
     map(
         (parse_u8, parse_u8, parse_u8, parse_u8),
-        |(r, g, b, _ignore)| (i32::from(r) << 16) | (i32::from(g) << 8) | i32::from(b),
+        |(r, g, b, _alpha)| (i32::from(r) << 16) | (i32::from(g) << 8) | i32::from(b),
     )
     .parse(i)
 }
 
 pub fn parse_marker(i: &[u8]) -> IResult<&[u8], Marker> {
     log::debug!("Parsing marker");
-    map((parse_int_sized_string, parse_color), |(title, color)| {
-        Marker { title, color }
-    })
+    map(
+        (parse_int_byte_sized_string, parse_color),
+        |(title, color)| Marker { title, color },
+    )
     .parse(i)
 }
 
@@ -1236,7 +1240,7 @@ pub fn parse_measure_header(
         log::debug!("Flags: {flags:08b}");
         let mut mh = MeasureHeader::default();
         mh.tempo.value = song_tempo; // value updated later when parsing beats
-        mh.repeat_open = (flags & 0x04) == 0x04;
+        mh.repeat_open = (flags & 0x04) != 0;
         // propagate time signature
         mh.time_signature = previous_time_signature.clone();
 
@@ -1260,44 +1264,44 @@ pub fn parse_measure_header(
             mh.time_signature.denominator = denominator;
         }
 
-        // Beginning of repeat
-        if (flags & 0x08) != 0 {
-            log::debug!("Parsing repeat close");
-            let (inner, repeat_close) = parse_i8(i)?;
-            i = inner;
-            mh.repeat_close = repeat_close;
-        }
-
-        // Presence of a marker
-        if (flags & 0x20) != 0 {
-            let (inner, marker) = parse_marker(i)?;
-            i = inner;
-            mh.marker = Some(marker);
-        }
-
-        // Number of alternate ending
-        if (flags & 0x10) != 0 {
-            log::debug!("Parsing repeat alternative");
-            let (inner, alternative) = parse_u8(i)?;
-            i = inner;
-            mh.repeat_alternative = alternative;
-        }
-
-        // Tonality of the measure
-        if (flags & 0x40) != 0 {
-            log::debug!("Parsing key signature");
-            let (inner, key_signature) = parse_i8(i)?;
-            mh.key_signature.key = key_signature;
-            i = inner;
-            let (inner, is_minor) = parse_i8(i)?;
-            i = inner;
-            mh.key_signature.is_minor = is_minor != 0;
-        }
-
         if song_version >= GpVersion::GP5 {
+            // Beginning of repeat
+            if (flags & 0x08) != 0 {
+                log::debug!("Parsing repeat close");
+                let (inner, repeat_close) = parse_i8(i)?;
+                i = inner;
+                mh.repeat_close = repeat_close - 1; // GP5 specific logic
+            }
+
+            // Presence of a marker
+            if (flags & 0x20) != 0 {
+                let (inner, marker) = parse_marker(i)?;
+                i = inner;
+                mh.marker = Some(marker);
+            }
+
+            // Tonality of the measure
+            if (flags & 0x40) != 0 {
+                log::debug!("Parsing key signature");
+                let (inner, key_signature) = parse_i8(i)?;
+                mh.key_signature.key = key_signature;
+                i = inner;
+                let (inner, is_minor) = parse_i8(i)?;
+                i = inner;
+                mh.key_signature.is_minor = is_minor != 0;
+            }
+
             if (flags & 0x01) != 0 || (flags & 0x02) != 0 {
                 log::debug!("Skip 4");
                 i = skip(i, 4);
+            }
+
+            // Number of alternate ending
+            if (flags & 0x10) != 0 {
+                log::debug!("Parsing repeat alternative");
+                let (inner, alternative) = parse_u8(i)?;
+                i = inner;
+                mh.repeat_alternative = alternative;
             }
 
             if (flags & 0x10) == 0 {
@@ -1305,10 +1309,49 @@ pub fn parse_measure_header(
                 i = skip(i, 1);
             }
 
+            // Triplet feel
             let (inner, triplet_feel) = parse_triplet_feel(i)?;
             i = inner;
             mh.triplet_feel = triplet_feel;
+        } else if song_version <= GpVersion::GP4_06 {
+            // TODO triplet feel should come from the Song level in that case
+            // mh.triplet_feel = triplet_feel;
+
+            // Beginning of repeat
+            if (flags & 0x08) != 0 {
+                log::debug!("Parsing repeat close");
+                let (inner, repeat_close) = parse_i8(i)?;
+                i = inner;
+                mh.repeat_close = repeat_close;
+            }
+
+            // Number of alternate ending
+            if (flags & 0x10) != 0 {
+                log::debug!("Parsing repeat alternative");
+                let (inner, alternative) = parse_u8(i)?;
+                i = inner;
+                mh.repeat_alternative = alternative;
+            }
+
+            // Presence of a marker
+            if (flags & 0x20) != 0 {
+                let (inner, marker) = parse_marker(i)?;
+                i = inner;
+                mh.marker = Some(marker);
+            }
+
+            // Tonality of the measure
+            if (flags & 0x40) != 0 {
+                log::debug!("Parsing key signature");
+                let (inner, key_signature) = parse_i8(i)?;
+                mh.key_signature.key = key_signature;
+                i = inner;
+                let (inner, is_minor) = parse_i8(i)?;
+                i = inner;
+                mh.key_signature.is_minor = is_minor != 0;
+            }
         }
+
         log::debug!("{mh:?}");
 
         Ok((i, mh))
@@ -1322,7 +1365,7 @@ pub fn parse_measure_headers(
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], Vec<MeasureHeader>> {
     move |i: &[u8]| {
         log::debug!("Parsing {measure_count} measure headers");
-        // parse first header to account for the byte in between each header
+        // parse first header to account for the byte in between each header in GP5
         let (mut i, first_header) =
             parse_measure_header(TimeSignature::default(), song_tempo, version)(i)?;
         let mut previous_time_signature = first_header.time_signature.clone();
@@ -1338,6 +1381,7 @@ pub fn parse_measure_headers(
             i = rest;
             headers.push(header);
         }
+        debug_assert_eq!(headers.len(), measure_count as usize);
         Ok((i, headers))
     }
 }
@@ -1565,10 +1609,11 @@ pub fn parse_gp_data(file_data: &[u8]) -> Result<Song, RuxError> {
                 cond(version >= GpVersion::GP5_10, take(19usize)),       // Skip RSE master effect
                 cond(version >= GpVersion::GP5, parse_page_setup),       // Page setup
                 cond(version >= GpVersion::GP5, parse_int_sized_string), // Tempo name
-                parse_int,                                               // Tempo
+                parse_int,                                               // Tempo value
                 cond(version > GpVersion::GP5, parse_bool),              // Tempo hide
                 parse_i8,                                                // Key signature
-                cond(version > GpVersion::GP3, parse_int),               // Octave
+                take(3usize),                                            // unknown
+                cond(version > GpVersion::GP3, parse_i8),                // Octave
                 parse_midi_channels,                                     // Midi channels
             ),
             move |(
@@ -1581,6 +1626,7 @@ pub fn parse_gp_data(file_data: &[u8]) -> Result<Song, RuxError> {
                 tempo,
                 hide_tempo,
                 key_signature,
+                _unknown,
                 octave,
                 midi_channels,
             )| {

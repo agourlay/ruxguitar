@@ -844,7 +844,7 @@ mod tests {
     }
 
     fn validate_gold_rendered_result(events: &[MidiEvent], gold_path: PathBuf) {
-        let gold = std::fs::read_to_string(gold_path).expect("gold file not found!");
+        let gold = std::fs::read_to_string(&gold_path).expect("gold file not found!");
         let mut expected_lines = events.iter().map(print_event);
         for (i1, l1) in gold.lines().enumerate() {
             let l2 = expected_lines.next().unwrap();
@@ -854,7 +854,7 @@ mod tests {
                 println!("## ACTUAL ##");
                 println!("{}", l2.trim_end());
                 println!("#####");
-                assert_eq!(l1, l2);
+                assert_eq!(l1, l2, "line {i1} failed for {gold_path:?}");
             }
         }
     }

@@ -114,6 +114,7 @@ mod tests {
 
     #[test]
     fn parse_gp5_00_demo() {
+        init_logger();
         // test file from https://github.com/slundi/guitarpro/tree/master/test
         const FILE_PATH: &str = "test-files/Demo v5.gp5";
         let song = parse_gp_file(FILE_PATH).unwrap();
@@ -172,7 +173,7 @@ mod tests {
         assert_eq!(
             header.marker,
             Some(Marker {
-                title: "\u{5}Intro".to_string(),
+                title: "Intro".to_string(),
                 color: 16_711_680
             })
         );
@@ -208,7 +209,7 @@ mod tests {
         assert_eq!(header.length(), 3840);
         assert_eq!(header.marker, None);
         assert!(!header.repeat_open);
-        assert_eq!(header.repeat_close, 2);
+        assert_eq!(header.repeat_close, 1);
         assert_eq!(header.triplet_feel, TripletFeel::None);
 
         // first measure
@@ -307,6 +308,7 @@ mod tests {
 
     #[test]
     fn parse_gp5_10_bleed() {
+        init_logger();
         const FILE_PATH: &str = "test-files/Meshuggah - Bleed.gp5";
         let song = parse_gp_file(FILE_PATH).unwrap();
         assert_eq!(song.version, GpVersion::GP5_10);
@@ -348,7 +350,7 @@ mod tests {
         assert_eq!(
             header.marker,
             Some(Marker {
-                title: "\u{5}BLEED".to_string(),
+                title: "BLEED".to_string(),
                 color: 0
             })
         );
@@ -623,6 +625,7 @@ mod tests {
 
     #[test]
     fn parse_gp5_10_ghost() {
+        init_logger();
         const FILE_PATH: &str = "test-files/Ghost - Cirice.gp5";
         let song = parse_gp_file(FILE_PATH).unwrap();
         assert_eq!(song.version, GpVersion::GP5_10);

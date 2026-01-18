@@ -97,14 +97,17 @@ impl MusicParser {
 
             track.number = number as i32;
 
+            // track name
             let (inner, name) = parse_byte_size_string(40)(i)?;
             i = inner;
             log::debug!("Track name:{name}");
             track.name = name;
 
+            // string count
             let (inner, string_count) = parse_int(i)?;
             i = inner;
             log::debug!("String count: {string_count}");
+            assert!(string_count > 0);
 
             // tunings
             let (inner, tunings) = count(parse_int, 7).parse(i)?;
@@ -119,33 +122,38 @@ impl MusicParser {
 
             // midi port
             let (inner, port) = parse_int(i)?;
+            log::debug!("Midi port: {port:?}");
             i = inner;
             track.midi_port = port as u8;
 
             // parse track channel info
             let (inner, channel_id) = self.parse_track_channel()(i)?;
+            log::debug!("Midi channel id: {channel_id:?}");
             track.channel_id = channel_id as u8;
             i = inner;
 
             // fret
             let (inner, fret_count) = parse_int(i)?;
+            log::debug!("Fret count: {fret_count:?}");
             i = inner;
             track.fret_count = fret_count as u8;
 
+            // offset
             let (inner, offset) = parse_int(i)?;
+            log::debug!("Offset: {offset:?}");
             i = inner;
             track.offset = offset;
 
+            // color
             let (inner, color) = parse_color(i)?;
+            log::debug!("Color: {color:?}");
             i = inner;
             track.color = color;
 
             if self.song.version == GpVersion::GP5 {
                 // skip 44
                 i = skip(i, 44);
-            }
-
-            if self.song.version > GpVersion::GP5 {
+            } else if self.song.version == GpVersion::GP5_10 {
                 // skip 49
                 i = skip(i, 49);
             };
@@ -311,7 +319,7 @@ impl MusicParser {
             };
 
             // beat type
-            if (flags & 0x40) == 0x40 {
+            if (flags & 0x40) != 0 {
                 let (inner, beat_type) = parse_u8(i)?;
                 i = inner;
                 beat.empty = beat_type & 0x02 == 0;
@@ -494,21 +502,26 @@ impl MusicParser {
             note.effect.accentuated_note = (flags & 0x40) == 0x40;
 
             // note type
-            if (flags & 0x20) == 0x20 {
+            if (flags & 0x20) != 0 {
                 let (inner, note_type) = parse_u8(i)?;
                 i = inner;
                 note.kind = NoteType::get_note_type(note_type);
             }
 
+            // duration percent GP4
+            if (flags & 0x01) != 0 && self.song.version <= GpVersion::GP4_06 {
+                i = skip(i, 2);
+            }
+
             // note velocity
-            if (flags & 0x10) == 0x10 {
+            if (flags & 0x10) != 0 {
                 let (inner, velocity) = parse_i8(i)?;
                 i = inner;
                 note.velocity = convert_velocity(i16::from(velocity));
             }
 
             // note value
-            if (flags & 0x20) == 0x20 {
+            if (flags & 0x20) != 0 {
                 let (inner, fret) = parse_i8(i)?;
                 i = inner;
 
@@ -530,23 +543,19 @@ impl MusicParser {
                 i = skip(i, 2);
             }
 
-            // duration percent
-            if (flags & 0x01) != 0 {
-                if self.song.version >= GpVersion::GP5 {
-                    i = skip(i, 8);
-                } else {
-                    i = skip(i, 2);
-                }
-            }
-
             if self.song.version >= GpVersion::GP5 {
+                // duration percent GP5
+                if (flags & 0x01) != 0 {
+                    i = skip(i, 8);
+                }
+
                 // swap accidentals
                 let (inner, swap) = parse_u8(i)?;
                 i = inner;
                 note.swap_accidentals = swap & 0x02 == 0x02;
             }
 
-            if (flags & 0x08) == 0x08 {
+            if (flags & 0x08) != 0 {
                 let (inner, ()) = parse_note_effects(note, self.song.version)(i)?;
                 i = inner;
             }
