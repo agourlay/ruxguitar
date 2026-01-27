@@ -7,7 +7,7 @@ use std::{
 use home::home_dir;
 use serde::{Deserialize, Serialize};
 
-use crate::RuxError;
+use ruxguitar::RuxError;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Config {

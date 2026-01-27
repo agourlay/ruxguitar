@@ -10,6 +10,14 @@ readme = "README.md"
 categories = ["multimedia"]
 keywords = ["guitar", "tablature", "music"]
 
+[lib]
+name = "ruxguitar"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ruxguitar"
+path = "src/main.rs"
+
 [lints.clippy]
 cast_lossless = "warn"
 doc_link_with_quotes = "warn"

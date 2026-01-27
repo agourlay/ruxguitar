@@ -26,6 +26,12 @@ pub struct MidiBuilder {
     events: Vec<MidiEvent>, // events accumulated during build
 }
 
+impl Default for MidiBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MidiBuilder {
     pub const fn new() -> Self {
         Self { events: Vec::new() }
