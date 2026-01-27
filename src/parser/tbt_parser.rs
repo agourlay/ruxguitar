@@ -1084,7 +1084,9 @@ fn infer_time_signature(spaces_in_measure: u16) -> TimeSignature {
         32 => (8, 4), // Or 4/2
         _ => {
             // Try to figure out based on divisibility (any multiple of 4 works)
-            if spaces_in_measure.is_multiple_of(4) {
+            // Note: Using manual check instead of is_multiple_of() for Rust 1.75 compatibility
+            #[allow(clippy::manual_is_multiple_of)]
+            if spaces_in_measure % 4 == 0 {
                 ((spaces_in_measure / 4) as u8, 4)
             } else {
                 (4, 4) // Default
