@@ -772,15 +772,19 @@ fn parse_alternate_time(input: &[u8], space_count: u32) -> IResult<&[u8], Vec<Tb
 }
 
 /// Parse track effect changes (version >= 0x71)
+///
+/// Uses Chunk4 format: first u32 is byte length, followed by 8-byte entries.
 fn parse_track_effect_changes(input: &[u8]) -> IResult<&[u8], Vec<TbtEffectChange>> {
-    // First read the count as a 4-byte value
-    let (input, count) = le_u32(input)?;
+    // Chunk4 format: first u32 is BYTE LENGTH (not entry count)
+    let (input, byte_length) = le_u32(input)?;
 
-    let mut changes = Vec::with_capacity(count as usize);
+    // Each entry is 8 bytes, so divide by 8 to get entry count
+    let entry_count = byte_length as usize / 8;
+    let mut changes = Vec::with_capacity(entry_count);
     let mut input = input;
     let mut current_space: u32 = 0;
 
-    for _ in 0..count {
+    for _ in 0..entry_count {
         // Each entry is 8 bytes: space_inc(2), effect(2), reserved(2), value(2)
         let (rest, space_inc) = le_u16(input)?;
         let (rest, effect_num) = le_u16(rest)?;
@@ -1852,6 +1856,11 @@ mod tests {
             "test-files/Aguado - Study 1.tbt",
             "test-files/Arcadelt - Il Bianco E Dolce Cigno.tbt",
             "test-files/Arndt - Nola.tbt",
+            // Version 0x70 and 0x72 test files
+            "test-files/version_0x70_36600.tbt",
+            "test-files/version_0x72_31600.tbt",
+            "test-files/version_0x72_34200.tbt",
+            "test-files/version_0x72_41150.tbt",
         ];
 
         for path in test_files {
