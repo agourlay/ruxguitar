@@ -1,10 +1,10 @@
-use ruxguitar::parser::song_parser::Song;
 use crate::ui::application::Message;
 use crate::ui::canvas_measure::CanvasMeasure;
 use iced::widget::scrollable;
 use iced::widget::scrollable::Id;
 use iced::{Element, Length};
 use iced_aw::Wrap;
+use ruxguitar::parser::song_parser::Song;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 

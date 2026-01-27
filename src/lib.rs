@@ -9,10 +9,12 @@
 //!
 //! ```no_run
 //! use ruxguitar::{parse_gp_data, MidiBuilder};
+//! use std::rc::Rc;
 //!
 //! let file_data = std::fs::read("song.gp5").unwrap();
 //! let song = parse_gp_data(&file_data).unwrap();
-//! let midi_events = MidiBuilder::build_for_song(&song);
+//! let song_rc = Rc::new(song);
+//! let midi_events = MidiBuilder::new().build_for_song(&song_rc);
 //! ```
 
 pub mod audio;

@@ -25,8 +25,7 @@ fn test_types_accessible() {
 /// Test parsing a GP5 file from the test-files directory.
 #[test]
 fn test_parse_gp5_file() {
-    let mut file = std::fs::File::open("test-files/Demo v5.gp5")
-        .expect("Failed to open test file");
+    let mut file = std::fs::File::open("test-files/Demo v5.gp5").expect("Failed to open test file");
     let mut file_data: Vec<u8> = vec![];
     file.read_to_end(&mut file_data)
         .expect("Failed to read test file");
@@ -34,7 +33,10 @@ fn test_parse_gp5_file() {
     let song = parse_gp_data(&file_data).expect("Failed to parse GP5 file");
 
     // Verify basic song structure
-    assert!(!song.tracks.is_empty(), "Song should have at least one track");
+    assert!(
+        !song.tracks.is_empty(),
+        "Song should have at least one track"
+    );
     assert!(
         !song.measure_headers.is_empty(),
         "Song should have at least one measure"
@@ -44,8 +46,7 @@ fn test_parse_gp5_file() {
 /// Test generating MIDI events from a parsed song.
 #[test]
 fn test_midi_generation() {
-    let mut file = std::fs::File::open("test-files/Demo v5.gp5")
-        .expect("Failed to open test file");
+    let mut file = std::fs::File::open("test-files/Demo v5.gp5").expect("Failed to open test file");
     let mut file_data: Vec<u8> = vec![];
     file.read_to_end(&mut file_data)
         .expect("Failed to read test file");
