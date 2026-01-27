@@ -9,9 +9,11 @@ The design of the application is described in details in the blog article "[Play
 
 ![capture](ruxguitar.gif)
 
-## Limitations
+## Supported Formats
 
-- supports only gp5 & gp4 files
+- Guitar Pro 5 (.gp5)
+- Guitar Pro 4 (.gp4)
+- TabIt (.tbt)
 
 ## Usage
 
