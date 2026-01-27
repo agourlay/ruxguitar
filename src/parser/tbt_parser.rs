@@ -512,19 +512,10 @@ const NOTES_SLOT_COUNT: usize = STRINGS_PER_TRACK + STRINGS_PER_TRACK + 4;
 /// Slots per space for alternate time (2 dsq per space)
 const ALT_TIME_SLOTS_PER_SPACE: usize = 2;
 
-/// Decode a delta-list chunk from the input stream.
+/// Read a single raw delta-list chunk from the input stream.
 ///
-/// Delta-list encoding:
-/// - Read a short (2 bytes) representing the number of byte pairs
-/// - For each pair: if first byte != 0, increment = first byte; value = second byte
-/// - If first byte == 0, read next short as increment, then value
-///
-/// Returns the expanded array and remaining input.
-fn decode_delta_list_chunk<'a>(
-    input: &'a [u8],
-    slots_per_space: usize,
-    total_spaces: u32,
-) -> IResult<&'a [u8], Vec<Vec<u8>>> {
+/// Returns the raw pairs data and remaining input.
+fn read_delta_list_chunk_raw<'a>(input: &'a [u8]) -> IResult<&'a [u8], Vec<u8>> {
     // Read the chunk length (number of byte pairs)
     let (input, pair_count) = le_u16(input)?;
     let bytes_to_read = pair_count as usize * 2;
@@ -537,31 +528,60 @@ fn decode_delta_list_chunk<'a>(
     }
 
     let (remaining, chunk_data) = take(bytes_to_read)(input)?;
+    Ok((remaining, chunk_data.to_vec()))
+}
 
-    // Expand the delta-encoded data
-    let total_slots = total_spaces as usize * slots_per_space;
-    let mut result: Vec<Vec<u8>> = vec![vec![0u8; slots_per_space]; total_spaces as usize];
+/// Compute the total slot count from accumulated delta list pairs.
+///
+/// This counts the sum of all increments in the pairs.
+fn compute_delta_list_count(pairs: &[u8]) -> usize {
+    let mut count = 0usize;
+    let mut pos = 0usize;
 
-    let mut pos = 0usize; // Current position in byte pairs
-    let mut unit = 0usize; // Current unit (slot position across all spaces)
-
-    while pos < chunk_data.len() {
-        // Read increment and value
-        let (increment, value, advance) = if chunk_data[pos] != 0 {
+    while pos < pairs.len() {
+        let (increment, advance) = if pairs[pos] != 0 {
             // Simple case: increment is first byte
-            (chunk_data[pos] as usize, chunk_data[pos + 1], 2)
+            (pairs[pos] as usize, 2)
         } else {
             // Extended case: next two bytes form the increment as little-endian short
-            if pos + 3 >= chunk_data.len() {
+            if pos + 3 >= pairs.len() {
                 break;
             }
-            let inc = u16::from_le_bytes([chunk_data[pos + 1], chunk_data[pos + 2]]) as usize;
-            let val = chunk_data[pos + 3];
+            let inc = u16::from_le_bytes([pairs[pos + 1], pairs[pos + 2]]) as usize;
+            (inc, 4)
+        };
+
+        count += increment;
+        pos += advance;
+    }
+
+    count
+}
+
+/// Expand accumulated delta list pairs into a 2D array.
+///
+/// The pairs contain run-length encoded data where each entry says
+/// "fill N slots with value V".
+fn expand_delta_list(pairs: &[u8], slots_per_space: usize, total_spaces: usize) -> Vec<Vec<u8>> {
+    let total_slots = total_spaces * slots_per_space;
+    let mut result: Vec<Vec<u8>> = vec![vec![0u8; slots_per_space]; total_spaces];
+
+    let mut pos = 0usize;
+    let mut unit = 0usize;
+
+    while pos < pairs.len() {
+        let (increment, value, advance) = if pairs[pos] != 0 {
+            (pairs[pos] as usize, pairs[pos + 1], 2)
+        } else {
+            if pos + 3 >= pairs.len() {
+                break;
+            }
+            let inc = u16::from_le_bytes([pairs[pos + 1], pairs[pos + 2]]) as usize;
+            let val = pairs[pos + 3];
             (inc, val, 4)
         };
 
         // Fill from current position to (current + increment) with the value
-        // This is run-length encoding: increment says how many slots to fill
         let end_unit = (unit + increment).min(total_slots);
         while unit < end_unit {
             let space = unit / slots_per_space;
@@ -575,7 +595,38 @@ fn decode_delta_list_chunk<'a>(
         pos += advance;
     }
 
-    Ok((remaining, result))
+    result
+}
+
+/// Decode delta-list chunks from the input stream until we have enough data.
+///
+/// TBT format can have MULTIPLE delta list chunks per track. We accumulate
+/// chunks until the total slot count reaches `slots_per_space * total_spaces`.
+///
+/// Returns the expanded array and remaining input.
+fn decode_delta_list_chunks<'a>(
+    input: &'a [u8],
+    slots_per_space: usize,
+    total_spaces: u32,
+) -> IResult<&'a [u8], Vec<Vec<u8>>> {
+    let target_count = slots_per_space * total_spaces as usize;
+    let mut accumulated_pairs: Vec<u8> = Vec::new();
+    let mut input = input;
+
+    // Read chunks until we have enough slots
+    loop {
+        let (rest, chunk_pairs) = read_delta_list_chunk_raw(input)?;
+        accumulated_pairs.extend_from_slice(&chunk_pairs);
+        input = rest;
+
+        let current_count = compute_delta_list_count(&accumulated_pairs);
+        if current_count >= target_count {
+            break;
+        }
+    }
+
+    let result = expand_delta_list(&accumulated_pairs, slots_per_space, total_spaces as usize);
+    Ok((input, result))
 }
 
 /// Parse bar lines for version 0x70+ (ArrayList format)
@@ -623,7 +674,7 @@ fn parse_bar_lines_0x6f<'a>(
     space_count: u16,
 ) -> IResult<&'a [u8], Vec<TbtBarLine>> {
     // For 0x6f, bar lines are stored as a delta list with 1 slot per space
-    let (remaining, expanded) = decode_delta_list_chunk(input, 1, space_count as u32)?;
+    let (remaining, expanded) = decode_delta_list_chunks(input, 1, space_count as u32)?;
 
     let mut bars = Vec::new();
 
@@ -662,7 +713,8 @@ fn parse_track_notes<'a>(
     space_count: u32,
 ) -> IResult<&'a [u8], Vec<TbtNote>> {
     // Notes use NOTES_SLOT_COUNT slots per space (20 slots)
-    let (remaining, expanded) = decode_delta_list_chunk(input, NOTES_SLOT_COUNT, space_count)?;
+    // TBT format can have MULTIPLE delta list chunks per track
+    let (remaining, expanded) = decode_delta_list_chunks(input, NOTES_SLOT_COUNT, space_count)?;
 
     let mut notes = Vec::new();
 
@@ -709,7 +761,7 @@ fn parse_alternate_time<'a>(
     space_count: u32,
 ) -> IResult<&'a [u8], Vec<TbtAlternateTime>> {
     // Alternate time uses 2 slots per space (dsq)
-    let (remaining, expanded) = decode_delta_list_chunk(input, ALT_TIME_SLOTS_PER_SPACE, space_count)?;
+    let (remaining, expanded) = decode_delta_list_chunks(input, ALT_TIME_SLOTS_PER_SPACE, space_count)?;
 
     let mut alt_times = Vec::new();
 
@@ -1829,24 +1881,21 @@ mod tests {
 
     #[test]
     fn test_delta_list_decoder() {
-        // Test the delta-list decoder with a simple input
-        // Format: 2-byte count (number of pairs), then pairs
-        // Each pair: if byte0 != 0, increment=byte0, value=byte1
-        // If byte0 == 0, next 2 bytes are increment as LE short, then value
-        //
-        // Delta-list uses FILL semantics: increment is how many positions to fill,
-        // all filled with the same value.
+        // Test the delta-list expansion with raw pairs
+        // Format: pairs of (increment, value) with run-length encoding
+        // Delta-list uses FILL semantics: increment says how many slots to fill
+        // with the given value.
 
         // Simple case: 3 pairs filling 1 slot each with values 0xAA, 0xBB, 0xCC
-        let input = &[
-            0x03, 0x00, // 3 byte pairs (6 bytes total)
+        // Then fill remaining 7 slots with 0x00 (to reach total of 10)
+        let pairs = &[
             0x01, 0xAA, // fill 1 slot with 0xAA (position 0)
             0x01, 0xBB, // fill 1 slot with 0xBB (position 1)
             0x01, 0xCC, // fill 1 slot with 0xCC (position 2)
+            0x07, 0x00, // fill 7 slots with 0x00 (positions 3-9)
         ];
 
-        let (remaining, result) = decode_delta_list_chunk(input, 1, 10).expect("Failed to decode");
-        assert!(remaining.is_empty());
+        let result = expand_delta_list(pairs, 1, 10);
 
         // Positions 0, 1, 2 should have values AA, BB, CC
         assert_eq!(result[0][0], 0xAA);
@@ -1857,6 +1906,19 @@ mod tests {
         for i in 3..10 {
             assert_eq!(result[i][0], 0);
         }
+    }
+
+    #[test]
+    fn test_compute_delta_list_count() {
+        // Test the count computation
+        let pairs = &[
+            0x01, 0xAA, // increment 1
+            0x01, 0xBB, // increment 1
+            0x05, 0xCC, // increment 5
+        ];
+
+        let count = compute_delta_list_count(pairs);
+        assert_eq!(count, 7); // 1 + 1 + 5 = 7
     }
 
     #[test]
@@ -2170,5 +2232,71 @@ mod tests {
         }
 
         println!("All {} guitar notes have valid fret values (0-24)", guitar_notes.len());
+    }
+
+    #[test]
+    fn test_debug_all_tracks_take_on_me() {
+        let data = fs::read("test-files/Take On Me (2).tbt").expect("Failed to read test file");
+        let tbt_song = parse_tbt_data(&data).expect("Failed to parse TBT file");
+        let song = tbt_to_song(&tbt_song).expect("Failed to convert to Song");
+
+        println!("\n=== TBT Raw Track Notes ===");
+        for (i, track_notes) in tbt_song.track_notes.iter().enumerate() {
+            println!("TBT Track {}: {} notes, is_drum={}",
+                i, track_notes.len(), tbt_song.metadata.tracks[i].is_drum);
+        }
+
+        println!("\n=== Converted Song Tracks ===");
+        for (i, track) in song.tracks.iter().enumerate() {
+            let total_notes: usize = track.measures.iter()
+                .flat_map(|m| &m.voices)
+                .flat_map(|v| &v.beats)
+                .map(|b| b.notes.len())
+                .sum();
+
+            let first_notes: Vec<i16> = track.measures.iter()
+                .flat_map(|m| &m.voices)
+                .flat_map(|v| &v.beats)
+                .flat_map(|b| &b.notes)
+                .take(10)
+                .map(|n| n.value)
+                .collect();
+
+            println!("Track {}: {} strings, {} notes, first frets: {:?}",
+                i, track.strings.len(), total_notes, first_notes);
+        }
+
+        // Compare tracks 5 and 6 (0-indexed)
+        println!("\n=== Comparing Track 5 vs Track 6 ===");
+        let track5_notes: Vec<(i16, i8)> = song.tracks[5].measures.iter()
+            .flat_map(|m| &m.voices)
+            .flat_map(|v| &v.beats)
+            .flat_map(|b| &b.notes)
+            .take(20)
+            .map(|n| (n.value, n.string))
+            .collect();
+
+        let track6_notes: Vec<(i16, i8)> = song.tracks[6].measures.iter()
+            .flat_map(|m| &m.voices)
+            .flat_map(|v| &v.beats)
+            .flat_map(|b| &b.notes)
+            .take(20)
+            .map(|n| (n.value, n.string))
+            .collect();
+
+        println!("Track 5 first 20 (fret, string): {:?}", track5_notes);
+        println!("Track 6 first 20 (fret, string): {:?}", track6_notes);
+
+        // Check raw TBT notes for track 6
+        println!("\n=== Raw TBT Track 6 Notes ===");
+        for (i, note) in tbt_song.track_notes[6].iter().take(20).enumerate() {
+            println!("  Note {}: string={}, fret={}, vsq={}", i, note.string, note.fret, note.vsq_position);
+        }
+
+        // Check track 6 tuning
+        println!("\n=== Track 6 Tuning ===");
+        println!("  Raw bytes: {:?}", tbt_song.metadata.tracks[6].tuning);
+        println!("  String count: {}", tbt_song.metadata.tracks[6].string_count);
+        println!("  Is drum: {}", tbt_song.metadata.tracks[6].is_drum);
     }
 }
