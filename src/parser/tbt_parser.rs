@@ -6,8 +6,8 @@
 use crate::parser::song_parser::{
     Beat, BendEffect, BendPoint, Duration, GpVersion, HarmonicEffect, HarmonicType, KeySignature,
     Measure, MeasureHeader, MidiChannel, Note, NoteEffect, NoteType, SlapEffect, SlideType, Song,
-    SongInfo, Tempo, TimeSignature, Track, TremoloPickingEffect, TripletFeel, Voice,
-    DEFAULT_BANK, DEFAULT_PERCUSSION_BANK, QUARTER_TIME,
+    SongInfo, Tempo, TimeSignature, Track, TremoloPickingEffect, TripletFeel, Voice, DEFAULT_BANK,
+    DEFAULT_PERCUSSION_BANK, QUARTER_TIME,
 };
 use crate::parser::tbt_types::*;
 use crate::RuxError;
@@ -70,8 +70,9 @@ fn parse_tbt_header(input: &[u8]) -> IResult<&[u8], TbtHeader> {
 
     // Version number
     let (input, version_byte) = le_u8(input)?;
-    let version = TbtVersion::from_byte(version_byte)
-        .ok_or_else(|| nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag)))?;
+    let version = TbtVersion::from_byte(version_byte).ok_or_else(|| {
+        nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag))
+    })?;
 
     // Tempo1 (1 byte)
     let (input, tempo1) = le_u8(input)?;
@@ -410,7 +411,9 @@ pub struct TbtValidationResult {
 /// Parse TBT file header only (for validation/inspection)
 pub fn parse_tbt_header_only(data: &[u8]) -> Result<TbtHeader, RuxError> {
     if data.len() < TBT_HEADER_SIZE {
-        return Err(RuxError::ParsingError("TBT file too small for header".to_string()));
+        return Err(RuxError::ParsingError(
+            "TBT file too small for header".to_string(),
+        ));
     }
 
     let (_, header) = parse_tbt_header(data)
@@ -628,10 +631,7 @@ fn decode_delta_list_chunks(
 }
 
 /// Parse bar lines for version 0x70+ (ArrayList format)
-fn parse_bar_lines_0x70(
-    input: &[u8],
-    bar_count: u16,
-) -> IResult<&[u8], Vec<TbtBarLine>> {
+fn parse_bar_lines_0x70(input: &[u8], bar_count: u16) -> IResult<&[u8], Vec<TbtBarLine>> {
     let mut bars = Vec::with_capacity(bar_count as usize);
     let mut input = input;
     let mut current_space: u32 = 0;
@@ -667,10 +667,7 @@ fn parse_bar_lines_0x70(
 }
 
 /// Parse bar lines for version 0x6f (DeltaListChunk format)
-fn parse_bar_lines_0x6f(
-    input: &[u8],
-    space_count: u16,
-) -> IResult<&[u8], Vec<TbtBarLine>> {
+fn parse_bar_lines_0x6f(input: &[u8], space_count: u16) -> IResult<&[u8], Vec<TbtBarLine>> {
     // For 0x6f, bar lines are stored as a delta list with 1 slot per space
     let (remaining, expanded) = decode_delta_list_chunks(input, 1, u32::from(space_count))?;
 
@@ -706,10 +703,7 @@ fn parse_bar_lines_0x6f(
 }
 
 /// Parse notes for a single track
-fn parse_track_notes(
-    input: &[u8],
-    space_count: u32,
-) -> IResult<&[u8], Vec<TbtNote>> {
+fn parse_track_notes(input: &[u8], space_count: u32) -> IResult<&[u8], Vec<TbtNote>> {
     // Notes use NOTES_SLOT_COUNT slots per space (20 slots)
     // TBT format can have MULTIPLE delta list chunks per track
     let (remaining, expanded) = decode_delta_list_chunks(input, NOTES_SLOT_COUNT, space_count)?;
@@ -754,12 +748,10 @@ fn parse_track_notes(
 }
 
 /// Parse alternate time regions for a single track
-fn parse_alternate_time(
-    input: &[u8],
-    space_count: u32,
-) -> IResult<&[u8], Vec<TbtAlternateTime>> {
+fn parse_alternate_time(input: &[u8], space_count: u32) -> IResult<&[u8], Vec<TbtAlternateTime>> {
     // Alternate time uses 2 slots per space (dsq)
-    let (remaining, expanded) = decode_delta_list_chunks(input, ALT_TIME_SLOTS_PER_SPACE, space_count)?;
+    let (remaining, expanded) =
+        decode_delta_list_chunks(input, ALT_TIME_SLOTS_PER_SPACE, space_count)?;
 
     let mut alt_times = Vec::new();
 
@@ -871,8 +863,9 @@ pub fn parse_tbt_body(
     let mut track_notes = Vec::with_capacity(header.track_count as usize);
     for i in 0..header.track_count {
         let track_space_count = get_track_space_count(header, metadata, i);
-        let (rest, notes) = parse_track_notes(input, track_space_count)
-            .map_err(|e| RuxError::ParsingError(format!("Failed to parse notes for track {i}: {e}")))?;
+        let (rest, notes) = parse_track_notes(input, track_space_count).map_err(|e| {
+            RuxError::ParsingError(format!("Failed to parse notes for track {i}: {e}"))
+        })?;
         input = rest;
         track_notes.push(notes);
     }
@@ -882,8 +875,9 @@ pub fn parse_tbt_body(
     if header.features.has_alternate_time_regions {
         for i in 0..header.track_count {
             let track_space_count = get_track_space_count(header, metadata, i);
-            let (rest, alt_time) = parse_alternate_time(input, track_space_count)
-                .map_err(|e| RuxError::ParsingError(format!("Failed to parse alternate time for track {i}: {e}")))?;
+            let (rest, alt_time) = parse_alternate_time(input, track_space_count).map_err(|e| {
+                RuxError::ParsingError(format!("Failed to parse alternate time for track {i}: {e}"))
+            })?;
             input = rest;
             alternate_times.push(alt_time);
         }
@@ -898,8 +892,9 @@ pub fn parse_tbt_body(
     let mut track_effect_changes = Vec::with_capacity(header.track_count as usize);
     if header.version.has_track_effect_changes_chunk() {
         for i in 0..header.track_count {
-            let (rest, changes) = parse_track_effect_changes(input)
-                .map_err(|e| RuxError::ParsingError(format!("Failed to parse effect changes for track {i}: {e}")))?;
+            let (rest, changes) = parse_track_effect_changes(input).map_err(|e| {
+                RuxError::ParsingError(format!("Failed to parse effect changes for track {i}: {e}"))
+            })?;
             input = rest;
             track_effect_changes.push(changes);
         }
@@ -910,7 +905,12 @@ pub fn parse_tbt_body(
         }
     }
 
-    Ok((bar_lines, track_notes, alternate_times, track_effect_changes))
+    Ok((
+        bar_lines,
+        track_notes,
+        alternate_times,
+        track_effect_changes,
+    ))
 }
 
 /// Parse a complete TBT file into a TbtSong
@@ -1103,7 +1103,8 @@ fn infer_time_signature(spaces_in_measure: u16) -> TimeSignature {
 
 /// Group notes by their space position for creating beats
 fn group_notes_by_space(notes: &[TbtNote]) -> std::collections::BTreeMap<u32, Vec<&TbtNote>> {
-    let mut groups: std::collections::BTreeMap<u32, Vec<&TbtNote>> = std::collections::BTreeMap::new();
+    let mut groups: std::collections::BTreeMap<u32, Vec<&TbtNote>> =
+        std::collections::BTreeMap::new();
 
     for note in notes {
         // Convert vsq position to space position
@@ -1130,14 +1131,14 @@ fn calculate_duration(
     // 16 spaces = whole note
 
     let (value, dotted) = match space_gap {
-        1 => (16, false),       // 16th note
-        2 => (8, false),        // 8th note
-        3 => (8, true),         // Dotted 8th
-        4 => (4, false),        // Quarter note
-        6 => (4, true),         // Dotted quarter
-        8 => (2, false),        // Half note
-        12 => (2, true),        // Dotted half
-        16 => (1, false),       // Whole note
+        1 => (16, false), // 16th note
+        2 => (8, false),  // 8th note
+        3 => (8, true),   // Dotted 8th
+        4 => (4, false),  // Quarter note
+        6 => (4, true),   // Dotted quarter
+        8 => (2, false),  // Half note
+        12 => (2, true),  // Dotted half
+        16 => (1, false), // Whole note
         _ => {
             // Find closest duration
             if space_gap < 2 {
@@ -1261,12 +1262,20 @@ pub fn tbt_to_song(tbt: &TbtSong) -> Result<Song, RuxError> {
         let bar_at_end = tbt.bar_lines.iter().find(|b| b.space == *end_space);
 
         let repeat_open = bar_at_start
-            .map(|b| matches!(b.bar_type, TbtBarType::OpenRepeat | TbtBarType::OpenCloseRepeat))
+            .map(|b| {
+                matches!(
+                    b.bar_type,
+                    TbtBarType::OpenRepeat | TbtBarType::OpenCloseRepeat
+                )
+            })
             .unwrap_or(i == 0); // First measure implicitly opens
 
         let repeat_close = bar_at_end
             .map(|b| {
-                if matches!(b.bar_type, TbtBarType::CloseRepeat | TbtBarType::OpenCloseRepeat) {
+                if matches!(
+                    b.bar_type,
+                    TbtBarType::CloseRepeat | TbtBarType::OpenCloseRepeat
+                ) {
                     b.repeat_count.max(1) as i8
                 } else {
                     0
@@ -1298,7 +1307,11 @@ pub fn tbt_to_song(tbt: &TbtSong) -> Result<Song, RuxError> {
         let string_count = strings.len();
 
         // Group this track's notes by space
-        let track_notes = tbt.track_notes.get(track_idx).map(Vec::as_slice).unwrap_or(&[]);
+        let track_notes = tbt
+            .track_notes
+            .get(track_idx)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
         let notes_by_space = group_notes_by_space(track_notes);
 
         // Create measures for this track
@@ -1546,11 +1559,26 @@ mod tests {
 
     #[test]
     fn test_string_effect_from_byte() {
-        assert_eq!(TbtStringEffect::from_byte(0x68), Some(TbtStringEffect::HammerOn));
-        assert_eq!(TbtStringEffect::from_byte(0x70), Some(TbtStringEffect::PullOff));
-        assert_eq!(TbtStringEffect::from_byte(0x2f), Some(TbtStringEffect::SlideUp));
-        assert_eq!(TbtStringEffect::from_byte(0x5c), Some(TbtStringEffect::SlideDown));
-        assert_eq!(TbtStringEffect::from_byte(0x7e), Some(TbtStringEffect::Vibrato));
+        assert_eq!(
+            TbtStringEffect::from_byte(0x68),
+            Some(TbtStringEffect::HammerOn)
+        );
+        assert_eq!(
+            TbtStringEffect::from_byte(0x70),
+            Some(TbtStringEffect::PullOff)
+        );
+        assert_eq!(
+            TbtStringEffect::from_byte(0x2f),
+            Some(TbtStringEffect::SlideUp)
+        );
+        assert_eq!(
+            TbtStringEffect::from_byte(0x5c),
+            Some(TbtStringEffect::SlideDown)
+        );
+        assert_eq!(
+            TbtStringEffect::from_byte(0x7e),
+            Some(TbtStringEffect::Vibrato)
+        );
         assert_eq!(TbtStringEffect::from_byte(0x00), None);
     }
 
@@ -1591,14 +1619,13 @@ mod tests {
             }
 
             let result = parse_and_validate_tbt_header(&data, TbtParseOptions::default());
-            assert!(
-                result.is_ok(),
-                "Failed to parse {path}: {:?}",
-                result.err()
-            );
+            assert!(result.is_ok(), "Failed to parse {path}: {:?}", result.err());
 
             let result = result.unwrap();
-            assert!(result.header_crc_valid, "CRC32 validation failed for {path}");
+            assert!(
+                result.header_crc_valid,
+                "CRC32 validation failed for {path}"
+            );
         }
     }
 
@@ -1670,8 +1697,10 @@ mod tests {
         assert_eq!(track0.index, 0);
 
         // Print parsed values for debugging
-        println!("Track 0: strings={}, volume={}, midi_ch={}",
-            track0.string_count, track0.volume, track0.midi_channel);
+        println!(
+            "Track 0: strings={}, volume={}, midi_ch={}",
+            track0.string_count, track0.volume, track0.midi_channel
+        );
         println!("Title: '{}'", metadata.song_info.title);
         println!("Artist: '{}'", metadata.song_info.artist);
     }
@@ -1713,7 +1742,9 @@ mod tests {
                 continue;
             }
 
-            let Ok(header) = parse_tbt_header_only(&data) else { continue };
+            let Ok(header) = parse_tbt_header_only(&data) else {
+                continue;
+            };
 
             let metadata = parse_tbt_metadata(&data, &header);
             assert!(
@@ -1739,10 +1770,7 @@ mod tests {
 
         // Just verify tuning was parsed (8 bytes per track)
         for track in &metadata.tracks {
-            println!(
-                "Track {}: tuning={:?}",
-                track.index, track.tuning
-            );
+            println!("Track {}: tuning={:?}", track.index, track.tuning);
             // Tuning array should have 8 elements (verified by type)
             assert_eq!(track.tuning.len(), 8);
         }
@@ -1764,10 +1792,16 @@ mod tests {
         assert_eq!(song.metadata.tracks.len(), 8);
 
         // Verify bar lines were parsed
-        assert!(!song.bar_lines.is_empty(), "Expected bar lines to be parsed");
+        assert!(
+            !song.bar_lines.is_empty(),
+            "Expected bar lines to be parsed"
+        );
         println!("Parsed {} bar lines", song.bar_lines.len());
         for (i, bar) in song.bar_lines.iter().take(5).enumerate() {
-            println!("  Bar {}: space={}, type={:?}, repeat={}", i, bar.space, bar.bar_type, bar.repeat_count);
+            println!(
+                "  Bar {}: space={}, type={:?}, repeat={}",
+                i, bar.space, bar.bar_type, bar.repeat_count
+            );
         }
 
         // Verify track notes were parsed (should have 8 track note arrays)
@@ -1798,7 +1832,10 @@ mod tests {
         // Version 0x6f doesn't have track effect changes
         assert_eq!(song.track_effect_changes.len(), 8);
         for changes in &song.track_effect_changes {
-            assert!(changes.is_empty(), "Version 0x6f should not have track effect changes");
+            assert!(
+                changes.is_empty(),
+                "Version 0x6f should not have track effect changes"
+            );
         }
     }
 
@@ -1920,7 +1957,10 @@ mod tests {
         let result = decode_delta_list_chunks(&malformed_input, 1, 100_000_000);
 
         // Should fail with TooLarge error after hitting MAX_DELTA_LIST_CHUNKS
-        assert!(result.is_err(), "Should reject input requiring too many chunks");
+        assert!(
+            result.is_err(),
+            "Should reject input requiring too many chunks"
+        );
         if let Err(nom::Err::Failure(e)) = result {
             assert_eq!(e.code, nom::error::ErrorKind::TooLarge);
         } else {
@@ -1996,13 +2036,17 @@ mod tests {
         assert_eq!(song.midi_channels.len(), 64);
 
         // Count total beats and notes
-        let total_beats: usize = song.tracks.iter()
+        let total_beats: usize = song
+            .tracks
+            .iter()
             .flat_map(|t| &t.measures)
             .flat_map(|m| &m.voices)
             .map(|v| v.beats.len())
             .sum();
 
-        let total_notes: usize = song.tracks.iter()
+        let total_notes: usize = song
+            .tracks
+            .iter()
             .flat_map(|t| &t.measures)
             .flat_map(|m| &m.voices)
             .flat_map(|v| &v.beats)
@@ -2033,10 +2077,16 @@ mod tests {
                 continue;
             }
 
-            let Ok(tbt_song) = parse_tbt_data(&data) else { continue };
+            let Ok(tbt_song) = parse_tbt_data(&data) else {
+                continue;
+            };
 
             let result = tbt_to_song(&tbt_song);
-            assert!(result.is_ok(), "Failed to convert {path}: {:?}", result.err());
+            assert!(
+                result.is_ok(),
+                "Failed to convert {path}: {:?}",
+                result.err()
+            );
 
             let song = result.unwrap();
 
@@ -2047,7 +2097,10 @@ mod tests {
                 "Track count mismatch for {path}"
             );
 
-            assert!(!song.measure_headers.is_empty(), "No measure headers for {path}");
+            assert!(
+                !song.measure_headers.is_empty(),
+                "No measure headers for {path}"
+            );
 
             // Each track should have the same number of measures as headers
             for track in &song.tracks {
@@ -2181,8 +2234,14 @@ mod tests {
 
         println!("Track 5 metadata:");
         println!("  Is drum: {}", tbt_song.metadata.tracks[5].is_drum);
-        println!("  String count: {}", tbt_song.metadata.tracks[5].string_count);
-        println!("  Raw tuning bytes: {:?}", tbt_song.metadata.tracks[5].tuning);
+        println!(
+            "  String count: {}",
+            tbt_song.metadata.tracks[5].string_count
+        );
+        println!(
+            "  Raw tuning bytes: {:?}",
+            tbt_song.metadata.tracks[5].tuning
+        );
 
         // Convert tuning and verify
         let song = tbt_to_song(&tbt_song).expect("Failed to convert to Song");
@@ -2231,19 +2290,31 @@ mod tests {
         let guitar_notes = &tbt_song.track_notes[guitar_track_idx];
 
         println!("Track {guitar_track_idx} metadata:");
-        println!("  Is drum: {}", tbt_song.metadata.tracks[guitar_track_idx].is_drum);
-        println!("  String count: {}", tbt_song.metadata.tracks[guitar_track_idx].string_count);
+        println!(
+            "  Is drum: {}",
+            tbt_song.metadata.tracks[guitar_track_idx].is_drum
+        );
+        println!(
+            "  String count: {}",
+            tbt_song.metadata.tracks[guitar_track_idx].string_count
+        );
 
         // Guitar frets should be in normal range (0-24)
         for (i, note) in guitar_notes.iter().enumerate() {
             assert!(
                 note.fret <= 24,
                 "Guitar note {} has unreasonable fret value: {} (string={}, vsq={})",
-                i, note.fret, note.string, note.vsq_position
+                i,
+                note.fret,
+                note.string,
+                note.vsq_position
             );
         }
 
-        println!("All {} guitar notes have valid fret values (0-24)", guitar_notes.len());
+        println!(
+            "All {} guitar notes have valid fret values (0-24)",
+            guitar_notes.len()
+        );
     }
 
     #[test]
@@ -2254,19 +2325,27 @@ mod tests {
 
         println!("\n=== TBT Raw Track Notes ===");
         for (i, track_notes) in tbt_song.track_notes.iter().enumerate() {
-            println!("TBT Track {}: {} notes, is_drum={}",
-                i, track_notes.len(), tbt_song.metadata.tracks[i].is_drum);
+            println!(
+                "TBT Track {}: {} notes, is_drum={}",
+                i,
+                track_notes.len(),
+                tbt_song.metadata.tracks[i].is_drum
+            );
         }
 
         println!("\n=== Converted Song Tracks ===");
         for (i, track) in song.tracks.iter().enumerate() {
-            let total_notes: usize = track.measures.iter()
+            let total_notes: usize = track
+                .measures
+                .iter()
                 .flat_map(|m| &m.voices)
                 .flat_map(|v| &v.beats)
                 .map(|b| b.notes.len())
                 .sum();
 
-            let first_notes: Vec<i16> = track.measures.iter()
+            let first_notes: Vec<i16> = track
+                .measures
+                .iter()
                 .flat_map(|m| &m.voices)
                 .flat_map(|v| &v.beats)
                 .flat_map(|b| &b.notes)
@@ -2274,13 +2353,20 @@ mod tests {
                 .map(|n| n.value)
                 .collect();
 
-            println!("Track {}: {} strings, {} notes, first frets: {:?}",
-                i, track.strings.len(), total_notes, first_notes);
+            println!(
+                "Track {}: {} strings, {} notes, first frets: {:?}",
+                i,
+                track.strings.len(),
+                total_notes,
+                first_notes
+            );
         }
 
         // Compare tracks 5 and 6 (0-indexed)
         println!("\n=== Comparing Track 5 vs Track 6 ===");
-        let track5_notes: Vec<(i16, i8)> = song.tracks[5].measures.iter()
+        let track5_notes: Vec<(i16, i8)> = song.tracks[5]
+            .measures
+            .iter()
             .flat_map(|m| &m.voices)
             .flat_map(|v| &v.beats)
             .flat_map(|b| &b.notes)
@@ -2288,7 +2374,9 @@ mod tests {
             .map(|n| (n.value, n.string))
             .collect();
 
-        let track6_notes: Vec<(i16, i8)> = song.tracks[6].measures.iter()
+        let track6_notes: Vec<(i16, i8)> = song.tracks[6]
+            .measures
+            .iter()
             .flat_map(|m| &m.voices)
             .flat_map(|v| &v.beats)
             .flat_map(|b| &b.notes)
@@ -2302,13 +2390,19 @@ mod tests {
         // Check raw TBT notes for track 6
         println!("\n=== Raw TBT Track 6 Notes ===");
         for (i, note) in tbt_song.track_notes[6].iter().take(20).enumerate() {
-            println!("  Note {}: string={}, fret={}, vsq={}", i, note.string, note.fret, note.vsq_position);
+            println!(
+                "  Note {}: string={}, fret={}, vsq={}",
+                i, note.string, note.fret, note.vsq_position
+            );
         }
 
         // Check track 6 tuning
         println!("\n=== Track 6 Tuning ===");
         println!("  Raw bytes: {:?}", tbt_song.metadata.tracks[6].tuning);
-        println!("  String count: {}", tbt_song.metadata.tracks[6].string_count);
+        println!(
+            "  String count: {}",
+            tbt_song.metadata.tracks[6].string_count
+        );
         println!("  Is drum: {}", tbt_song.metadata.tracks[6].is_drum);
     }
 }

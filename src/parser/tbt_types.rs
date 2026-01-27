@@ -30,12 +30,18 @@ impl TbtVersion {
     /// Check if version supports alternate time regions
     #[allow(dead_code)]
     pub const fn has_alternate_time_regions(&self) -> bool {
-        matches!(self, TbtVersion::V0x70 | TbtVersion::V0x71 | TbtVersion::V0x72)
+        matches!(
+            self,
+            TbtVersion::V0x70 | TbtVersion::V0x71 | TbtVersion::V0x72
+        )
     }
 
     /// Check if version has per-track space count
     pub const fn has_space_count_per_track(&self) -> bool {
-        matches!(self, TbtVersion::V0x70 | TbtVersion::V0x71 | TbtVersion::V0x72)
+        matches!(
+            self,
+            TbtVersion::V0x70 | TbtVersion::V0x71 | TbtVersion::V0x72
+        )
     }
 
     /// Check if version has modulation and pitch bend blocks
@@ -226,20 +232,20 @@ impl TbtStringEffect {
     /// Parse effect byte into enum variant
     pub const fn from_byte(byte: u8) -> Option<TbtStringEffect> {
         match byte {
-            0x2f => Some(TbtStringEffect::SlideUp),    // '/'
-            0x5c => Some(TbtStringEffect::SlideDown),  // '\'
-            0x5e => Some(TbtStringEffect::BendUp),     // '^'
-            0x62 => Some(TbtStringEffect::Bend),       // 'b'
-            0x68 => Some(TbtStringEffect::HammerOn),   // 'h'
-            0x70 => Some(TbtStringEffect::PullOff),    // 'p'
+            0x2f => Some(TbtStringEffect::SlideUp),     // '/'
+            0x5c => Some(TbtStringEffect::SlideDown),   // '\'
+            0x5e => Some(TbtStringEffect::BendUp),      // '^'
+            0x62 => Some(TbtStringEffect::Bend),        // 'b'
+            0x68 => Some(TbtStringEffect::HammerOn),    // 'h'
+            0x70 => Some(TbtStringEffect::PullOff),     // 'p'
             0x72 => Some(TbtStringEffect::ReleaseBend), // 'r'
-            0x7e => Some(TbtStringEffect::Vibrato),    // '~'
-            0x3c => Some(TbtStringEffect::Harmonic),   // '<'
-            0x7b => Some(TbtStringEffect::Tremolo),    // '{'
-            0x28 => Some(TbtStringEffect::GhostNote),  // '('
-            0x74 => Some(TbtStringEffect::Tap),        // 't'
-            0x73 => Some(TbtStringEffect::Slap),       // 's'
-            0x77 => Some(TbtStringEffect::Whammy),     // 'w'
+            0x7e => Some(TbtStringEffect::Vibrato),     // '~'
+            0x3c => Some(TbtStringEffect::Harmonic),    // '<'
+            0x7b => Some(TbtStringEffect::Tremolo),     // '{'
+            0x28 => Some(TbtStringEffect::GhostNote),   // '('
+            0x74 => Some(TbtStringEffect::Tap),         // 't'
+            0x73 => Some(TbtStringEffect::Slap),        // 's'
+            0x77 => Some(TbtStringEffect::Whammy),      // 'w'
             _ => None,
         }
     }
