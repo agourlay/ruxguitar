@@ -1,13 +1,12 @@
 use crate::ui::application::RuxApplication;
-use crate::RuxError::ConfigError;
+use crate::AppError::ConfigError;
 use clap::Parser;
 use config::Config;
+use ruxguitar::RuxError as LibRuxError;
 use std::io;
 use std::path::PathBuf;
 
-mod audio;
 mod config;
-mod parser;
 mod ui;
 
 fn main() {
@@ -22,7 +21,7 @@ fn main() {
     });
 }
 
-pub fn main_result() -> Result<(), RuxError> {
+pub fn main_result() -> Result<(), AppError> {
     // setup logging
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("ruxguitar=info"))
         .init();
@@ -89,7 +88,7 @@ pub struct ApplicationArgs {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum RuxError {
+pub enum AppError {
     #[error("iced error: {0}")]
     IcedError(iced::Error),
     #[error("configuration error: {0}")]
@@ -100,13 +99,24 @@ pub enum RuxError {
     OtherError(String),
 }
 
-impl From<iced::Error> for RuxError {
+impl From<LibRuxError> for AppError {
+    fn from(error: LibRuxError) -> Self {
+        match error {
+            LibRuxError::ParsingError(s) => Self::ParsingError(s),
+            LibRuxError::ConfigError(s) => Self::ConfigError(s),
+            LibRuxError::AudioError(s) => Self::OtherError(s),
+            LibRuxError::IoError(s) => Self::OtherError(s),
+        }
+    }
+}
+
+impl From<iced::Error> for AppError {
     fn from(error: iced::Error) -> Self {
         Self::IcedError(error)
     }
 }
 
-impl From<io::Error> for RuxError {
+impl From<io::Error> for AppError {
     fn from(error: io::Error) -> Self {
         Self::OtherError(error.to_string())
     }

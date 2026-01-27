@@ -1,4 +1,4 @@
-use crate::parser::song_parser::Song;
+use ruxguitar::parser::song_parser::Song;
 use crate::ui::application::Message;
 use crate::ui::canvas_measure::CanvasMeasure;
 use iced::widget::scrollable;

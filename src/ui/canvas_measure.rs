@@ -1,4 +1,4 @@
-use crate::parser::song_parser::{
+use ruxguitar::parser::song_parser::{
     Beat, HarmonicType, Note, NoteEffect, NoteType, SlapEffect, SlideType, Song, TimeSignature,
 };
 use crate::ui::application::Message;
