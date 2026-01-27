@@ -3,20 +3,6 @@
 //! Reference: <https://github.com/bostick/tabit-file-format>
 //! Reference parser: <https://github.com/bostick/tbt-parser>
 
-#![allow(clippy::needless_lifetimes)]
-#![allow(clippy::cast_lossless)]
-#![allow(clippy::uninlined_format_args)]
-#![allow(clippy::manual_let_else)]
-#![allow(clippy::field_reassign_with_default)]
-#![allow(clippy::type_complexity)]
-#![allow(clippy::missing_const_for_fn)]
-#![allow(clippy::if_same_then_else)]
-#![allow(clippy::manual_is_multiple_of)]
-#![allow(clippy::unnecessary_wraps)]
-#![allow(clippy::unnecessary_min_or_max)]
-#![allow(clippy::redundant_closure_for_method_calls)]
-#![allow(clippy::needless_range_loop)]
-
 use crate::parser::song_parser::{
     Beat, BendEffect, BendPoint, Duration, GpVersion, HarmonicEffect, HarmonicType, KeySignature,
     Measure, MeasureHeader, MidiChannel, Note, NoteEffect, NoteType, SlapEffect, SlideType, Song,
@@ -515,7 +501,7 @@ const ALT_TIME_SLOTS_PER_SPACE: usize = 2;
 /// Read a single raw delta-list chunk from the input stream.
 ///
 /// Returns the raw pairs data and remaining input.
-fn read_delta_list_chunk_raw<'a>(input: &'a [u8]) -> IResult<&'a [u8], Vec<u8>> {
+fn read_delta_list_chunk_raw(input: &[u8]) -> IResult<&[u8], Vec<u8>> {
     // Read the chunk length (number of byte pairs)
     let (input, pair_count) = le_u16(input)?;
     let bytes_to_read = pair_count as usize * 2;
@@ -598,26 +584,38 @@ fn expand_delta_list(pairs: &[u8], slots_per_space: usize, total_spaces: usize) 
     result
 }
 
+/// Maximum number of chunks to read to prevent DoS from malformed files
+const MAX_DELTA_LIST_CHUNKS: usize = 10_000;
+
 /// Decode delta-list chunks from the input stream until we have enough data.
 ///
 /// TBT format can have MULTIPLE delta list chunks per track. We accumulate
 /// chunks until the total slot count reaches `slots_per_space * total_spaces`.
 ///
 /// Returns the expanded array and remaining input.
-fn decode_delta_list_chunks<'a>(
-    input: &'a [u8],
+fn decode_delta_list_chunks(
+    input: &[u8],
     slots_per_space: usize,
     total_spaces: u32,
-) -> IResult<&'a [u8], Vec<Vec<u8>>> {
+) -> IResult<&[u8], Vec<Vec<u8>>> {
     let target_count = slots_per_space * total_spaces as usize;
     let mut accumulated_pairs: Vec<u8> = Vec::new();
     let mut input = input;
+    let mut chunk_count = 0;
 
     // Read chunks until we have enough slots
     loop {
+        if chunk_count >= MAX_DELTA_LIST_CHUNKS {
+            return Err(nom::Err::Failure(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::TooLarge,
+            )));
+        }
+
         let (rest, chunk_pairs) = read_delta_list_chunk_raw(input)?;
         accumulated_pairs.extend_from_slice(&chunk_pairs);
         input = rest;
+        chunk_count += 1;
 
         let current_count = compute_delta_list_count(&accumulated_pairs);
         if current_count >= target_count {
@@ -630,10 +628,10 @@ fn decode_delta_list_chunks<'a>(
 }
 
 /// Parse bar lines for version 0x70+ (ArrayList format)
-fn parse_bar_lines_0x70<'a>(
-    input: &'a [u8],
+fn parse_bar_lines_0x70(
+    input: &[u8],
     bar_count: u16,
-) -> IResult<&'a [u8], Vec<TbtBarLine>> {
+) -> IResult<&[u8], Vec<TbtBarLine>> {
     let mut bars = Vec::with_capacity(bar_count as usize);
     let mut input = input;
     let mut current_space: u32 = 0;
@@ -669,12 +667,12 @@ fn parse_bar_lines_0x70<'a>(
 }
 
 /// Parse bar lines for version 0x6f (DeltaListChunk format)
-fn parse_bar_lines_0x6f<'a>(
-    input: &'a [u8],
+fn parse_bar_lines_0x6f(
+    input: &[u8],
     space_count: u16,
-) -> IResult<&'a [u8], Vec<TbtBarLine>> {
+) -> IResult<&[u8], Vec<TbtBarLine>> {
     // For 0x6f, bar lines are stored as a delta list with 1 slot per space
-    let (remaining, expanded) = decode_delta_list_chunks(input, 1, space_count as u32)?;
+    let (remaining, expanded) = decode_delta_list_chunks(input, 1, u32::from(space_count))?;
 
     let mut bars = Vec::new();
 
@@ -708,10 +706,10 @@ fn parse_bar_lines_0x6f<'a>(
 }
 
 /// Parse notes for a single track
-fn parse_track_notes<'a>(
-    input: &'a [u8],
+fn parse_track_notes(
+    input: &[u8],
     space_count: u32,
-) -> IResult<&'a [u8], Vec<TbtNote>> {
+) -> IResult<&[u8], Vec<TbtNote>> {
     // Notes use NOTES_SLOT_COUNT slots per space (20 slots)
     // TBT format can have MULTIPLE delta list chunks per track
     let (remaining, expanded) = decode_delta_list_chunks(input, NOTES_SLOT_COUNT, space_count)?;
@@ -756,10 +754,10 @@ fn parse_track_notes<'a>(
 }
 
 /// Parse alternate time regions for a single track
-fn parse_alternate_time<'a>(
-    input: &'a [u8],
+fn parse_alternate_time(
+    input: &[u8],
     space_count: u32,
-) -> IResult<&'a [u8], Vec<TbtAlternateTime>> {
+) -> IResult<&[u8], Vec<TbtAlternateTime>> {
     // Alternate time uses 2 slots per space (dsq)
     let (remaining, expanded) = decode_delta_list_chunks(input, ALT_TIME_SLOTS_PER_SPACE, space_count)?;
 
@@ -782,9 +780,7 @@ fn parse_alternate_time<'a>(
 }
 
 /// Parse track effect changes (version >= 0x71)
-fn parse_track_effect_changes<'a>(
-    input: &'a [u8],
-) -> IResult<&'a [u8], Vec<TbtEffectChange>> {
+fn parse_track_effect_changes(input: &[u8]) -> IResult<&[u8], Vec<TbtEffectChange>> {
     // First read the count as a 4-byte value
     let (input, count) = le_u32(input)?;
 
@@ -800,7 +796,7 @@ fn parse_track_effect_changes<'a>(
         let (rest, value) = le_u16(rest)?;
         input = rest;
 
-        current_space += space_inc as u32;
+        current_space += u32::from(space_inc);
 
         if let Some(effect_type) = TbtEffectChangeType::from_byte(effect_num as u8) {
             changes.push(TbtEffectChange {
@@ -814,12 +810,33 @@ fn parse_track_effect_changes<'a>(
     Ok((input, changes))
 }
 
+/// Parsed body data from a TBT file
+type TbtBodyData = (
+    Vec<TbtBarLine>,
+    Vec<Vec<TbtNote>>,
+    Vec<Vec<TbtAlternateTime>>,
+    Vec<Vec<TbtEffectChange>>,
+);
+
+/// Get the space count for a track, falling back to header space count
+fn get_track_space_count(header: &TbtHeader, metadata: &TbtMetadata, track_idx: u8) -> u32 {
+    if header.version.has_space_count_per_track() {
+        metadata
+            .tracks
+            .get(track_idx as usize)
+            .and_then(|t| t.space_count)
+            .unwrap_or_else(|| u32::from(header.space_count))
+    } else {
+        u32::from(header.space_count)
+    }
+}
+
 /// Parse the body section from raw file data
 pub fn parse_tbt_body(
     data: &[u8],
     header: &TbtHeader,
     metadata: &TbtMetadata,
-) -> Result<(Vec<TbtBarLine>, Vec<Vec<TbtNote>>, Vec<Vec<TbtAlternateTime>>, Vec<Vec<TbtEffectChange>>), RuxError> {
+) -> Result<TbtBodyData, RuxError> {
     // Body starts after header + compressed metadata
     let body_start = TBT_HEADER_SIZE + header.compressed_metadata_len as usize;
 
@@ -853,14 +870,7 @@ pub fn parse_tbt_body(
     // 2. Parse notes for each track
     let mut track_notes = Vec::with_capacity(header.track_count as usize);
     for i in 0..header.track_count {
-        let track_space_count = if header.version.has_space_count_per_track() {
-            metadata.tracks.get(i as usize)
-                .and_then(|t| t.space_count)
-                .unwrap_or(header.space_count as u32)
-        } else {
-            header.space_count as u32
-        };
-
+        let track_space_count = get_track_space_count(header, metadata, i);
         let (rest, notes) = parse_track_notes(input, track_space_count)
             .map_err(|e| RuxError::ParsingError(format!("Failed to parse notes for track {i}: {e}")))?;
         input = rest;
@@ -871,14 +881,7 @@ pub fn parse_tbt_body(
     let mut alternate_times = Vec::with_capacity(header.track_count as usize);
     if header.features.has_alternate_time_regions {
         for i in 0..header.track_count {
-            let track_space_count = if header.version.has_space_count_per_track() {
-                metadata.tracks.get(i as usize)
-                    .and_then(|t| t.space_count)
-                    .unwrap_or(header.space_count as u32)
-            } else {
-                header.space_count as u32
-            };
-
+            let track_space_count = get_track_space_count(header, metadata, i);
             let (rest, alt_time) = parse_alternate_time(input, track_space_count)
                 .map_err(|e| RuxError::ParsingError(format!("Failed to parse alternate time for track {i}: {e}")))?;
             input = rest;
@@ -1051,7 +1054,7 @@ fn convert_tuning(tbt_track: &TbtTrack) -> Vec<(i32, i32)> {
 
         // TBT tuning is a signed offset from standard tuning
         let tuning_offset = tbt_track.tuning[i] as i8; // Interpret as signed!
-        let midi_note = base_tuning + tuning_offset as i32;
+        let midi_note = base_tuning + i32::from(tuning_offset);
         strings.push((string_num, midi_note));
     }
 
@@ -1080,12 +1083,8 @@ fn infer_time_signature(spaces_in_measure: u16) -> TimeSignature {
         28 => (7, 4),
         32 => (8, 4), // Or 4/2
         _ => {
-            // Try to figure out based on divisibility
-            if spaces_in_measure % 16 == 0 {
-                ((spaces_in_measure / 4) as u8, 4)
-            } else if spaces_in_measure % 12 == 0 {
-                ((spaces_in_measure / 4) as u8, 4)
-            } else if spaces_in_measure % 8 == 0 {
+            // Try to figure out based on divisibility (any multiple of 4 works)
+            if spaces_in_measure.is_multiple_of(4) {
                 ((spaces_in_measure / 4) as u8, 4)
             } else {
                 (4, 4) // Default
@@ -1163,6 +1162,7 @@ fn calculate_duration(
 }
 
 /// Convert a TbtSong to a GP Song
+#[allow(clippy::unnecessary_wraps)] // Result is needed for consistent API with parse_gp_data
 pub fn tbt_to_song(tbt: &TbtSong) -> Result<Song, RuxError> {
     // 1. Create MIDI channels (one per track)
     let mut midi_channels: Vec<MidiChannel> = Vec::with_capacity(64);
@@ -1197,11 +1197,11 @@ pub fn tbt_to_song(tbt: &TbtSong) -> Result<Song, RuxError> {
         };
         if channel_id < 64 {
             let ch = &mut midi_channels[channel_id];
-            ch.instrument = tbt_track.clean_guitar as i32;
-            ch.volume = (tbt_track.volume as i8).min(127);
-            ch.balance = (tbt_track.pan as i8).min(127);
-            ch.chorus = (tbt_track.chorus as i8).min(127);
-            ch.reverb = (tbt_track.reverb as i8).min(127);
+            ch.instrument = i32::from(tbt_track.clean_guitar);
+            ch.volume = tbt_track.volume as i8;
+            ch.balance = tbt_track.pan as i8;
+            ch.chorus = tbt_track.chorus as i8;
+            ch.reverb = tbt_track.reverb as i8;
 
             if tbt_track.is_drum {
                 ch.bank = DEFAULT_PERCUSSION_BANK;
@@ -1245,7 +1245,7 @@ pub fn tbt_to_song(tbt: &TbtSong) -> Result<Song, RuxError> {
 
     // 3. Create measure headers
     let initial_tempo = Tempo {
-        value: tbt.header.tempo2 as u32,
+        value: u32::from(tbt.header.tempo2),
         name: None,
     };
 
@@ -1298,7 +1298,7 @@ pub fn tbt_to_song(tbt: &TbtSong) -> Result<Song, RuxError> {
         let string_count = strings.len();
 
         // Group this track's notes by space
-        let track_notes = tbt.track_notes.get(track_idx).map(|n| n.as_slice()).unwrap_or(&[]);
+        let track_notes = tbt.track_notes.get(track_idx).map(Vec::as_slice).unwrap_or(&[]);
         let notes_by_space = group_notes_by_space(track_notes);
 
         // Create measures for this track
@@ -1309,7 +1309,7 @@ pub fn tbt_to_song(tbt: &TbtSong) -> Result<Song, RuxError> {
 
             // Collect notes in this measure
             let notes_in_measure: Vec<(&u32, &Vec<&TbtNote>)> = notes_by_space
-                .range(*start_space as u32..*end_space as u32)
+                .range(u32::from(*start_space)..u32::from(*end_space))
                 .collect();
 
             // Create beats from notes
@@ -1331,14 +1331,14 @@ pub fn tbt_to_song(tbt: &TbtSong) -> Result<Song, RuxError> {
 
                 for (note_idx, (space, notes)) in notes_in_measure.iter().enumerate() {
                     // Calculate beat start tick
-                    let relative_space = **space - *start_space as u32;
+                    let relative_space = **space - u32::from(*start_space);
                     let beat_start = header.start + (relative_space * TICKS_PER_SPACE);
 
                     // Calculate duration to next note or measure end
                     let next_space = if note_idx + 1 < space_positions.len() {
                         space_positions[note_idx + 1]
                     } else {
-                        *end_space as u32
+                        u32::from(*end_space)
                     };
 
                     let duration = calculate_duration(**space, next_space, &header.time_signature);
@@ -1371,7 +1371,7 @@ pub fn tbt_to_song(tbt: &TbtSong) -> Result<Song, RuxError> {
                         // note.value is the FRET (offset from string tuning)
                         // The MIDI note is calculated during playback as: string_tuning + fret
                         let mut note = Note::new(effect);
-                        note.value = tbt_note.fret as i16;
+                        note.value = i16::from(tbt_note.fret);
                         note.string = string_num as i8;
                         note.kind = kind;
                         gp_notes.push(note);
@@ -1581,9 +1581,8 @@ mod tests {
         ];
 
         for path in valid_files {
-            let data = match fs::read(path) {
-                Ok(d) => d,
-                Err(_) => continue, // Skip if file doesn't exist
+            let Ok(data) = fs::read(path) else {
+                continue; // Skip if file doesn't exist
             };
 
             // Skip non-TBT files (some might be HTML 404 pages)
@@ -1594,17 +1593,12 @@ mod tests {
             let result = parse_and_validate_tbt_header(&data, TbtParseOptions::default());
             assert!(
                 result.is_ok(),
-                "Failed to parse {}: {:?}",
-                path,
+                "Failed to parse {path}: {:?}",
                 result.err()
             );
 
             let result = result.unwrap();
-            assert!(
-                result.header_crc_valid,
-                "CRC32 validation failed for {}",
-                path
-            );
+            assert!(result.header_crc_valid, "CRC32 validation failed for {path}");
         }
     }
 
@@ -1713,26 +1707,18 @@ mod tests {
         ];
 
         for path in test_files {
-            let data = match fs::read(path) {
-                Ok(d) => d,
-                Err(_) => continue,
-            };
+            let Ok(data) = fs::read(path) else { continue };
 
             if !is_tbt_file(&data) {
                 continue;
             }
 
-            let header = parse_tbt_header_only(&data);
-            if header.is_err() {
-                continue;
-            }
-            let header = header.unwrap();
+            let Ok(header) = parse_tbt_header_only(&data) else { continue };
 
             let metadata = parse_tbt_metadata(&data, &header);
             assert!(
                 metadata.is_ok(),
-                "Failed to parse metadata for {}: {:?}",
-                path,
+                "Failed to parse metadata for {path}: {:?}",
                 metadata.err()
             );
 
@@ -1740,8 +1726,7 @@ mod tests {
             assert_eq!(
                 metadata.tracks.len(),
                 header.track_count as usize,
-                "Track count mismatch for {}",
-                path
+                "Track count mismatch for {path}"
             );
         }
     }
@@ -1789,17 +1774,19 @@ mod tests {
         assert_eq!(song.track_notes.len(), 8);
 
         // Count total notes across all tracks
-        let total_notes: usize = song.track_notes.iter().map(|t| t.len()).sum();
-        println!("Total notes across all tracks: {}", total_notes);
+        let total_notes: usize = song.track_notes.iter().map(Vec::len).sum();
+        println!("Total notes across all tracks: {total_notes}");
         assert!(total_notes > 0, "Expected notes to be parsed");
 
         // Print some note details from first track with notes
         for (track_idx, notes) in song.track_notes.iter().enumerate() {
             if !notes.is_empty() {
-                println!("Track {} has {} notes", track_idx, notes.len());
+                println!("Track {track_idx} has {} notes", notes.len());
                 for note in notes.iter().take(3) {
-                    println!("  Note: vsq={}, string={}, fret={}, muted={}, effect={:?}",
-                        note.vsq_position, note.string, note.fret, note.is_muted, note.effect);
+                    println!(
+                        "  Note: vsq={}, string={}, fret={}, muted={}, effect={:?}",
+                        note.vsq_position, note.string, note.fret, note.is_muted, note.effect
+                    );
                 }
                 break;
             }
@@ -1829,22 +1816,14 @@ mod tests {
         ];
 
         for path in test_files {
-            let data = match fs::read(path) {
-                Ok(d) => d,
-                Err(_) => continue,
-            };
+            let Ok(data) = fs::read(path) else { continue };
 
             if !is_tbt_file(&data) {
                 continue;
             }
 
             let result = parse_tbt_data(&data);
-            assert!(
-                result.is_ok(),
-                "Failed to parse {}: {:?}",
-                path,
-                result.err()
-            );
+            assert!(result.is_ok(), "Failed to parse {path}: {:?}", result.err());
 
             let song = result.unwrap();
 
@@ -1852,29 +1831,26 @@ mod tests {
             assert_eq!(
                 song.track_notes.len(),
                 song.header.track_count as usize,
-                "Track notes count mismatch for {}",
-                path
+                "Track notes count mismatch for {path}"
             );
 
             assert_eq!(
                 song.alternate_times.len(),
                 song.header.track_count as usize,
-                "Alternate times count mismatch for {}",
-                path
+                "Alternate times count mismatch for {path}"
             );
 
             assert_eq!(
                 song.track_effect_changes.len(),
                 song.header.track_count as usize,
-                "Track effect changes count mismatch for {}",
-                path
+                "Track effect changes count mismatch for {path}"
             );
 
-            println!("{}: {} tracks, {} bars, {} total notes",
-                path,
+            let total_notes: usize = song.track_notes.iter().map(Vec::len).sum();
+            println!(
+                "{path}: {} tracks, {} bars, {total_notes} total notes",
                 song.header.track_count,
-                song.bar_lines.len(),
-                song.track_notes.iter().map(|t| t.len()).sum::<usize>()
+                song.bar_lines.len()
             );
         }
     }
@@ -1903,8 +1879,8 @@ mod tests {
         assert_eq!(result[2][0], 0xCC);
 
         // Rest should be 0
-        for i in 3..10 {
-            assert_eq!(result[i][0], 0);
+        for slot in result.iter().take(10).skip(3) {
+            assert_eq!(slot[0], 0);
         }
     }
 
@@ -1919,6 +1895,37 @@ mod tests {
 
         let count = compute_delta_list_count(pairs);
         assert_eq!(count, 7); // 1 + 1 + 5 = 7
+    }
+
+    #[test]
+    fn test_max_chunks_limit() {
+        // Test that decode_delta_list_chunks enforces the MAX_DELTA_LIST_CHUNKS limit
+        // to prevent DoS from malformed files with never-ending chunk sequences.
+        //
+        // Create input that has many tiny chunks that never reach the target count.
+        // Each chunk: 2-byte length (1 pair) + 2 bytes data = 4 bytes per chunk
+        // We'll create chunks that each add only 1 slot, but target needs millions.
+
+        let mut malformed_input: Vec<u8> = Vec::new();
+
+        // Create MAX_DELTA_LIST_CHUNKS + 100 chunks, each with 1 pair adding 1 slot
+        for _ in 0..(MAX_DELTA_LIST_CHUNKS + 100) {
+            malformed_input.extend_from_slice(&[
+                0x01, 0x00, // pair_count = 1
+                0x01, 0xAA, // fill 1 slot with 0xAA
+            ]);
+        }
+
+        // Request a huge number of spaces that would require many more chunks
+        let result = decode_delta_list_chunks(&malformed_input, 1, 100_000_000);
+
+        // Should fail with TooLarge error after hitting MAX_DELTA_LIST_CHUNKS
+        assert!(result.is_err(), "Should reject input requiring too many chunks");
+        if let Err(nom::Err::Failure(e)) = result {
+            assert_eq!(e.code, nom::error::ErrorKind::TooLarge);
+        } else {
+            panic!("Expected Failure with TooLarge error kind");
+        }
     }
 
     #[test]
@@ -1961,7 +1968,7 @@ mod tests {
         assert_eq!(song.tracks.len(), 8);
 
         // Verify tempo matches header
-        assert_eq!(song.tempo.value, tbt_song.header.tempo2 as u32);
+        assert_eq!(song.tempo.value, u32::from(tbt_song.header.tempo2));
 
         // Verify song info was transferred
         assert_eq!(song.song_info.name, tbt_song.metadata.song_info.title);
@@ -1973,10 +1980,16 @@ mod tests {
 
         // Verify each track has measures
         for (i, track) in song.tracks.iter().enumerate() {
-            assert_eq!(track.measures.len(), song.measure_headers.len(),
-                "Track {} measure count mismatch", i);
-            println!("Track {}: {} strings, {} measures",
-                i, track.strings.len(), track.measures.len());
+            assert_eq!(
+                track.measures.len(),
+                song.measure_headers.len(),
+                "Track {i} measure count mismatch"
+            );
+            println!(
+                "Track {i}: {} strings, {} measures",
+                track.strings.len(),
+                track.measures.len()
+            );
         }
 
         // Verify MIDI channels were configured
@@ -1996,7 +2009,7 @@ mod tests {
             .map(|b| b.notes.len())
             .sum();
 
-        println!("Total beats: {}, total notes: {}", total_beats, total_notes);
+        println!("Total beats: {total_beats}, total notes: {total_notes}");
         assert!(total_beats > 0, "Expected beats to be created");
     }
 
@@ -2014,45 +2027,39 @@ mod tests {
         ];
 
         for path in test_files {
-            let data = match fs::read(path) {
-                Ok(d) => d,
-                Err(_) => continue,
-            };
+            let Ok(data) = fs::read(path) else { continue };
 
             if !is_tbt_file(&data) {
                 continue;
             }
 
-            let tbt_song = match parse_tbt_data(&data) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
+            let Ok(tbt_song) = parse_tbt_data(&data) else { continue };
 
             let result = tbt_to_song(&tbt_song);
-            assert!(
-                result.is_ok(),
-                "Failed to convert {}: {:?}",
-                path,
-                result.err()
-            );
+            assert!(result.is_ok(), "Failed to convert {path}: {:?}", result.err());
 
             let song = result.unwrap();
 
             // Basic sanity checks
-            assert_eq!(song.tracks.len(), tbt_song.header.track_count as usize,
-                "Track count mismatch for {}", path);
+            assert_eq!(
+                song.tracks.len(),
+                tbt_song.header.track_count as usize,
+                "Track count mismatch for {path}"
+            );
 
-            assert!(!song.measure_headers.is_empty(),
-                "No measure headers for {}", path);
+            assert!(!song.measure_headers.is_empty(), "No measure headers for {path}");
 
             // Each track should have the same number of measures as headers
             for track in &song.tracks {
-                assert_eq!(track.measures.len(), song.measure_headers.len(),
-                    "Measure count mismatch for {}", path);
+                assert_eq!(
+                    track.measures.len(),
+                    song.measure_headers.len(),
+                    "Measure count mismatch for {path}"
+                );
             }
 
-            println!("{}: {} tracks, {} measures, tempo={}",
-                path,
+            println!(
+                "{path}: {} tracks, {} measures, tempo={}",
                 song.tracks.len(),
                 song.measure_headers.len(),
                 song.tempo.value
@@ -2132,9 +2139,11 @@ mod tests {
     fn test_tuning_conversion() {
         // TBT stores tuning as SIGNED OFFSETS from standard guitar tuning [40, 45, 50, 55, 59, 64]
         // For standard tuning, all offsets should be 0
-        let mut tbt_track = TbtTrack::default();
-        tbt_track.string_count = 6;
-        tbt_track.tuning = [0, 0, 0, 0, 0, 0, 0, 0]; // Zero offsets = standard tuning
+        let tbt_track = TbtTrack {
+            string_count: 6,
+            tuning: [0, 0, 0, 0, 0, 0, 0, 0], // Zero offsets = standard tuning
+            ..Default::default()
+        };
 
         let strings = convert_tuning(&tbt_track);
 
@@ -2151,10 +2160,12 @@ mod tests {
         assert_eq!(string6.unwrap().1, 40); // E2 = 40
 
         // Test with custom tuning: Drop D (low string down 2 semitones)
-        let mut drop_d_track = TbtTrack::default();
-        drop_d_track.string_count = 6;
         // Offset of -2 on first string (D2 = 38 = 40 - 2)
-        drop_d_track.tuning = [0xFE, 0, 0, 0, 0, 0, 0, 0]; // -2 as signed byte = 0xFE
+        let drop_d_track = TbtTrack {
+            string_count: 6,
+            tuning: [0xFE, 0, 0, 0, 0, 0, 0, 0], // -2 as signed byte = 0xFE
+            ..Default::default()
+        };
 
         let drop_d_strings = convert_tuning(&drop_d_track);
         let low_string = drop_d_strings.iter().find(|(num, _)| *num == 6);
@@ -2179,7 +2190,7 @@ mod tests {
 
         println!("  Converted tuning (GP format):");
         for (string_num, midi_note) in &track5.strings {
-            println!("    String {}: MIDI note {}", string_num, midi_note);
+            println!("    String {string_num}: MIDI note {midi_note}");
         }
 
         // Expected drum tuning after conversion: [35, 35, 38, 38, 37, 49]
@@ -2188,8 +2199,9 @@ mod tests {
         let expected_notes: Vec<i32> = vec![49, 37, 38, 38, 35, 35];
         for (i, (string_num, midi_note)) in track5.strings.iter().enumerate() {
             assert_eq!(
-                *string_num, (i + 1) as i32,
-                "String numbering mismatch at index {}", i
+                *string_num,
+                (i + 1) as i32,
+                "String numbering mismatch at index {i}"
             );
             assert_eq!(
                 *midi_note, expected_notes[i],
@@ -2218,7 +2230,7 @@ mod tests {
         let guitar_track_idx = 1;
         let guitar_notes = &tbt_song.track_notes[guitar_track_idx];
 
-        println!("Track {} metadata:", guitar_track_idx);
+        println!("Track {guitar_track_idx} metadata:");
         println!("  Is drum: {}", tbt_song.metadata.tracks[guitar_track_idx].is_drum);
         println!("  String count: {}", tbt_song.metadata.tracks[guitar_track_idx].string_count);
 
@@ -2284,8 +2296,8 @@ mod tests {
             .map(|n| (n.value, n.string))
             .collect();
 
-        println!("Track 5 first 20 (fret, string): {:?}", track5_notes);
-        println!("Track 6 first 20 (fret, string): {:?}", track6_notes);
+        println!("Track 5 first 20 (fret, string): {track5_notes:?}");
+        println!("Track 6 first 20 (fret, string): {track6_notes:?}");
 
         // Check raw TBT notes for track 6
         println!("\n=== Raw TBT Track 6 Notes ===");

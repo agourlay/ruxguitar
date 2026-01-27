@@ -272,7 +272,11 @@ impl RuxApplication {
                             // reset tablature scroll
                             scroll_to(tablature_scroll_id, AbsoluteOffset::default())
                         } else {
-                            Task::done(Message::ReportError("Failed to parse tab file".to_string()))
+                            let err_msg = match parse_result {
+                                Err(e) => format!("Failed to parse tab file: {e}"),
+                                _ => "Failed to parse tab file".to_string(),
+                            };
+                            Task::done(Message::ReportError(err_msg))
                         }
                     }
                     Err(err) => {
