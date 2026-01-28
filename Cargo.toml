@@ -61,3 +61,10 @@ clap = { version = "4.5.49", features = ["derive", "cargo"] }
 home = "=0.5.9" # not necessary starting from Rust 1.85
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+flate2 = "1.0"
+crc32fast = "1.4"
+
+# Workaround for objc2-foundation panic on macOS Tahoe (26) beta
+# See: https://github.com/iced-rs/iced/issues/3057
+[profile.dev.package.objc2]
+debug-assertions = false

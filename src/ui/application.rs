@@ -9,6 +9,7 @@ use std::fmt::Display;
 use crate::audio::midi_player::AudioPlayer;
 use crate::config::Config;
 use crate::parser::song_parser::{parse_gp_data, GpVersion, Song};
+use crate::parser::tbt_parser::{is_tbt_file, parse_tbt_data, tbt_to_song};
 use crate::ui::icons::{open_icon, pause_icon, play_icon, solo_icon, stop_icon};
 use crate::ui::picker::{load_file, open_file_dialog, FilePickerError};
 use crate::ui::tablature::Tablature;
@@ -222,7 +223,13 @@ impl RuxApplication {
                                 "Failed to set tabs folder: {err}"
                             )));
                         }
-                        if let Ok(song) = parse_gp_data(&contents) {
+                        // Detect format and parse accordingly
+                        let parse_result = if is_tbt_file(&contents) {
+                            parse_tbt_data(&contents).and_then(|tbt| tbt_to_song(&tbt))
+                        } else {
+                            parse_gp_data(&contents)
+                        };
+                        if let Ok(song) = parse_result {
                             // build all tracks selection
                             let track_selections: Vec<_> = song
                                 .tracks
@@ -234,7 +241,7 @@ impl RuxApplication {
                                 .collect();
                             if track_selections.is_empty() {
                                 return Task::done(Message::ReportError(
-                                    "No tracks found in GP file".to_string(),
+                                    "No tracks found in tab file".to_string(),
                                 ));
                             }
                             self.all_tracks.clone_from(&track_selections);
@@ -265,7 +272,11 @@ impl RuxApplication {
                             // reset tablature scroll
                             scroll_to(tablature_scroll_id, AbsoluteOffset::default())
                         } else {
-                            Task::done(Message::ReportError("Failed to parse GP file".to_string()))
+                            let err_msg = match parse_result {
+                                Err(e) => format!("Failed to parse tab file: {e}"),
+                                _ => "Failed to parse tab file".to_string(),
+                            };
+                            Task::done(Message::ReportError(err_msg))
                         }
                     }
                     Err(err) => {

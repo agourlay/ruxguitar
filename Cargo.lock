@@ -3382,8 +3382,10 @@ version = "0.6.3"
 dependencies = [
  "clap",
  "cpal",
+ "crc32fast",
  "encoding_rs",
  "env_logger",
+ "flate2",
  "home",
  "iced",
  "iced_aw",
