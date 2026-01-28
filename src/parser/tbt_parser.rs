@@ -922,6 +922,15 @@ pub fn parse_tbt_data(data: &[u8]) -> Result<TbtSong, RuxError> {
     // 1. Parse and validate header
     let header = parse_tbt_header_only(data)?;
 
+    // Warn about untested version 0x71
+    if header.version == TbtVersion::V0x71 {
+        log::warn!(
+            "TBT version 0x71 is untested - no test files have been found. \
+             Parsing may produce incorrect results. Please contact the developer \
+             and let them know what file this is."
+        );
+    }
+
     // 2. Parse metadata
     let metadata = parse_tbt_metadata(data, &header)?;
 
