@@ -74,7 +74,7 @@ pub struct Song {
     pub tracks: Vec<Track>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MidiChannel {
     pub channel_id: u8,
     pub effect_channel_id: u8,
@@ -186,7 +186,7 @@ pub const KEY_SIGNATURES: [&str; 34] = [
     "E# minor",
 ];
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeySignature {
     pub key: i8,
     pub is_minor: bool,
@@ -216,7 +216,7 @@ pub enum TripletFeel {
     Sixteenth,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Tempo {
     pub value: u32,
     pub name: Option<String>,

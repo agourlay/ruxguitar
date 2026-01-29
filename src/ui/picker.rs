@@ -13,8 +13,8 @@ pub async fn open_file_dialog(
     picker_folder: Option<PathBuf>,
 ) -> Result<(Vec<u8>, Option<PathBuf>, String), FilePickerError> {
     let mut picker = rfd::AsyncFileDialog::new()
-        .add_filter("Guitar Pro files", &["gp5", "gp4"])
-        .set_title("Select a Guitar Pro file");
+        .add_filter("Tab files", &["gp5", "gp4", "tbt"])
+        .set_title("Select a tab file");
 
     if let Some(folder) = picker_folder {
         picker = picker.set_directory(folder);
@@ -39,7 +39,7 @@ pub async fn load_file(
         .and_then(|e| e.to_str())
         .map(str::to_lowercase)
         .unwrap_or_default();
-    if file_extension != "gp5" && file_extension != "gp4" {
+    if file_extension != "gp5" && file_extension != "gp4" && file_extension != "tbt" {
         return Err(FilePickerError::IoError(format!(
             "Unsupported file extension: {file_extension}"
         )));

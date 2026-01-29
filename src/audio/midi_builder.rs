@@ -791,10 +791,25 @@ fn apply_static_duration(tempo: u32, duration: u32, maximum: u32) -> u32 {
 mod tests {
     use super::*;
     use crate::audio::midi_event::MidiEventType;
+    use crate::parser::song_parser::Song;
     use crate::parser::song_parser_tests::parse_gp_file;
+    use crate::parser::tbt_parser::{parse_tbt_data, tbt_to_song};
+    use crate::RuxError;
     use std::collections::HashSet;
+    use std::io::Read;
     use std::io::Write;
     use std::path::{Path, PathBuf};
+
+    fn parse_tab_file(file_path: &str) -> Result<Song, RuxError> {
+        let mut file = std::fs::File::open(file_path)?;
+        let mut file_data: Vec<u8> = vec![];
+        file.read_to_end(&mut file_data)?;
+        if file_path.ends_with(".tbt") {
+            parse_tbt_data(&file_data).and_then(|tbt| tbt_to_song(&tbt))
+        } else {
+            crate::parser::song_parser::parse_gp_data(&file_data)
+        }
+    }
 
     #[test]
     fn test_midi_events_for_all_files() {
@@ -807,13 +822,13 @@ mod tests {
                 continue;
             }
             let extension = path.extension().unwrap();
-            if extension != "gp5" && extension != "gp4" {
+            if extension != "gp5" && extension != "gp4" && extension != "tbt" {
                 continue;
             }
             let file_name = path.file_name().unwrap().to_str().unwrap();
-            eprintln!("Parsing file: {file_name}");
             let file_path = path.to_str().unwrap();
-            let song = parse_gp_file(file_path)
+            eprintln!("Parsing file: {file_name}");
+            let song = parse_tab_file(file_path)
                 .unwrap_or_else(|err| panic!("Failed to parse file: {file_name}\n{err}"));
             let song = Rc::new(song);
             let builder = MidiBuilder::new();
@@ -1211,5 +1226,57 @@ mod tests {
         assert_eq!(event.tick, 5635);
         assert_eq!(event.track, Some(0));
         assert!(matches!(event.event, MidiEventType::NoteOff(0, 39)));
+    }
+
+    #[test]
+    fn test_midi_events_for_tbt_aguado_study() {
+        const FILE_PATH: &str = "test-files/Aguado - Study 1.tbt";
+        let song = parse_tab_file(FILE_PATH).unwrap();
+        let song = Rc::new(song);
+        let builder = MidiBuilder::new();
+        let events = builder.build_for_song(&song);
+
+        // Basic structure assertions
+        assert_eq!(events.len(), 376);
+        assert_eq!(events[0].tick, 1);
+        assert_eq!(events.iter().last().unwrap().tick, 50880);
+
+        // Assert single track (classical guitar piece)
+        let track_count = song.tracks.len();
+        assert_eq!(track_count, 1);
+        let unique_tracks: HashSet<_> = events.iter().map(|event| event.track).collect();
+        assert_eq!(unique_tracks.len(), 1); // only track 0
+
+        // Skip MIDI program/setup messages (first 10 events)
+        let note_events: Vec<_> = events.iter().skip(10).collect();
+
+        // First note: A3 (MIDI 57) at tick 960
+        let event = &note_events[0];
+        assert_eq!(event.tick, 960);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOn(0, 57, 95)));
+
+        // Note off for A3 at tick 1200
+        let event = &note_events[1];
+        assert_eq!(event.tick, 1200);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOff(0, 57)));
+
+        // Second note: C4 (MIDI 60) at tick 1200
+        let event = &note_events[2];
+        assert_eq!(event.tick, 1200);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOn(0, 60, 95)));
+
+        // Third note: E4 (MIDI 64) at tick 1440
+        let event = &note_events[4];
+        assert_eq!(event.tick, 1440);
+        assert_eq!(event.track, Some(0));
+        assert!(matches!(event.event, MidiEventType::NoteOn(0, 64, 95)));
+
+        // Last note off: A2 (MIDI 45) at tick 50880
+        let last_event = events.iter().last().unwrap();
+        assert_eq!(last_event.tick, 50880);
+        assert!(matches!(last_event.event, MidiEventType::NoteOff(0, 45)));
     }
 }
