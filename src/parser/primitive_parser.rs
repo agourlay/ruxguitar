@@ -32,6 +32,7 @@ pub fn skip(i: &[u8], n: usize) -> &[u8] {
     if i.is_empty() {
         return i;
     }
+    log::debug!("skip: {n}");
     &i[n..]
 }
 
@@ -63,13 +64,7 @@ fn parse_string_field(
     string_len: usize,
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], String> {
     move |i: &[u8]| {
-        log::debug!("Parsing string field: string_len={string_len}, field_size={field_size}");
-
-        let field_size = if field_size > 0 {
-            field_size
-        } else {
-            string_len
-        };
+        log::debug!("Parsing string field: field_size={field_size}, string_len={string_len}");
 
         // Read exactly the field size
         let (rest, field) = bytes::complete::take(field_size)(i)?;
@@ -104,9 +99,8 @@ pub fn parse_byte_size_string(size: usize) -> impl FnMut(&[u8]) -> IResult<&[u8]
 pub fn parse_int_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
     flat_map(parse_int, |len| {
         flat_map(parse_u8, move |str_len| {
-            log::debug!("Parsing int byte sized string len={len} str_len={str_len}");
-            let len = std::cmp::max(len - 1, 0);
-            parse_string_field(len as usize, str_len as usize)
+            log::debug!("Parsing int byte sized string int_len={len} u8_len={str_len}");
+            parse_string_field(len as usize - 1, str_len as usize)
         })
     })
     .parse(i)

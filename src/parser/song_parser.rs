@@ -550,7 +550,7 @@ impl TrillEffect {
             1 => u16::from(DURATION_SIXTEENTH),
             2 => u16::from(DURATION_THIRTY_SECOND),
             3 => u16::from(DURATION_SIXTY_FOURTH),
-            _ => panic!("Cannot get trill period"),
+            other => panic!("Cannot get trill period - got {other}"),
         }
     }
 }
@@ -566,7 +566,7 @@ impl TremoloPickingEffect {
             1 => u16::from(DURATION_EIGHTH),
             3 => u16::from(DURATION_SIXTEENTH),
             2 => u16::from(DURATION_THIRTY_SECOND),
-            _ => panic!("Cannot get tremolo value"),
+            other => panic!("Cannot get tremolo value - got {other}"),
         }
     }
 }
@@ -801,10 +801,7 @@ impl Default for Track {
     }
 }
 
-pub fn parse_chord(
-    string_count: u8,
-    version: GpVersion,
-) -> impl FnMut(&[u8]) -> IResult<&[u8], Chord> {
+pub fn parse_chord(string_count: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], Chord> {
     move |i| {
         log::debug!("Parsing chords for {string_count} strings");
         let mut i = i;
@@ -817,17 +814,14 @@ pub fn parse_chord(
 
         // chord header defines the version as well
         if (chord_gp4_header & 0x01) == 0 {
-            debug_assert!(
-                version < GpVersion::GP5,
-                "Chord header is GP4 but version is {version:?}"
-            );
-            log::debug!("Parsing GP4 style chord");
+            log::debug!("Parsing simple chord");
             let (inner, chord_name) = parse_int_byte_sized_string(i)?;
             log::debug!("Chord name {chord_name}");
             i = inner;
             chord.name = chord_name;
             let (inner, first_fret) = parse_int(i)?;
             i = inner;
+            log::debug!("Chord first fret {first_fret}");
             chord.first_fret = Some(first_fret as u32);
             if first_fret != 0 {
                 for c in 0..6 {
@@ -839,7 +833,7 @@ pub fn parse_chord(
                 }
             }
         } else {
-            log::debug!("Parsing modern style chord");
+            log::debug!("Parsing diagram style chord");
             i = skip(i, 16);
             let (inner, chord_name) = parse_byte_size_string(21)(i)?;
             i = inner;
@@ -848,13 +842,15 @@ pub fn parse_chord(
             i = skip(i, 4);
             let (inner, first_fret) = parse_int(i)?;
             i = inner;
+            log::debug!("Chord first fret {first_fret}");
             chord.first_fret = Some(first_fret as u32);
             for c in 0..7 {
                 let (inner, fret) = parse_int(i)?;
+                i = inner;
+                log::debug!("Chord fret {c}:{fret}");
                 if c < string_count {
                     chord.strings[c as usize] = fret as i8;
                 }
-                i = inner;
             }
             i = skip(i, 32);
         }
@@ -878,37 +874,37 @@ pub fn parse_note_effects(
         note.effect.palm_mute = (flags2 & 0x02) == 0x02;
         note.effect.vibrato = (flags2 & 0x40) == 0x40 || note.effect.vibrato;
 
-        if (flags1 & 0x01) == 0x01 {
+        if (flags1 & 0x01) != 0 {
             let (inner, bend_effect) = parse_bend_effect(i)?;
             i = inner;
             note.effect.bend = Some(bend_effect);
         }
 
-        if (flags1 & 0x10) == 0x10 {
+        if (flags1 & 0x10) != 0 {
             let (inner, grace_effect) = parse_grace_effect(version)(i)?;
             i = inner;
             note.effect.grace = Some(grace_effect);
         }
 
-        if (flags2 & 0x04) == 0x04 {
+        if (flags2 & 0x04) != 0 {
             let (inner, tremolo_picking) = parse_tremolo_picking(i)?;
             i = inner;
             note.effect.tremolo_picking = Some(tremolo_picking);
         }
 
-        if (flags2 & 0x08) == 0x08 {
+        if (flags2 & 0x08) != 0 {
             let (inner, slide_type) = parse_slide_type(i)?;
             i = inner;
             note.effect.slide = slide_type;
         }
 
-        if (flags2 & 0x10) == 0x10 {
+        if (flags2 & 0x10) != 0 {
             let (inner, harmonic_effect) = parse_harmonic_effect(version)(i)?;
             i = inner;
             note.effect.harmonic = Some(harmonic_effect);
         }
 
-        if (flags2 & 0x20) == 0x20 {
+        if (flags2 & 0x20) != 0 {
             let (inner, trill_effect) = parse_trill_effect(i)?;
             i = inner;
             note.effect.trill = Some(trill_effect);
@@ -920,13 +916,11 @@ pub fn parse_note_effects(
 
 pub fn parse_trill_effect(i: &[u8]) -> IResult<&[u8], TrillEffect> {
     log::debug!("Parsing trill effect");
-    let mut i = i;
     let mut trill_effect = TrillEffect::default();
     let (inner, (fret, period)) = (parse_i8, parse_i8).parse(i)?;
-    i = inner;
     trill_effect.fret = fret;
     trill_effect.duration.value = TrillEffect::from_trill_period(period);
-    Ok((i, trill_effect))
+    Ok((inner, trill_effect))
 }
 
 pub fn parse_harmonic_effect(
@@ -988,8 +982,8 @@ pub fn parse_harmonic_effect(
 }
 
 pub fn parse_slide_type(i: &[u8]) -> IResult<&[u8], Option<SlideType>> {
-    log::debug!("Parsing slide type");
-    map(parse_u8, |t| {
+    map(parse_i8, |t| {
+        log::debug!("Parsing slide type {t}");
         if (t & 0x01) == 0x01 {
             Some(SlideType::ShiftSlideTo)
         } else if (t & 0x02) == 0x02 {
@@ -1074,6 +1068,7 @@ pub fn parse_beat_effects<'a>(
         if flags1 & 0x20 != 0 {
             let (inner, effect) = parse_u8(i)?;
             i = inner;
+            log::debug!("Parsing tapping effect {effect}");
             note_effect.slap = match effect {
                 1 => SlapEffect::Tapping,
                 2 => SlapEffect::Slapping,
@@ -1089,6 +1084,7 @@ pub fn parse_beat_effects<'a>(
         }
 
         if flags1 & 0x40 != 0 {
+            log::debug!("Parsing stroke effect");
             let (inner, (stroke_up, stroke_down)) = (parse_i8, parse_i8).parse(i)?;
             i = inner;
             if stroke_up > 0 {
@@ -1117,7 +1113,7 @@ pub fn parse_bend_effect(i: &[u8]) -> IResult<&[u8], BendEffect> {
     i = inner;
     for _ in 0..num_points {
         let (inner, (bend_position, bend_value, _vibrato)) =
-            (parse_int, parse_int, parse_u8).parse(i)?;
+            (parse_int, parse_int, parse_i8).parse(i)?;
         i = inner;
 
         let point_position =
@@ -1138,7 +1134,7 @@ pub fn parse_tremolo_bar(i: &[u8]) -> IResult<&[u8], TremoloBarEffect> {
     let (inner, num_points) = parse_int(i)?;
     i = inner;
     for _ in 0..num_points {
-        let (inner, (position, value, _vibrato)) = (parse_int, parse_int, parse_u8).parse(i)?;
+        let (inner, (position, value, _vibrato)) = (parse_int, parse_int, parse_i8).parse(i)?;
         i = inner;
 
         let point_position = position as f32 * BEND_EFFECT_MAX_POSITION_LENGTH / GP_BEND_POSITION;
@@ -1173,7 +1169,7 @@ pub fn parse_duration(flags: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], Duration
         log::debug!("Duration value: {}", d.value);
         d.dotted = flags & 0x01 != 0;
 
-        if (flags & 0x20) == 0x20 {
+        if (flags & 0x20) != 0 {
             let (inner, i_tuplet) = parse_int(i)?;
             i = inner;
 
@@ -1190,7 +1186,7 @@ pub fn parse_duration(flags: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], Duration
                     d.tuplet_enters = i_tuplet as u8;
                     d.tuplet_times = 8;
                 }
-                x => panic!("Unknown tuplet: {x}"),
+                x => log::debug!("Unknown tuplet: {x}"),
             }
         }
 
@@ -1657,7 +1653,7 @@ pub fn parse_gp_data(file_data: &[u8]) -> Result<Song, RuxError> {
 
     // make parser and parse music data
     let mut parser = MusicParser::new(base_song);
-    let (_rest, _unit) = parser.parse_music_data(rest).map_err(|e| {
+    let (_rest, ()) = parser.parse_music_data(rest).map_err(|e| {
         log::error!("Failed to parse music data: {e:?}");
         RuxError::ParsingError("Failed to parse music data".to_string())
     })?;

@@ -287,7 +287,7 @@ impl MusicParser {
             };
             log::debug!("--------");
             log::debug!("...with {beats} beats");
-            for b in 0..beats {
+            for b in 1..=beats {
                 log::debug!("--------");
                 log::debug!("Parsing beat {b}");
                 let (inner, beat) = self.parse_beat(beat_start, track_index, measure_index)(i)?;
@@ -333,7 +333,7 @@ impl MusicParser {
             // beat chords
             if (flags & 0x02) != 0 {
                 let track = &self.song.tracks[track_index];
-                let (inner, chord) = parse_chord(track.strings.len() as u8, self.song.version)(i)?;
+                let (inner, chord) = parse_chord(track.strings.len() as u8)(i)?;
                 i = inner;
                 beat.effect.chord = Some(chord);
             }
@@ -363,7 +363,7 @@ impl MusicParser {
             let (inner, string_flags) = parse_u8(i)?;
             i = inner;
             let track = &self.song.tracks[track_index];
-            log::debug!("Parsing notes for beat ({} strings)", track.strings.len());
+            log::debug!("Parsing notes for beat strings:{}, flags:{string_flags:08b}", track.strings.len());
             assert!(!track.strings.is_empty());
             for (string_id, string_value) in track.strings.iter().enumerate() {
                 if string_flags & (1 << (7 - string_value.0)) > 0 {
