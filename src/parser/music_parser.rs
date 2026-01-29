@@ -363,7 +363,10 @@ impl MusicParser {
             let (inner, string_flags) = parse_u8(i)?;
             i = inner;
             let track = &self.song.tracks[track_index];
-            log::debug!("Parsing notes for beat strings:{}, flags:{string_flags:08b}", track.strings.len());
+            log::debug!(
+                "Parsing notes for beat strings:{}, flags:{string_flags:08b}",
+                track.strings.len()
+            );
             assert!(!track.strings.is_empty());
             for (string_id, string_value) in track.strings.iter().enumerate() {
                 if string_flags & (1 << (7 - string_value.0)) > 0 {
