@@ -793,7 +793,7 @@ mod tests {
     use crate::audio::midi_event::MidiEventType;
     use crate::parser::song_parser::Song;
     use crate::parser::song_parser_tests::parse_gp_file;
-    use crate::parser::tbt_parser::{is_tbt_file, parse_tbt_data, tbt_to_song};
+    use crate::parser::tbt_parser::{parse_tbt_data, tbt_to_song};
     use crate::RuxError;
     use std::collections::HashSet;
     use std::io::Read;
@@ -827,14 +827,6 @@ mod tests {
             }
             let file_name = path.file_name().unwrap().to_str().unwrap();
             let file_path = path.to_str().unwrap();
-            // Skip invalid tbt files (e.g., test1.tbt is a 404 HTML page)
-            if extension == "tbt" {
-                let file_data = std::fs::read(&path).unwrap();
-                if !is_tbt_file(&file_data) {
-                    eprintln!("Skipping invalid tbt file: {file_name}");
-                    continue;
-                }
-            }
             eprintln!("Parsing file: {file_name}");
             let song = parse_tab_file(file_path)
                 .unwrap_or_else(|err| panic!("Failed to parse file: {file_name}\n{err}"));
