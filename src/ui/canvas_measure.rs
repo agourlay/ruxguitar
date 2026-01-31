@@ -1,6 +1,3 @@
-use crate::parser::song_parser::{
-    Beat, HarmonicType, Note, NoteEffect, NoteType, SlapEffect, SlideType, Song, TimeSignature,
-};
 use crate::ui::application::Message;
 use iced::advanced::mouse;
 use iced::advanced::text::Shaping::Advanced;
@@ -10,6 +7,9 @@ use iced::mouse::{Cursor, Interaction};
 use iced::widget::canvas::{Cache, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::{canvas, Canvas};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
+use ruxguitar::parser::song_parser::{
+    Beat, HarmonicType, Note, NoteEffect, NoteType, SlapEffect, SlideType, Song, TimeSignature,
+};
 use std::ops::Div;
 use std::rc::Rc;
 

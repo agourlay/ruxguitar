@@ -6,9 +6,7 @@ use iced::{
 use std::borrow::Cow;
 use std::fmt::Display;
 
-use crate::audio::midi_player::AudioPlayer;
 use crate::config::Config;
-use crate::parser::song_parser::{parse_gp_data, GpVersion, Song};
 use crate::ui::icons::{open_icon, pause_icon, play_icon, solo_icon, stop_icon};
 use crate::ui::picker::{load_file, open_file_dialog, FilePickerError};
 use crate::ui::tablature::Tablature;
@@ -18,6 +16,8 @@ use iced::futures::{SinkExt, Stream};
 use iced::keyboard::key::Named::{ArrowDown, ArrowUp, Space};
 use iced::widget::container::visible_bounds;
 use iced::widget::scrollable::{scroll_to, AbsoluteOffset, Id};
+use ruxguitar::audio::midi_player::AudioPlayer;
+use ruxguitar::parser::song_parser::{parse_gp_data, GpVersion, Song};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
