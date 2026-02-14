@@ -41,8 +41,7 @@ unreadable_literal = "warn"
 [dependencies]
 nom = "8.0.0"
 encoding_rs = "0.8.35"
-# Can't upgrade iced & iced_aw as it bumps the MSRV to 1.80 which breaks the Win7 & 8 builds :s
-iced = { version = "0.13.0", features = [
+iced = { version = "0.13.1", features = [
     "advanced",
     "canvas",
     "tokio",
