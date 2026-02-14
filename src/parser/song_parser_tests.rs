@@ -1,7 +1,7 @@
 #[cfg(test)]
-use crate::parser::song_parser::{parse_gp_data, Song};
-#[cfg(test)]
 use crate::RuxError;
+#[cfg(test)]
+use crate::parser::song_parser::{Song, parse_gp_data};
 #[cfg(test)]
 use std::io::Read;
 
@@ -644,7 +644,10 @@ mod tests {
         let lyrics = song.lyrics.unwrap();
         assert_eq!(lyrics.track_choice, 0);
         assert_eq!(lyrics.lines.len(), 5);
-        assert_eq!(lyrics.lines[0].1, "I feel your presence amongst us\r\nYou cannot hide in the darkness\r\nCan you hear the rumble?\r\nCan you hear the rumble that's calling?\r\n\r\nI know your soul is not tainted\r\nEven though you've been told so\r\nCan you hear the rumble?\r\nCan you hear the rumble that's calling?\r\n\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you\r\n\r\nA candle casting a faint glow\r\nYou and I see eye to eye\r\nCan you hear the thunder?\r\nOh can you hear the thunder that's breaking?\r\n\r\nNow there is nothing between us\r\nFor now our merge is eternal\r\nCan't you see that you're lost?\r\nCan't you see that you're lost without me?\r\n\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you\r\n\r\nCan't you see that you're lost without me?\r\n\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you\r\n\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you");
+        assert_eq!(
+            lyrics.lines[0].1,
+            "I feel your presence amongst us\r\nYou cannot hide in the darkness\r\nCan you hear the rumble?\r\nCan you hear the rumble that's calling?\r\n\r\nI know your soul is not tainted\r\nEven though you've been told so\r\nCan you hear the rumble?\r\nCan you hear the rumble that's calling?\r\n\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you\r\n\r\nA candle casting a faint glow\r\nYou and I see eye to eye\r\nCan you hear the thunder?\r\nOh can you hear the thunder that's breaking?\r\n\r\nNow there is nothing between us\r\nFor now our merge is eternal\r\nCan't you see that you're lost?\r\nCan't you see that you're lost without me?\r\n\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you\r\n\r\nCan't you see that you're lost without me?\r\n\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you\r\n\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you\r\nI can feel the thunder that's breaking in your heart\r\nI can see through the scars inside you"
+        );
         assert!(song.page_setup.is_some());
         let page_setup = song.page_setup.unwrap();
         assert_eq!(page_setup.page_size, Point { x: 216, y: 279 });

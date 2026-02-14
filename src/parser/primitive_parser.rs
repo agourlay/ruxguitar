@@ -1,6 +1,6 @@
 use encoding_rs::WINDOWS_1252;
 use nom::combinator::{flat_map, map};
-use nom::{bytes, number, IResult, Parser};
+use nom::{IResult, Parser, bytes, number};
 
 /// Parse signed byte
 pub fn parse_i8(i: &[u8]) -> IResult<&[u8], i8> {

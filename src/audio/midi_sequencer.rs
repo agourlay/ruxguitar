@@ -13,10 +13,12 @@ pub struct MidiSequencer {
 impl MidiSequencer {
     pub fn new(sorted_events: Vec<MidiEvent>) -> Self {
         // events are sorted by tick
-        assert!(sorted_events
-            .as_slice()
-            .windows(2)
-            .all(|w| w[0].tick <= w[1].tick));
+        assert!(
+            sorted_events
+                .as_slice()
+                .windows(2)
+                .all(|w| w[0].tick <= w[1].tick)
+        );
         Self {
             current_tick: 0,
             last_tick: 0,

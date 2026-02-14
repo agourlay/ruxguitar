@@ -1,15 +1,15 @@
+use crate::RuxError;
 use crate::parser::music_parser::MusicParser;
 use crate::parser::primitive_parser::{
     parse_bool, parse_byte_size_string, parse_i8, parse_int, parse_int_byte_sized_string,
     parse_int_sized_string, parse_short, parse_u8, skip,
 };
-use crate::RuxError;
+use nom::IResult;
+use nom::Parser;
 use nom::bytes::complete::take;
 use nom::combinator::{cond, flat_map, map};
 use nom::multi::count;
 use nom::sequence::preceded;
-use nom::IResult;
-use nom::Parser;
 use std::fmt::Debug;
 
 // GP4 docs at <https://dguitar.sourceforge.net/GP4format.html>

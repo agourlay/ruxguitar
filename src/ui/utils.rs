@@ -1,6 +1,6 @@
 use crate::ui::application::Message;
 use iced::widget::{
-    button, center, container, mouse_area, opaque, stack, tooltip, Container, Text,
+    Container, Text, button, center, container, mouse_area, opaque, stack, tooltip,
 };
 use iced::{Color, Element, Length};
 
@@ -8,11 +8,11 @@ pub fn untitled_text_table_box() -> Container<'static, Message> {
     let message =
         "Tips:\n - use the space bar to play/pause\n - use ctr+up/down to change the tempo";
     let text = Text::new(message).color(Color::WHITE);
-    let container = Container::new(text)
+    
+    Container::new(text)
         .center_x(Length::Fill)
         .center_y(Length::Fill)
-        .padding(20);
-    container
+        .padding(20)
 }
 
 pub fn action_gated<'a, Message: Clone + 'a>(

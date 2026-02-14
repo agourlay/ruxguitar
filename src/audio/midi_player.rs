@@ -1,11 +1,11 @@
+use crate::audio::FIRST_TICK;
 use crate::audio::midi_builder::MidiBuilder;
 use crate::audio::midi_event::MidiEventType;
 use crate::audio::midi_player_params::MidiPlayerParams;
 use crate::audio::midi_sequencer::MidiSequencer;
-use crate::audio::FIRST_TICK;
 use crate::parser::song_parser::Song;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::DefaultStreamConfigError;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 use std::fs::File;
 use std::path::PathBuf;

@@ -2,9 +2,9 @@ use crate::parser::primitive_parser::{
     parse_byte_size_string, parse_i8, parse_int, parse_int_byte_sized_string, parse_u8, skip,
 };
 use crate::parser::song_parser::{
-    convert_velocity, parse_beat_effects, parse_chord, parse_color, parse_duration,
-    parse_measure_headers, parse_note_effects, Beat, GpVersion, Measure, Note, NoteEffect,
-    NoteType, Song, Track, Voice, MAX_VOICES, QUARTER_TIME,
+    Beat, GpVersion, MAX_VOICES, Measure, Note, NoteEffect, NoteType, QUARTER_TIME, Song, Track,
+    Voice, convert_velocity, parse_beat_effects, parse_chord, parse_color, parse_duration,
+    parse_measure_headers, parse_note_effects,
 };
 use nom::multi::count;
 use nom::{IResult, Parser};

@@ -8,7 +8,7 @@ use iced::alignment::Horizontal::Center;
 use iced::event::Status;
 use iced::mouse::{Cursor, Interaction};
 use iced::widget::canvas::{Cache, Event, Frame, Geometry, Path, Stroke, Text};
-use iced::widget::{canvas, Canvas};
+use iced::widget::{Canvas, canvas};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
 use std::ops::Div;
 use std::rc::Rc;
@@ -144,8 +144,8 @@ impl canvas::Program<Message> for CanvasMeasure {
         bounds: Rectangle,
         cursor: Cursor,
     ) -> (Status, Option<Message>) {
-        if let Event::Mouse(mouse::Event::ButtonPressed(_)) = event {
-            if let Some(_cursor_position) = cursor.position_in(bounds) {
+        if let Event::Mouse(mouse::Event::ButtonPressed(_)) = event
+            && let Some(_cursor_position) = cursor.position_in(bounds) {
                 log::info!("Clicked on measure {:?}", self.measure_id);
                 *state = MeasureInteraction::Clicked;
                 return (
@@ -153,7 +153,6 @@ impl canvas::Program<Message> for CanvasMeasure {
                     Some(Message::FocusMeasure(self.measure_id)),
                 );
             };
-        }
         (Status::Ignored, None)
     }
 

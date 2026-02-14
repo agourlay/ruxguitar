@@ -1,5 +1,5 @@
-use crate::ui::application::RuxApplication;
 use crate::RuxError::ConfigError;
+use crate::ui::application::RuxApplication;
 use clap::Parser;
 use config::Config;
 use std::io;

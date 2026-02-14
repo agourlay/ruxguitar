@@ -1,9 +1,9 @@
+use crate::audio::FIRST_TICK;
 /// Thanks to `TuxGuitar` for the reference implementation in `MidiSequenceParser.java`
 use crate::audio::midi_event::MidiEvent;
-use crate::audio::FIRST_TICK;
 use crate::parser::song_parser::{
-    Beat, BendEffect, BendPoint, HarmonicType, Measure, MeasureHeader, MidiChannel, Note, NoteType,
-    Song, Track, TremoloBarEffect, TripletFeel, MIN_VELOCITY, QUARTER_TIME, SEMITONE_LENGTH,
+    Beat, BendEffect, BendPoint, HarmonicType, MIN_VELOCITY, Measure, MeasureHeader, MidiChannel,
+    Note, NoteType, QUARTER_TIME, SEMITONE_LENGTH, Song, Track, TremoloBarEffect, TripletFeel,
     VELOCITY_INCREMENT,
 };
 use std::rc::Rc;
@@ -292,8 +292,8 @@ impl MidiBuilder {
         }
 
         // trill
-        if let Some(trill) = &note.effect.trill {
-            if !is_percussion {
+        if let Some(trill) = &note.effect.trill
+            && !is_percussion {
                 let trill_key = track_offset + i32::from(trill.fret) + string_tuning;
                 let mut trill_length = trill.duration.time();
 
@@ -320,7 +320,6 @@ impl MidiBuilder {
                 // all notes published - the caller does not need to publish the note
                 return None;
             }
-        }
 
         // tremolo picking
         if let Some(tremolo_picking) = &note.effect.tremolo_picking {
@@ -345,23 +344,21 @@ impl MidiBuilder {
         }
 
         // bend
-        if let Some(bend_effect) = &note.effect.bend {
-            if !is_percussion {
+        if let Some(bend_effect) = &note.effect.bend
+            && !is_percussion {
                 self.add_bend(track_id, *note_start, *duration, channel_id, bend_effect);
             }
-        }
 
         // tremolo bar
-        if let Some(tremolo_bar) = &note.effect.tremolo_bar {
-            if !is_percussion {
+        if let Some(tremolo_bar) = &note.effect.tremolo_bar
+            && !is_percussion {
                 self.add_tremolo_bar(track_id, *note_start, *duration, channel_id, tremolo_bar);
             }
-        }
 
         // slide
-        if let Some(_slide) = &note.effect.slide {
-            if !is_percussion {
-                if let Some((next_beat, next_note)) = next_note_beat {
+        if let Some(_slide) = &note.effect.slide
+            && !is_percussion
+                && let Some((next_beat, next_note)) = next_note_beat {
                     let value_1 = i32::from(note.value);
                     let value_2 = i32::from(next_note.value);
 
@@ -382,8 +379,6 @@ impl MidiBuilder {
                     // normalise the bend
                     self.add_pitch_bend(tick2, track_id, channel_id, DEFAULT_BEND as i32);
                 }
-            }
-        }
 
         // vibrato
         if note.effect.vibrato && !is_percussion {
@@ -391,8 +386,8 @@ impl MidiBuilder {
         }
 
         // harmonic
-        if let Some(harmonic) = &note.effect.harmonic {
-            if !is_percussion {
+        if let Some(harmonic) = &note.effect.harmonic
+            && !is_percussion {
                 match harmonic.kind {
                     HarmonicType::Natural => {
                         for (harmonic_value, harmonic_frequency) in NATURAL_FREQUENCIES {
@@ -441,7 +436,6 @@ impl MidiBuilder {
                     );
                 }
             }
-        }
 
         Some(key)
     }
@@ -765,11 +759,10 @@ fn apply_duration_effect(
         }
     }
     // hande let-ring
-    if let Some(first_next_beat) = first_next_beat {
-        if note.effect.let_ring {
+    if let Some(first_next_beat) = first_next_beat
+        && note.effect.let_ring {
             duration += first_next_beat.duration.time();
         }
-    }
     if note_type == &NoteType::Dead {
         return apply_static_duration(tempo, DEFAULT_DURATION_DEAD, duration);
     }

@@ -1,28 +1,28 @@
 use iced::advanced::text::Shaping::Advanced;
-use iced::widget::{column, container, horizontal_space, pick_list, row, text, Text};
+use iced::widget::{Text, column, container, horizontal_space, pick_list, row, text};
 use iced::{
-    keyboard, stream, window, Alignment, Border, Color, Element, Size, Subscription, Task, Theme,
+    Alignment, Border, Color, Element, Size, Subscription, Task, Theme, keyboard, stream, window,
 };
 use std::borrow::Cow;
 use std::fmt::Display;
 
+use crate::ApplicationArgs;
 use crate::audio::midi_player::AudioPlayer;
 use crate::config::Config;
-use crate::parser::song_parser::{parse_gp_data, GpVersion, Song};
+use crate::parser::song_parser::{GpVersion, Song, parse_gp_data};
 use crate::ui::icons::{open_icon, pause_icon, play_icon, solo_icon, stop_icon};
-use crate::ui::picker::{load_file, open_file_dialog, FilePickerError};
+use crate::ui::picker::{FilePickerError, load_file, open_file_dialog};
 use crate::ui::tablature::Tablature;
 use crate::ui::utils::{action_gated, action_toggle, modal, untitled_text_table_box};
-use crate::ApplicationArgs;
 use iced::futures::{SinkExt, Stream};
 use iced::keyboard::key::Named::{ArrowDown, ArrowUp, Space};
 use iced::widget::container::visible_bounds;
-use iced::widget::scrollable::{scroll_to, AbsoluteOffset, Id};
+use iced::widget::scrollable::{AbsoluteOffset, Id, scroll_to};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use tokio::sync::watch::{Receiver, Sender};
 use tokio::sync::Mutex;
+use tokio::sync::watch::{Receiver, Sender};
 
 const ICONS_FONT: &[u8] = include_bytes!("../../resources/icons.ttf");
 
@@ -285,8 +285,8 @@ impl RuxApplication {
                 Task::none()
             }
             Message::FocusTick(tick) => {
-                if let Some(tablature) = &mut self.tablature {
-                    if let Some(scroll_offset) = tablature.focus_on_tick(tick) {
+                if let Some(tablature) = &mut self.tablature
+                    && let Some(scroll_offset) = tablature.focus_on_tick(tick) {
                         // scroll to the focused measure
                         return scroll_to(
                             tablature.scroll_id.clone(),
@@ -296,7 +296,6 @@ impl RuxApplication {
                             },
                         );
                     }
-                }
                 Task::none()
             }
             Message::PlayPause => {
@@ -349,24 +348,20 @@ impl RuxApplication {
                 if let Some(current_index) = TempoSelection::VALUES
                     .iter()
                     .position(|t| t == &self.tempo_selection)
-                {
-                    if current_index < TempoSelection::VALUES.len() - 1 {
+                    && current_index < TempoSelection::VALUES.len() - 1 {
                         let next_tempo = TempoSelection::VALUES[current_index + 1];
                         return Task::done(Message::TempoSelected(next_tempo));
                     }
-                }
                 Task::none()
             }
             Message::DecreaseTempo => {
                 if let Some(current_index) = TempoSelection::VALUES
                     .iter()
                     .position(|t| t == &self.tempo_selection)
-                {
-                    if current_index > 0 {
+                    && current_index > 0 {
                         let previous_tempo = TempoSelection::VALUES[current_index - 1];
                         return Task::done(Message::TempoSelected(previous_tempo));
                     }
-                }
                 Task::none()
             }
             Message::ClearError => {
@@ -502,8 +497,9 @@ impl RuxApplication {
         Theme::Dark
     }
 
-    fn audio_player_beat_subscription(&self) -> impl Stream<Item = Message> {
-        let beat_receiver = self.beat_receiver.clone();
+    fn audio_player_beat_subscription(
+        beat_receiver: Arc<Mutex<Receiver<u32>>>,
+    ) -> impl Stream<Item = Message> {
         stream::channel(1, move |mut output| async move {
             let mut receiver = beat_receiver.lock().await;
             loop {
@@ -533,7 +529,8 @@ impl RuxApplication {
         subscriptions.push(keyboard_subscription);
 
         // next beat notifier subscription
-        let audio_player_beat_subscription = self.audio_player_beat_subscription();
+        let audio_player_beat_subscription =
+            Self::audio_player_beat_subscription(self.beat_receiver.clone());
         subscriptions.push(Subscription::run_with_id(
             "audio-player-beat",
             audio_player_beat_subscription,

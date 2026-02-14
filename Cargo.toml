@@ -1,7 +1,7 @@
 [package]
 name = "ruxguitar"
 version = "0.6.3"
-edition = "2021"
+edition = "2024"
 authors = ["Arnaud Gourlay <arnaud.gourlay@gmail.com>"]
 description = "Guitar pro tablature player"
 repository = "https://github.com/agourlay/ruxguitar"
