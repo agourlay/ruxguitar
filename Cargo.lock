@@ -1678,13 +1678,15 @@ dependencies = [
 
 [[package]]
 name = "iced_aw"
-version = "0.11.0"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42e05df3019f20c6decea93d035b32a2afc7b329d89cc5a68cca097d0e0a1889"
+checksum = "582c517a94ce3205da98e9c10b26bb71aa36b7d7d084441d826dc912711d1bac"
 dependencies = [
  "cfg-if",
+ "getrandom 0.3.2",
  "iced",
  "iced_fonts",
+ "web-time",
 ]
 
 [[package]]
