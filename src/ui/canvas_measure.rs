@@ -145,14 +145,15 @@ impl canvas::Program<Message> for CanvasMeasure {
         cursor: Cursor,
     ) -> (Status, Option<Message>) {
         if let Event::Mouse(mouse::Event::ButtonPressed(_)) = event
-            && let Some(_cursor_position) = cursor.position_in(bounds) {
-                log::info!("Clicked on measure {:?}", self.measure_id);
-                *state = MeasureInteraction::Clicked;
-                return (
-                    Status::Captured,
-                    Some(Message::FocusMeasure(self.measure_id)),
-                );
-            };
+            && let Some(_cursor_position) = cursor.position_in(bounds)
+        {
+            log::info!("Clicked on measure {:?}", self.measure_id);
+            *state = MeasureInteraction::Clicked;
+            return (
+                Status::Captured,
+                Some(Message::FocusMeasure(self.measure_id)),
+            );
+        };
         (Status::Ignored, None)
     }
 

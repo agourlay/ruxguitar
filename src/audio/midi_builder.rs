@@ -293,33 +293,34 @@ impl MidiBuilder {
 
         // trill
         if let Some(trill) = &note.effect.trill
-            && !is_percussion {
-                let trill_key = track_offset + i32::from(trill.fret) + string_tuning;
-                let mut trill_length = trill.duration.time();
+            && !is_percussion
+        {
+            let trill_key = track_offset + i32::from(trill.fret) + string_tuning;
+            let mut trill_length = trill.duration.time();
 
-                let trill_tick_limit = *note_start + *duration;
-                let mut real_key = false;
-                let mut tick = *note_start;
+            let trill_tick_limit = *note_start + *duration;
+            let mut real_key = false;
+            let mut tick = *note_start;
 
-                let mut counter = 0;
-                while tick + 10 < trill_tick_limit {
-                    if tick + trill_length >= trill_tick_limit {
-                        trill_length = trill_tick_limit - tick - 1;
-                    }
-                    let iter_key = if real_key { initial_key } else { trill_key };
-                    self.add_note(track_id, iter_key, tick, trill_length, velocity, channel_id);
-                    real_key = !real_key;
-                    tick += trill_length;
-                    counter += 1;
+            let mut counter = 0;
+            while tick + 10 < trill_tick_limit {
+                if tick + trill_length >= trill_tick_limit {
+                    trill_length = trill_tick_limit - tick - 1;
                 }
-                assert!(
-                    counter > 0,
-                    "No trill notes published! trill_length: {trill_length}, tick: {tick}, trill_tick_limit: {trill_tick_limit}"
-                );
-
-                // all notes published - the caller does not need to publish the note
-                return None;
+                let iter_key = if real_key { initial_key } else { trill_key };
+                self.add_note(track_id, iter_key, tick, trill_length, velocity, channel_id);
+                real_key = !real_key;
+                tick += trill_length;
+                counter += 1;
             }
+            assert!(
+                counter > 0,
+                "No trill notes published! trill_length: {trill_length}, tick: {tick}, trill_tick_limit: {trill_tick_limit}"
+            );
+
+            // all notes published - the caller does not need to publish the note
+            return None;
+        }
 
         // tremolo picking
         if let Some(tremolo_picking) = &note.effect.tremolo_picking {
@@ -345,40 +346,43 @@ impl MidiBuilder {
 
         // bend
         if let Some(bend_effect) = &note.effect.bend
-            && !is_percussion {
-                self.add_bend(track_id, *note_start, *duration, channel_id, bend_effect);
-            }
+            && !is_percussion
+        {
+            self.add_bend(track_id, *note_start, *duration, channel_id, bend_effect);
+        }
 
         // tremolo bar
         if let Some(tremolo_bar) = &note.effect.tremolo_bar
-            && !is_percussion {
-                self.add_tremolo_bar(track_id, *note_start, *duration, channel_id, tremolo_bar);
-            }
+            && !is_percussion
+        {
+            self.add_tremolo_bar(track_id, *note_start, *duration, channel_id, tremolo_bar);
+        }
 
         // slide
         if let Some(_slide) = &note.effect.slide
             && !is_percussion
-                && let Some((next_beat, next_note)) = next_note_beat {
-                    let value_1 = i32::from(note.value);
-                    let value_2 = i32::from(next_note.value);
+            && let Some((next_beat, next_note)) = next_note_beat
+        {
+            let value_1 = i32::from(note.value);
+            let value_2 = i32::from(next_note.value);
 
-                    let tick1 = *note_start;
-                    let tick2 = next_beat.start;
+            let tick1 = *note_start;
+            let tick2 = next_beat.start;
 
-                    // make slide
-                    let distance: i32 = value_2 - value_1;
-                    let length: i32 = (tick2 - tick1) as i32;
-                    let points = length / (QUARTER_TIME / 8) as i32;
-                    for p_offset in 1..=points {
-                        let tone = ((length / points) * p_offset) * distance / length;
-                        let bend = DEFAULT_BEND + (tone as f32 * DEFAULT_BEND_SEMI_TONE * 2.0);
-                        let bend_tick = tick1 as i32 + (length / points) * p_offset;
-                        self.add_pitch_bend(bend_tick as u32, track_id, channel_id, bend as i32);
-                    }
+            // make slide
+            let distance: i32 = value_2 - value_1;
+            let length: i32 = (tick2 - tick1) as i32;
+            let points = length / (QUARTER_TIME / 8) as i32;
+            for p_offset in 1..=points {
+                let tone = ((length / points) * p_offset) * distance / length;
+                let bend = DEFAULT_BEND + (tone as f32 * DEFAULT_BEND_SEMI_TONE * 2.0);
+                let bend_tick = tick1 as i32 + (length / points) * p_offset;
+                self.add_pitch_bend(bend_tick as u32, track_id, channel_id, bend as i32);
+            }
 
-                    // normalise the bend
-                    self.add_pitch_bend(tick2, track_id, channel_id, DEFAULT_BEND as i32);
-                }
+            // normalise the bend
+            self.add_pitch_bend(tick2, track_id, channel_id, DEFAULT_BEND as i32);
+        }
 
         // vibrato
         if note.effect.vibrato && !is_percussion {
@@ -387,55 +391,55 @@ impl MidiBuilder {
 
         // harmonic
         if let Some(harmonic) = &note.effect.harmonic
-            && !is_percussion {
-                match harmonic.kind {
-                    HarmonicType::Natural => {
-                        for (harmonic_value, harmonic_frequency) in NATURAL_FREQUENCIES {
-                            if note.value % 12 == (harmonic_value % 12) as i16 {
-                                key = (initial_key + harmonic_frequency) - i32::from(note.value);
-                                break;
-                            }
-                        }
-                    }
-                    HarmonicType::Semi => {
-                        let velocity = MIN_VELOCITY.max(velocity - VELOCITY_INCREMENT * 3);
-                        self.add_note(
-                            track_id,
-                            initial_key,
-                            *note_start,
-                            *duration,
-                            velocity,
-                            channel_id,
-                        );
-                        key = initial_key + NATURAL_FREQUENCIES[0].1;
-                    }
-                    HarmonicType::Artificial | HarmonicType::Pinch => {
-                        key = initial_key + NATURAL_FREQUENCIES[0].1;
-                    }
-                    HarmonicType::Tapped => {
-                        if let Some(right_hand_fret) = harmonic.right_hand_fret {
-                            for (harmonic_value, harmonic_frequency) in NATURAL_FREQUENCIES {
-                                if i16::from(right_hand_fret) - note.value == harmonic_value as i16
-                                {
-                                    key = initial_key + harmonic_frequency;
-                                    break;
-                                }
-                            }
+            && !is_percussion
+        {
+            match harmonic.kind {
+                HarmonicType::Natural => {
+                    for (harmonic_value, harmonic_frequency) in NATURAL_FREQUENCIES {
+                        if note.value % 12 == (harmonic_value % 12) as i16 {
+                            key = (initial_key + harmonic_frequency) - i32::from(note.value);
+                            break;
                         }
                     }
                 }
-                if key - 12 > 0 {
-                    let velocity = MIN_VELOCITY.max(velocity - VELOCITY_INCREMENT * 4);
+                HarmonicType::Semi => {
+                    let velocity = MIN_VELOCITY.max(velocity - VELOCITY_INCREMENT * 3);
                     self.add_note(
                         track_id,
-                        key - 12,
+                        initial_key,
                         *note_start,
                         *duration,
                         velocity,
                         channel_id,
                     );
+                    key = initial_key + NATURAL_FREQUENCIES[0].1;
+                }
+                HarmonicType::Artificial | HarmonicType::Pinch => {
+                    key = initial_key + NATURAL_FREQUENCIES[0].1;
+                }
+                HarmonicType::Tapped => {
+                    if let Some(right_hand_fret) = harmonic.right_hand_fret {
+                        for (harmonic_value, harmonic_frequency) in NATURAL_FREQUENCIES {
+                            if i16::from(right_hand_fret) - note.value == harmonic_value as i16 {
+                                key = initial_key + harmonic_frequency;
+                                break;
+                            }
+                        }
+                    }
                 }
             }
+            if key - 12 > 0 {
+                let velocity = MIN_VELOCITY.max(velocity - VELOCITY_INCREMENT * 4);
+                self.add_note(
+                    track_id,
+                    key - 12,
+                    *note_start,
+                    *duration,
+                    velocity,
+                    channel_id,
+                );
+            }
+        }
 
         Some(key)
     }
@@ -760,9 +764,10 @@ fn apply_duration_effect(
     }
     // hande let-ring
     if let Some(first_next_beat) = first_next_beat
-        && note.effect.let_ring {
-            duration += first_next_beat.duration.time();
-        }
+        && note.effect.let_ring
+    {
+        duration += first_next_beat.duration.time();
+    }
     if note_type == &NoteType::Dead {
         return apply_static_duration(tempo, DEFAULT_DURATION_DEAD, duration);
     }

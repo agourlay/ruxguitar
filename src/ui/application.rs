@@ -286,16 +286,17 @@ impl RuxApplication {
             }
             Message::FocusTick(tick) => {
                 if let Some(tablature) = &mut self.tablature
-                    && let Some(scroll_offset) = tablature.focus_on_tick(tick) {
-                        // scroll to the focused measure
-                        return scroll_to(
-                            tablature.scroll_id.clone(),
-                            AbsoluteOffset {
-                                x: 0.0,
-                                y: scroll_offset,
-                            },
-                        );
-                    }
+                    && let Some(scroll_offset) = tablature.focus_on_tick(tick)
+                {
+                    // scroll to the focused measure
+                    return scroll_to(
+                        tablature.scroll_id.clone(),
+                        AbsoluteOffset {
+                            x: 0.0,
+                            y: scroll_offset,
+                        },
+                    );
+                }
                 Task::none()
             }
             Message::PlayPause => {
@@ -348,20 +349,22 @@ impl RuxApplication {
                 if let Some(current_index) = TempoSelection::VALUES
                     .iter()
                     .position(|t| t == &self.tempo_selection)
-                    && current_index < TempoSelection::VALUES.len() - 1 {
-                        let next_tempo = TempoSelection::VALUES[current_index + 1];
-                        return Task::done(Message::TempoSelected(next_tempo));
-                    }
+                    && current_index < TempoSelection::VALUES.len() - 1
+                {
+                    let next_tempo = TempoSelection::VALUES[current_index + 1];
+                    return Task::done(Message::TempoSelected(next_tempo));
+                }
                 Task::none()
             }
             Message::DecreaseTempo => {
                 if let Some(current_index) = TempoSelection::VALUES
                     .iter()
                     .position(|t| t == &self.tempo_selection)
-                    && current_index > 0 {
-                        let previous_tempo = TempoSelection::VALUES[current_index - 1];
-                        return Task::done(Message::TempoSelected(previous_tempo));
-                    }
+                    && current_index > 0
+                {
+                    let previous_tempo = TempoSelection::VALUES[current_index - 1];
+                    return Task::done(Message::TempoSelected(previous_tempo));
+                }
                 Task::none()
             }
             Message::ClearError => {

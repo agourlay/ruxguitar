@@ -8,7 +8,7 @@ pub fn untitled_text_table_box() -> Container<'static, Message> {
     let message =
         "Tips:\n - use the space bar to play/pause\n - use ctr+up/down to change the tempo";
     let text = Text::new(message).color(Color::WHITE);
-    
+
     Container::new(text)
         .center_x(Length::Fill)
         .center_y(Length::Fill)
