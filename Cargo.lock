@@ -1678,12 +1678,13 @@ dependencies = [
 
 [[package]]
 name = "iced_aw"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b47215370062021ef31616348a0cb490d2e9004b8eaa50f1973feb76e9135ce"
+checksum = "42e05df3019f20c6decea93d035b32a2afc7b329d89cc5a68cca097d0e0a1889"
 dependencies = [
  "cfg-if",
  "iced",
+ "iced_fonts",
 ]
 
 [[package]]
@@ -1704,6 +1705,15 @@ dependencies = [
  "smol_str",
  "thiserror 1.0.64",
  "web-time",
+]
+
+[[package]]
+name = "iced_fonts"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df7deb0800a850ee25c8a42559f72c0f249e577feb3aad37b9b65dc1e517e52a"
+dependencies = [
+ "iced_core",
 ]
 
 [[package]]
