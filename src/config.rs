@@ -1,10 +1,10 @@
 use std::{
+    env::home_dir,
     fs::{File, create_dir_all},
     io::{BufReader, Write},
     path::PathBuf,
 };
 
-use home::home_dir;
 use serde::{Deserialize, Serialize};
 
 use crate::RuxError;
