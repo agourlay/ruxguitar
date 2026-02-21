@@ -153,7 +153,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                 Status::Captured,
                 Some(Message::FocusMeasure(self.measure_id)),
             );
-        };
+        }
         (Status::Ignored, None)
     }
 
@@ -457,7 +457,7 @@ fn draw_beat(
             ..Text::default()
         };
         frame.fill_text(note_effect_text);
-    };
+    }
     if !beat.effect.stroke.is_empty() {
         // TODO display correct arrow on the chord
     }

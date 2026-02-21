@@ -61,14 +61,14 @@ impl SongDisplayInfo {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct TempoSelection {
     percentage: u32,
 }
 
 impl Default for TempoSelection {
     fn default() -> Self {
-        TempoSelection::new(100)
+        Self::new(100)
     }
 }
 
@@ -77,17 +77,17 @@ impl TempoSelection {
         Self { percentage }
     }
 
-    const VALUES: [TempoSelection; 9] = {
+    const PRESET: [Self; 9] = {
         [
-            TempoSelection::new(25),
-            TempoSelection::new(50),
-            TempoSelection::new(60),
-            TempoSelection::new(70),
-            TempoSelection::new(80),
-            TempoSelection::new(90),
-            TempoSelection::new(100),
-            TempoSelection::new(150),
-            TempoSelection::new(200),
+            Self::new(25),
+            Self::new(50),
+            Self::new(60),
+            Self::new(70),
+            Self::new(80),
+            Self::new(90),
+            Self::new(100),
+            Self::new(150),
+            Self::new(200),
         ]
     };
 }
@@ -98,7 +98,7 @@ impl Display for TempoSelection {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct TrackSelection {
     index: usize,
     name: String,
@@ -157,25 +157,21 @@ impl RuxApplication {
     }
 
     pub fn start(args: ApplicationArgs) -> iced::Result {
-        iced::application(
-            RuxApplication::title,
-            RuxApplication::update,
-            RuxApplication::view,
-        )
-        .subscription(RuxApplication::subscription)
-        .default_font(iced::Font::MONOSPACE)
-        .theme(RuxApplication::theme)
-        .font(ICONS_FONT)
-        .window_size((1150.0, 768.0))
-        .centered()
-        .antialiasing(!args.no_antialiasing)
-        .run_with(move || {
-            (
-                RuxApplication::new(args.sound_font_bank.clone(), args.local_config.clone()),
-                args.tab_file_path
-                    .map_or_else(Task::none, |f| Task::done(Message::OpenFile(f))),
-            )
-        })
+        iced::application(Self::title, Self::update, Self::view)
+            .subscription(Self::subscription)
+            .default_font(iced::Font::MONOSPACE)
+            .theme(Self::theme)
+            .font(ICONS_FONT)
+            .window_size((1150.0, 768.0))
+            .centered()
+            .antialiasing(!args.no_antialiasing)
+            .run_with(move || {
+                (
+                    Self::new(args.sound_font_bank.clone(), args.local_config.clone()),
+                    args.tab_file_path
+                        .map_or_else(Task::none, |f| Task::done(Message::OpenFile(f))),
+                )
+            })
     }
 
     fn title(&self) -> String {
@@ -346,23 +342,23 @@ impl RuxApplication {
                 Task::none()
             }
             Message::IncreaseTempo => {
-                if let Some(current_index) = TempoSelection::VALUES
+                if let Some(current_index) = TempoSelection::PRESET
                     .iter()
                     .position(|t| t == &self.tempo_selection)
-                    && current_index < TempoSelection::VALUES.len() - 1
+                    && current_index < TempoSelection::PRESET.len() - 1
                 {
-                    let next_tempo = TempoSelection::VALUES[current_index + 1];
+                    let next_tempo = TempoSelection::PRESET[current_index + 1];
                     return Task::done(Message::TempoSelected(next_tempo));
                 }
                 Task::none()
             }
             Message::DecreaseTempo => {
-                if let Some(current_index) = TempoSelection::VALUES
+                if let Some(current_index) = TempoSelection::PRESET
                     .iter()
                     .position(|t| t == &self.tempo_selection)
                     && current_index > 0
                 {
-                    let previous_tempo = TempoSelection::VALUES[current_index - 1];
+                    let previous_tempo = TempoSelection::PRESET[current_index - 1];
                     return Task::done(Message::TempoSelected(previous_tempo));
                 }
                 Task::none()
@@ -406,7 +402,7 @@ impl RuxApplication {
         } else {
             let tempo_label = text("Tempo").size(14);
             let tempo_percentage = pick_list(
-                TempoSelection::VALUES,
+                TempoSelection::PRESET,
                 Some(&self.tempo_selection),
                 Message::TempoSelected,
             )

@@ -48,7 +48,7 @@ pub const fn convert_velocity(v: i16) -> i16 {
     MIN_VELOCITY + (VELOCITY_INCREMENT * v) - VELOCITY_INCREMENT
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Default)]
 pub enum GpVersion {
     #[default]
     GP3,
@@ -74,7 +74,7 @@ pub struct Song {
     pub tracks: Vec<Track>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MidiChannel {
     pub channel_id: u8,
     pub effect_channel_id: u8,
@@ -94,14 +94,14 @@ impl MidiChannel {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Padding {
     pub right: i32,
     pub top: i32,
     pub left: i32,
     pub bottom: i32,
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Point {
     pub x: i32,
     pub y: i32,
@@ -123,13 +123,13 @@ pub struct PageSetup {
     pub copyright: String,
     pub page_number: String,
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Lyrics {
     pub track_choice: i32,
     pub lines: Vec<(i32, String)>,
 }
 
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, PartialEq, Eq, Default)]
 pub struct SongInfo {
     pub name: String,
     pub subtitle: String,
@@ -143,7 +143,7 @@ pub struct SongInfo {
     pub notices: Vec<String>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Marker {
     pub title: String,
     pub color: i32,
@@ -216,7 +216,7 @@ pub enum TripletFeel {
     Sixteenth,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Tempo {
     pub value: u32,
     pub name: Option<String>,
@@ -237,7 +237,7 @@ impl Default for Tempo {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MeasureHeader {
     pub start: u32,
     pub time_signature: TimeSignature,
@@ -414,12 +414,12 @@ pub enum GraceEffectTransition {
 }
 
 impl GraceEffectTransition {
-    pub fn get_grace_effect_transition(value: i8) -> GraceEffectTransition {
+    pub fn get_grace_effect_transition(value: i8) -> Self {
         match value {
-            0 => GraceEffectTransition::None,
-            1 => GraceEffectTransition::Slide,
-            2 => GraceEffectTransition::Bend,
-            3 => GraceEffectTransition::Hammer,
+            0 => Self::None,
+            1 => Self::Slide,
+            2 => Self::Bend,
+            3 => Self::Hammer,
             _ => panic!("Cannot get transition for the grace effect"),
         }
     }
@@ -495,13 +495,13 @@ pub enum Octave {
 }
 
 impl Octave {
-    pub fn get_octave(value: u8) -> Octave {
+    pub fn get_octave(value: u8) -> Self {
         match value {
-            0 => Octave::None,
-            1 => Octave::Ottava,
-            2 => Octave::Quindicesima,
-            3 => Octave::OttavaBassa,
-            4 => Octave::QuindicesimaBassa,
+            0 => Self::None,
+            1 => Self::Ottava,
+            2 => Self::Quindicesima,
+            3 => Self::OttavaBassa,
+            4 => Self::QuindicesimaBassa,
             _ => panic!("Cannot get octave value"),
         }
     }
@@ -581,13 +581,13 @@ pub enum NoteType {
 }
 
 impl NoteType {
-    pub const fn get_note_type(value: u8) -> NoteType {
+    pub const fn get_note_type(value: u8) -> Self {
         match value {
-            0 => NoteType::Rest,
-            1 => NoteType::Normal,
-            2 => NoteType::Tie,
-            3 => NoteType::Dead,
-            _ => NoteType::Unknown(value),
+            0 => Self::Rest,
+            1 => Self::Normal,
+            2 => Self::Tie,
+            3 => Self::Dead,
+            _ => Self::Unknown(value),
         }
     }
 }
@@ -704,7 +704,7 @@ pub struct BeatEffects {
     pub chord: Option<Chord>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Note {
     pub value: i16,
     pub velocity: i16,
@@ -729,7 +729,7 @@ impl Note {
     }
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Beat {
     pub notes: Vec<Note>,
     pub duration: Duration,
@@ -739,13 +739,13 @@ pub struct Beat {
     pub effect: BeatEffects,
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Voice {
     pub measure_index: i16,
     pub beats: Vec<Beat>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Measure {
     pub key_signature: KeySignature,
     pub time_signature: TimeSignature,
@@ -766,7 +766,7 @@ impl Default for Measure {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Track {
     pub number: i32,
     pub offset: i32,

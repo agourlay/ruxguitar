@@ -134,9 +134,8 @@ impl Tablature {
         for (j, beat) in voice.beats.iter().enumerate() {
             if beat.start > tick {
                 break;
-            } else {
-                beat_index = j;
             }
+            beat_index = j;
         }
         (measure_index, beat_index)
     }
@@ -220,7 +219,7 @@ struct LineTracker {
 
 impl LineTracker {
     pub fn make(measures: &[CanvasMeasure], tablature_container_width: f32) -> Self {
-        let mut line_tracker = LineTracker {
+        let mut line_tracker = Self {
             measure_to_line: vec![0; measures.len()],
             tablature_container_width,
         };
