@@ -83,7 +83,7 @@ impl AudioPlayer {
         let synthesizer_settings = SynthesizerSettings::new(sample_rate as i32);
         let synthesizer_settings = Arc::new(synthesizer_settings);
         assert_eq!(synthesizer_settings.sample_rate, sample_rate as i32);
-        Synthesizer::new(sound_font, &synthesizer_settings).unwrap()
+        Synthesizer::new(&sound_font, &synthesizer_settings).unwrap()
     }
 
     pub const fn is_playing(&self) -> bool {
