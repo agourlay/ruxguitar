@@ -55,7 +55,7 @@ For instance I like to use `FluidR3_GM.sf2` which is present on most systems and
   - You might need to disable antialiasing using the `--no-antialiasing` option.
 
 - **Does it run on Windows 7 or Windows 8?**
-  - Yes, the Windows binary is built with Rust 1.75 which supports Windows 7 and Windows 8.
+  - The last compatible release with those versions of Windows is [v0.6.3](https://github.com/agourlay/ruxguitar/releases/tag/v0.6.3).
 
 - **Why is the sound not working on Linux?**
   - Getting the error `The requested device is no longer available. For example, it has been unplugged`.
