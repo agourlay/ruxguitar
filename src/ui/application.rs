@@ -1,9 +1,10 @@
 use iced::advanced::text::Shaping::Advanced;
-use iced::widget::{Text, column, container, horizontal_space, pick_list, row, text};
+use iced::widget::operation::scroll_to;
+use iced::widget::space::horizontal;
+use iced::widget::{Id, Text, column, container, pick_list, row, selector, text};
 use iced::{
     Alignment, Border, Color, Element, Size, Subscription, Task, Theme, keyboard, stream, window,
 };
-use std::borrow::Cow;
 use std::fmt::Display;
 
 use crate::ApplicationArgs;
@@ -16,8 +17,7 @@ use crate::ui::tablature::Tablature;
 use crate::ui::utils::{action_gated, action_toggle, modal, untitled_text_table_box};
 use iced::futures::{SinkExt, Stream};
 use iced::keyboard::key::Named::{ArrowDown, ArrowUp, Space};
-use iced::widget::container::visible_bounds;
-use iced::widget::scrollable::{AbsoluteOffset, Id, scroll_to};
+use iced::widget::scrollable::AbsoluteOffset;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -31,7 +31,7 @@ pub struct RuxApplication {
     track_selection: TrackSelection,          // selected track
     all_tracks: Vec<TrackSelection>,          // all possible tracks
     tablature: Option<Tablature>,             // loaded tablature
-    tablature_id: container::Id,              // tablature container id
+    tablature_id: Id,                         // tablature container id
     tempo_selection: TempoSelection,          // tempo percentage for playback
     audio_player: Option<AudioPlayer>,        // audio player
     tab_file_is_loading: bool,                // file loading flag in progress
@@ -144,7 +144,7 @@ impl RuxApplication {
             track_selection: TrackSelection::default(),
             all_tracks: vec![],
             tablature: None,
-            tablature_id: container::Id::new("tablature-outer-container"),
+            tablature_id: Id::new("tablature-outer-container"),
             tempo_selection: TempoSelection::default(),
             audio_player: None,
             tab_file_is_loading: false,
@@ -156,22 +156,28 @@ impl RuxApplication {
         }
     }
 
+    fn boot(args: &ApplicationArgs) -> (Self, Task<Message>) {
+        let app = Self::new(args.sound_font_bank.clone(), args.local_config.clone());
+
+        let init_task = args
+            .tab_file_path
+            .as_ref()
+            .map_or_else(Task::none, |f| Task::done(Message::OpenFile(f.clone())));
+        (app, init_task)
+    }
+
     pub fn start(args: ApplicationArgs) -> iced::Result {
-        iced::application(Self::title, Self::update, Self::view)
+        let antialiasing = !args.no_antialiasing;
+        iced::application(move || Self::boot(&args), Self::update, Self::view)
+            .title(Self::title)
             .subscription(Self::subscription)
             .default_font(iced::Font::MONOSPACE)
             .theme(Self::theme)
             .font(ICONS_FONT)
             .window_size((1150.0, 768.0))
             .centered()
-            .antialiasing(!args.no_antialiasing)
-            .run_with(move || {
-                (
-                    Self::new(args.sound_font_bank.clone(), args.local_config.clone()),
-                    args.tab_file_path
-                        .map_or_else(Task::none, |f| Task::done(Message::OpenFile(f))),
-                )
-            })
+            .antialiasing(antialiasing)
+            .run()
     }
 
     fn title(&self) -> String {
@@ -241,8 +247,7 @@ impl RuxApplication {
                             self.track_selection = default_track_selection;
                             // share song ownership with tablature and player
                             let song_rc = Rc::new(song);
-                            let tablature_scroll_id =
-                                Id::new(Cow::Borrowed("tablature-scroll-elements"));
+                            let tablature_scroll_id = Id::new("tablature-scroll-elements");
                             let tablature = Tablature::new(
                                 song_rc.clone(),
                                 default_track,
@@ -259,7 +264,7 @@ impl RuxApplication {
                             );
                             self.audio_player = Some(audio_player);
                             // reset tablature scroll
-                            scroll_to(tablature_scroll_id, AbsoluteOffset::default())
+                            scroll_to(tablature_scroll_id, AbsoluteOffset::<f32>::default())
                         } else {
                             Task::done(Message::ReportError("Failed to parse GP file".to_string()))
                         }
@@ -311,7 +316,10 @@ impl RuxApplication {
                     // reset tablature focus
                     tablature.focus_on_measure(0);
                     // reset tablature scroll
-                    scroll_to(tablature.scroll_id.clone(), AbsoluteOffset::default())
+                    scroll_to(
+                        tablature.scroll_id.clone(),
+                        AbsoluteOffset::<f32>::default(),
+                    )
                 } else {
                     Task::none()
                 }
@@ -325,8 +333,9 @@ impl RuxApplication {
             }
             Message::WindowResized => {
                 // query tablature container size
-                visible_bounds(self.tablature_id.clone())
-                    .map(|rect| Message::TablatureResized(rect.unwrap().size()))
+                selector::find(self.tablature_id.clone()).map(|rect| {
+                    Message::TablatureResized(rect.unwrap().visible_bounds().unwrap().size())
+                })
             }
             Message::TablatureResized(tablature_container_size) => {
                 if let Some(tablature) = &mut self.tablature {
@@ -394,11 +403,11 @@ impl RuxApplication {
                 .spacing(10)
                 .align_y(Alignment::Center)
         } else {
-            row![horizontal_space()]
+            row![horizontal()]
         };
 
         let track_control = if self.all_tracks.is_empty() {
-            row![horizontal_space()]
+            row![horizontal()]
         } else {
             let tempo_label = text("Tempo").size(14);
             let tempo_percentage = pick_list(
@@ -433,9 +442,9 @@ impl RuxApplication {
 
         let controls = row![
             open_file,
-            horizontal_space(),
+            horizontal(),
             player_control,
-            horizontal_space(),
+            horizontal(),
             track_control,
         ]
         .spacing(10)
@@ -461,7 +470,7 @@ impl RuxApplication {
         };
         let status = row![
             Text::new(song_info).shaping(Advanced),
-            horizontal_space(),
+            horizontal(),
             text(if let Some(song) = &self.song_info {
                 format!("{:?}", song.gp_version)
             } else {
@@ -499,7 +508,7 @@ impl RuxApplication {
     fn audio_player_beat_subscription(
         beat_receiver: Arc<Mutex<Receiver<u32>>>,
     ) -> impl Stream<Item = Message> {
-        stream::channel(1, move |mut output| async move {
+        stream::channel(1, async move |mut output| {
             let mut receiver = beat_receiver.lock().await;
             loop {
                 // get tick from audio player
@@ -519,20 +528,33 @@ impl RuxApplication {
         let mut subscriptions = Vec::with_capacity(2);
 
         // keyboard event subscription
-        let keyboard_subscription = keyboard::on_key_press(|key, modifiers| match key.as_ref() {
-            keyboard::Key::Named(Space) => Some(Message::PlayPause),
-            keyboard::Key::Named(ArrowUp) if modifiers.control() => Some(Message::IncreaseTempo),
-            keyboard::Key::Named(ArrowDown) if modifiers.control() => Some(Message::DecreaseTempo),
-            _ => None,
+        let keyboard_subscription = keyboard::listen().filter_map(|event| {
+            let keyboard::Event::KeyPressed {
+                modified_key,
+                modifiers,
+                ..
+            } = event
+            else {
+                return None;
+            };
+            match modified_key.as_ref() {
+                keyboard::Key::Named(Space) => Some(Message::PlayPause),
+                keyboard::Key::Named(ArrowUp) if modifiers.control() => {
+                    Some(Message::IncreaseTempo)
+                }
+                keyboard::Key::Named(ArrowDown) if modifiers.control() => {
+                    Some(Message::DecreaseTempo)
+                }
+                _ => None,
+            }
         });
         subscriptions.push(keyboard_subscription);
 
         // next beat notifier subscription
-        let audio_player_beat_subscription =
-            Self::audio_player_beat_subscription(self.beat_receiver.clone());
-        subscriptions.push(Subscription::run_with_id(
-            "audio-player-beat",
-            audio_player_beat_subscription,
+        let beat_receiver = self.beat_receiver.clone();
+        subscriptions.push(Subscription::run_with(
+            BeatSubscriptionData(beat_receiver.clone()),
+            |data| Self::audio_player_beat_subscription(data.0.clone()),
         ));
 
         let window_resized = window::resize_events().map(|_| Message::WindowResized);
@@ -541,3 +563,19 @@ impl RuxApplication {
         Subscription::batch(subscriptions)
     }
 }
+
+struct BeatSubscriptionData(Arc<Mutex<Receiver<u32>>>);
+
+impl std::hash::Hash for BeatSubscriptionData {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        "beat-subscription".hash(state); // The ID is constant
+    }
+}
+
+impl PartialEq for BeatSubscriptionData {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for BeatSubscriptionData {}
