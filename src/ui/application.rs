@@ -1,4 +1,4 @@
-use iced::advanced::text::Shaping::Advanced;
+use iced::advanced::text::Shaping::Auto;
 use iced::widget::operation::scroll_to;
 use iced::widget::space::horizontal;
 use iced::widget::{Id, Text, column, container, pick_list, row, selector, text};
@@ -469,7 +469,7 @@ impl RuxApplication {
             String::new()
         };
         let status = row![
-            Text::new(song_info).shaping(Advanced),
+            Text::new(song_info).shaping(Auto),
             horizontal(),
             text(if let Some(song) = &self.song_info {
                 format!("{:?}", song.gp_version)

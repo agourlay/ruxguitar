@@ -3,7 +3,7 @@ use crate::parser::song_parser::{
 };
 use crate::ui::application::Message;
 use iced::advanced::mouse;
-use iced::advanced::text::Shaping::Advanced;
+use iced::advanced::text::Shaping::Auto;
 use iced::mouse::{Cursor, Interaction};
 use iced::widget::canvas::{Cache, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::text::Alignment;
@@ -265,7 +265,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                 let tempo_label = format!("{} = {}", tempo_sign, measure_header.tempo.value);
                 tempo_label_len = tempo_label.chars().count() * 10;
                 let tempo_text = Text {
-                    shaping: Advanced, // required for printing unicode
+                    shaping: Auto,
                     content: tempo_label,
                     color: Color::WHITE,
                     size: 11.0.into(),
@@ -279,7 +279,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             if let Some(marker) = &measure_header.marker {
                 // measure marker label
                 let marker_text = Text {
-                    shaping: Advanced, // required for printing unicode
+                    shaping: Auto,
                     content: marker.title.clone(),
                     color: color_dark_red,
                     size: 10.0.into(),
@@ -294,7 +294,7 @@ impl canvas::Program<Message> for CanvasMeasure {
 
             // measure count label
             let measure_count_text = Text {
-                shaping: Advanced, // required for printing unicode
+                shaping: Auto,
                 content: format!("{}", self.measure_id + 1),
                 color: color_dark_red,
                 size: 10.0.into(),
@@ -445,7 +445,7 @@ fn draw_beat(
     // Annotate chord effect
     if let Some(chord) = &beat.effect.chord {
         let note_effect_text = Text {
-            shaping: Advanced, // required for printing unicode
+            shaping: Auto,
             content: chord.name.clone(),
             color: Color::WHITE,
             size: 8.0.into(),
@@ -481,7 +481,7 @@ fn draw_beat(
         let merged_annotations = beat_annotations.join("\n");
         let y_position = NOTE_EFFECT_ANNOTATION_Y - 4.0 * (beat_annotations.len() - 1) as f32;
         let note_effect_text = Text {
-            shaping: Advanced, // required for printing unicode
+            shaping: Auto,
             content: merged_annotations,
             color: Color::WHITE,
             size: 9.0.into(),
@@ -507,7 +507,7 @@ fn draw_note(
     let note_position_x = beat_position_x + 3.0 - note_label.chars().count() as f32 / 2.0;
     let note_position_y = measure_start_y + local_beat_position_y - 5.0;
     let note_text = Text {
-        shaping: Advanced, // required for printing unicode
+        shaping: Auto,
         content: note_label,
         color: beat_color,
         size: 10.0.into(),
@@ -524,7 +524,7 @@ fn draw_note(
     let annotation_position_x =
         note_position_x + width_per_beat / 2.0 - inlined_annotation_width / 2.0;
     let note_effect_text = Text {
-        shaping: Advanced, // required for printing unicode
+        shaping: Auto,
         content: inlined_annotation_label,
         color: Color::WHITE,
         size: inlined_annotation_width.into(),
@@ -601,7 +601,7 @@ fn draw_close_repeat(
     );
     // add repeat count text
     let repeat_count_text = Text {
-        shaping: Advanced, // required for printing unicode
+        shaping: Auto,
         content: format!("x{repeat_count}"),
         color: Color::WHITE,
         size: 9.0.into(),
@@ -681,7 +681,7 @@ fn draw_time_signature(
     let numerator = time_signature.numerator;
     let denominator = time_signature.denominator.value;
     let tempo_text = Text {
-        shaping: Advanced, // required for printing unicode
+        shaping: Auto,
         content: format!("{numerator}\n{denominator}"),
         color: Color::WHITE,
         size: 17.into(),
