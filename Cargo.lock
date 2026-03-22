@@ -1393,19 +1393,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iced_aw"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e676b8d322a419c7eef29cac1aa78e8afda6a9d2d4597483d42de3e90378fe2"
-dependencies = [
- "cfg-if",
- "iced_core",
- "iced_fonts",
- "iced_widget",
- "web-time",
-]
-
-[[package]]
 name = "iced_beacon"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1462,29 +1449,6 @@ dependencies = [
  "iced_program",
  "iced_widget",
  "log",
-]
-
-[[package]]
-name = "iced_fonts"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "214cff7c8499e328774216690e58e315a1a5f8f6fdd1035aed6298e62ffc4c1d"
-dependencies = [
- "iced_core",
- "iced_fonts_macros",
- "iced_widget",
-]
-
-[[package]]
-name = "iced_fonts_macros"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ef5125e110cb19cd1910a28298661c98c5d9ab02eef43594968352940e8752e"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
- "ttf-parser",
 ]
 
 [[package]]
@@ -2939,7 +2903,6 @@ dependencies = [
  "encoding_rs",
  "env_logger",
  "iced",
- "iced_aw",
  "log",
  "nom",
  "rfd",

@@ -1,9 +1,8 @@
 use crate::parser::song_parser::Song;
 use crate::ui::application::Message;
 use crate::ui::canvas_measure::CanvasMeasure;
-use iced::widget::{Id, scrollable};
+use iced::widget::{Id, Row, container, scrollable};
 use iced::{Element, Length};
-use iced_aw::Wrap;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -189,11 +188,11 @@ impl Tablature {
             .map(|m| m.view())
             .collect::<Vec<Element<Message>>>();
 
-        let column = Wrap::with_elements(measure_elements)
-            .padding(INNER_PADDING)
-            .align_items(iced::Alignment::Center); // TODO does not work??
+        let wrapped_row = Row::with_children(measure_elements).wrap();
 
-        scrollable(column)
+        let content = container(wrapped_row).padding(INNER_PADDING);
+
+        scrollable(content)
             .id(self.scroll_id.clone())
             .height(Length::Fill)
             .width(Length::Fill)
