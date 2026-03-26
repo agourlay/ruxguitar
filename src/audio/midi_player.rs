@@ -82,7 +82,7 @@ impl AudioPlayer {
     fn make_synthesizer(sound_font: Arc<SoundFont>, sample_rate: u32) -> Synthesizer {
         let synthesizer_settings = SynthesizerSettings::new(sample_rate as i32);
         let synthesizer_settings = Arc::new(synthesizer_settings);
-        assert_eq!(synthesizer_settings.sample_rate, sample_rate as i32);
+        debug_assert_eq!(synthesizer_settings.sample_rate, sample_rate as i32);
         Synthesizer::new(&sound_font, &synthesizer_settings).unwrap()
     }
 
@@ -195,7 +195,7 @@ impl AudioPlayer {
 #[derive(Debug, thiserror::Error)]
 enum AudioStreamError {
     #[error("audio device not found")]
-    CpalDeviceNotFount,
+    CpalDeviceNotFound,
     #[error("no output configuration found: {0}")]
     CpalOutputConfigNotFound(DefaultStreamConfigError),
 }
@@ -210,7 +210,7 @@ fn new_output_stream(
 ) -> Result<cpal::Stream, AudioStreamError> {
     let host = cpal::default_host();
     let Some(device) = host.default_output_device() else {
-        return Err(AudioStreamError::CpalDeviceNotFount);
+        return Err(AudioStreamError::CpalDeviceNotFound);
     };
 
     let config = device

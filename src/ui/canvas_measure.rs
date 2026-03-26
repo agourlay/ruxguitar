@@ -771,10 +771,8 @@ fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<String> {
     if note_effect.tremolo_bar.is_some() {
         annotations.push("T.B".to_string());
     }
-    match note_effect.slap {
-        SlapEffect::Tapping => annotations.push("T".to_string()),
-        SlapEffect::None => (),
-        _ => (),
+    if note_effect.slap == SlapEffect::Tapping {
+        annotations.push("T".to_string());
     }
     annotations
 }
