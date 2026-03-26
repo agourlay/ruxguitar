@@ -96,7 +96,7 @@ impl Tablature {
             let is_first = line != prev_line;
             if cm.is_first_on_line != is_first {
                 cm.set_first_on_line(is_first);
-                cm.clear_canva_cache();
+                cm.clear_canvas_cache();
             }
             prev_line = line;
         }
@@ -197,7 +197,7 @@ impl Tablature {
     pub fn view(&self) -> Element<'_, Message> {
         let has_layout = self.line_tracker.tablature_container_width > 0.0;
 
-        if has_layout {
+        let content: Element<Message> = if has_layout {
             // Build explicit rows using LineTracker line assignments.
             // Each measure uses FillPortion to stretch and fill the row width.
             let row_width = self.line_tracker.tablature_container_width;
@@ -221,14 +221,7 @@ impl Tablature {
                 rows.push(Row::with_children(current_row).width(row_width).into());
             }
 
-            let content = column(rows).padding(INNER_PADDING);
-
-            scrollable(content)
-                .id(self.scroll_id.clone())
-                .height(Length::Fill)
-                .width(Length::Fill)
-                .direction(scrollable::Direction::default())
-                .into()
+            column(rows).padding(INNER_PADDING).into()
         } else {
             // Before container size is known, use wrapping layout with natural widths
             let measure_elements = self
@@ -237,16 +230,17 @@ impl Tablature {
                 .map(|m| m.view())
                 .collect::<Vec<Element<Message>>>();
 
-            let content =
-                column![Row::with_children(measure_elements).wrap()].padding(INNER_PADDING);
-
-            scrollable(content)
-                .id(self.scroll_id.clone())
-                .height(Length::Fill)
-                .width(Length::Fill)
-                .direction(scrollable::Direction::default())
+            column![Row::with_children(measure_elements).wrap()]
+                .padding(INNER_PADDING)
                 .into()
-        }
+        };
+
+        scrollable(content)
+            .id(self.scroll_id.clone())
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .direction(scrollable::Direction::default())
+            .into()
     }
 
     pub fn update_track(&mut self, track: usize) {

@@ -9,7 +9,6 @@ use iced::widget::canvas::{Cache, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::text::Alignment;
 use iced::widget::{Action, Canvas, canvas};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
-use std::ops::Div;
 use std::rc::Rc;
 
 // Unicode symbols for musical notation
@@ -154,7 +153,7 @@ impl CanvasMeasure {
         }
     }
 
-    pub fn clear_canva_cache(&self) {
+    pub fn clear_canvas_cache(&self) {
         self.canvas_cache.clear();
     }
 }
@@ -712,7 +711,7 @@ fn draw_time_signature(
         HALF_BEAT_LENGTH
     };
     let position_y = if string_count > 4 {
-        (STRING_LINE_HEIGHT * (string_count - 4) as f32).div(2.0)
+        (STRING_LINE_HEIGHT * (string_count - 4) as f32) / 2.0
     } else {
         0.0
     };
