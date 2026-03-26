@@ -12,6 +12,17 @@ use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
 use std::ops::Div;
 use std::rc::Rc;
 
+// Unicode symbols for musical notation
+const TEMPO_SIGN: char = '\u{1D15F}'; // 𝅗𝅥 https://unicodeplus.com/U+1D15F
+const VIBRATO: char = '\u{301C}'; // 〜 https://unicodeplus.com/U+301C
+const HAMMER_ON: char = '\u{25E0}'; // ◠ https://unicodeplus.com/U+25E0
+const HORIZONTAL_BAR: char = '\u{2015}'; // ― https://unicodeplus.com/U+2015
+const SHIFT_SLIDE: char = '\u{27CD}'; // ⟍ https://unicodeplus.com/U+27CD
+const LEGATO_SLIDE: char = '\u{27CB}'; // ⟋ https://unicodeplus.com/U+27CB
+const ARROW_UP: char = '\u{2191}'; // ↑ https://unicodeplus.com/U+2191
+const ARROW_DOWN: char = '\u{2193}'; // ↓ https://unicodeplus.com/U+2193
+const TIE: char = '\u{2323}'; // ⌣ https://unicodeplus.com/U+2323
+
 // Drawing constants
 
 // Measure label + marker
@@ -288,7 +299,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             if self.measure_id == 0
                 || measure_header.tempo != previous_measure_header.unwrap().tempo
             {
-                let tempo_sign = std::char::from_u32(0x1D15F).unwrap(); // https://unicodeplus.com/U+1D15F
+                let tempo_sign = TEMPO_SIGN;
                 let tempo_label = format!("{} = {}", tempo_sign, measure_header.tempo.value);
                 tempo_label_len = tempo_label.chars().count() * 10;
                 let tempo_text = Text {
@@ -749,7 +760,7 @@ fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<String> {
         }
     }
     if note_effect.vibrato {
-        let vibrato = std::char::from_u32(0x301C).unwrap().to_string(); // https://unicodeplus.com/U+301C
+        let vibrato = VIBRATO.to_string();
         annotations.push(vibrato.repeat(2));
     }
     if note_effect.trill.is_some() {
@@ -773,25 +784,25 @@ fn inlined_note_effect_annotation(note_effect: &NoteEffect) -> String {
     let mut annotation = String::new();
     if note_effect.hammer {
         // https://unicodeplus.com/U+25E0
-        annotation.push(std::char::from_u32(0x25E0).unwrap());
+        annotation.push(HAMMER_ON);
     }
     if let Some(slide) = &note_effect.slide {
         match slide {
-            SlideType::IntoFromAbove => annotation.push(std::char::from_u32(0x2015).unwrap()), // https://unicodeplus.com/U+2015
-            SlideType::IntoFromBelow => annotation.push(std::char::from_u32(0x2015).unwrap()), // https://unicodeplus.com/U+2015
-            SlideType::ShiftSlideTo => annotation.push(std::char::from_u32(0x27CD).unwrap()), // https://unicodeplus.com/U+27CD
-            SlideType::LegatoSlideTo => annotation.push(std::char::from_u32(0x27CB).unwrap()), // https://unicodeplus.com/U+27CB
-            SlideType::OutDownwards => annotation.push(std::char::from_u32(0x2015).unwrap()), // https://unicodeplus.com/U+2015
-            SlideType::OutUpWards => annotation.push(std::char::from_u32(0x27CB).unwrap()), // https://unicodeplus.com/U+27CB
+            SlideType::IntoFromAbove => annotation.push(HORIZONTAL_BAR),
+            SlideType::IntoFromBelow => annotation.push(HORIZONTAL_BAR),
+            SlideType::ShiftSlideTo => annotation.push(SHIFT_SLIDE),
+            SlideType::LegatoSlideTo => annotation.push(LEGATO_SLIDE),
+            SlideType::OutDownwards => annotation.push(HORIZONTAL_BAR),
+            SlideType::OutUpWards => annotation.push(LEGATO_SLIDE),
         }
     }
     if let Some(bend) = &note_effect.bend {
         let direction_up = bend.direction() >= 0;
         // TODO display bend properly
         if direction_up {
-            annotation.push(std::char::from_u32(0x2191).unwrap()); // https://unicodeplus.com/U+2191
+            annotation.push(ARROW_UP);
         } else {
-            annotation.push(std::char::from_u32(0x2193).unwrap()); // https://unicodeplus.com/U+2193
+            annotation.push(ARROW_DOWN);
         }
     }
     annotation
@@ -812,7 +823,7 @@ fn note_value(note: &Note) -> String {
         }
         NoteType::Tie => {
             // https://unicodeplus.com/U+2323
-            std::char::from_u32(0x2323).unwrap().into()
+            TIE.into()
         }
         NoteType::Dead => "x".to_string(),
         NoteType::Unknown(i) => {
