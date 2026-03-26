@@ -52,6 +52,7 @@ pub struct CanvasMeasure {
     pub total_measure_len: f32,
     pub vertical_measure_height: f32,
     has_time_signature: bool,
+    pub is_first_on_line: bool,
 }
 
 impl CanvasMeasure {
@@ -96,7 +97,12 @@ impl CanvasMeasure {
             total_measure_len,
             vertical_measure_height,
             has_time_signature,
+            is_first_on_line: false,
         }
+    }
+
+    pub const fn set_first_on_line(&mut self, value: bool) {
+        self.is_first_on_line = value;
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -104,6 +110,22 @@ impl CanvasMeasure {
             .height(self.vertical_measure_height)
             .width(Length::Fixed(self.total_measure_len));
         canvas.into()
+    }
+
+    /// View with FillPortion width for stretching to fill the row.
+    /// The portion is proportional to the natural width of the measure.
+    pub fn view_fill(&self) -> Element<'_, Message> {
+        // Use total_measure_len as the portion weight (rounded to u16)
+        let portion = (self.total_measure_len as u16).max(1);
+        let canvas = Canvas::new(self)
+            .height(self.vertical_measure_height)
+            .width(Length::FillPortion(portion));
+        canvas.into()
+    }
+
+    /// The fixed overhead width (padding, time signature, repeats) that doesn't scale with beats.
+    fn overhead_width(&self) -> f32 {
+        self.total_measure_len - self.measure_len
     }
 
     pub fn toggle_focused(&mut self) {
@@ -168,6 +190,11 @@ impl canvas::Program<Message> for CanvasMeasure {
             let strings = &track.strings;
             let string_count = strings.len();
 
+            // use actual allocated width (may be larger than total_measure_len due to FillPortion)
+            let actual_width = frame.width();
+            // scale beat area: extra width goes to beat spacing
+            let actual_measure_len = actual_width - self.overhead_width();
+
             // distance between lines of measures
             let vertical_measure_height = STRING_LINE_HEIGHT * (string_count - 1) as f32;
 
@@ -183,7 +210,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             if self.is_focused {
                 draw_focused_box(
                     frame,
-                    self.total_measure_len,
+                    actual_width,
                     vertical_measure_height,
                     measure_start_x,
                     measure_start_y,
@@ -199,7 +226,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                     Point::new(measure_start_x + 1.0, measure_start_y + local_start_y);
                 // draw at the same y until end of container
                 let end_point = Point::new(
-                    measure_start_x + self.total_measure_len,
+                    measure_start_x + actual_width,
                     measure_start_y + local_start_y,
                 );
                 let line = Path::line(start_point, end_point);
@@ -232,9 +259,9 @@ impl canvas::Program<Message> for CanvasMeasure {
                     vertical_measure_height,
                 );
             } else {
-                // draw first vertical line only for measure at the of rows
-                // otherwise it is doubling with the line at the end of the previous measure
-                if bounds.x == MEASURE_NOTES_PADDING {
+                // draw first vertical line only for the first measure on a row
+                // otherwise it doubles with the end line of the previous measure
+                if self.is_first_on_line {
                     draw_measure_vertical_line(
                         frame,
                         vertical_measure_height,
@@ -326,7 +353,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                 // draw beat
                 draw_beat(
                     frame,
-                    self.measure_len,
+                    actual_measure_len,
                     beat_start,
                     measure_start_y,
                     beats_len,
@@ -340,7 +367,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             if measure_header.repeat_close > 0 {
                 draw_close_repeat(
                     frame,
-                    measure_start_x + self.total_measure_len,
+                    measure_start_x + actual_width,
                     measure_start_y,
                     vertical_measure_height,
                     measure_header.repeat_close,
@@ -348,7 +375,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             } else if next_measure_header.is_none() {
                 draw_end_section(
                     frame,
-                    measure_start_x + self.total_measure_len,
+                    measure_start_x + actual_width,
                     measure_start_y,
                     vertical_measure_height,
                 );
@@ -357,7 +384,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                 draw_measure_vertical_line(
                     frame,
                     vertical_measure_height,
-                    measure_start_x + self.total_measure_len, // end of measure
+                    measure_start_x + actual_width, // end of measure
                     measure_start_y,
                 );
             }

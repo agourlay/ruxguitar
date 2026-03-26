@@ -1,12 +1,13 @@
 use crate::parser::song_parser::Song;
 use crate::ui::application::Message;
 use crate::ui::canvas_measure::CanvasMeasure;
-use iced::widget::{Id, Row, container, scrollable};
+use iced::widget::{Id, Row, column, scrollable};
 use iced::{Element, Length};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
 const INNER_PADDING: f32 = 10.0;
+const SCROLLBAR_WIDTH: f32 = 10.0; // iced default scrollbar width
 
 pub struct Tablature {
     pub song: Rc<Song>,
@@ -73,19 +74,31 @@ impl Tablature {
         // recompute line tracker with existing width
         let existing_width = self.line_tracker.tablature_container_width;
         self.line_tracker = LineTracker::make(&self.canvas_measures, existing_width);
+        self.update_first_on_line();
     }
 
     pub fn update_container_width(&mut self, width: f32) {
         // recompute line tracker on width change
         self.line_tracker = LineTracker::make(
             &self.canvas_measures,
-            width - (INNER_PADDING * 2.0), // remove padding
+            width - (INNER_PADDING * 2.0) - SCROLLBAR_WIDTH, // remove padding and scrollbar
         );
-        // clear measure cache to draw properly the starting vertical line of measures
-        // it should done only for the measures starting a row, otherwise it is overlapping with
-        // the end line of the previous measure
-        for cm in &self.canvas_measures {
-            cm.clear_canva_cache();
+        // mark which measures start a new line and clear caches
+        self.update_first_on_line();
+    }
+
+    /// Update the `is_first_on_line` flag on each measure based on the line tracker
+    /// and clear caches for measures that changed line assignment.
+    fn update_first_on_line(&mut self) {
+        let mut prev_line = 0_u32;
+        for cm in &mut self.canvas_measures {
+            let line = self.line_tracker.get_line(cm.measure_id);
+            let is_first = line != prev_line;
+            if cm.is_first_on_line != is_first {
+                cm.set_first_on_line(is_first);
+                cm.clear_canva_cache();
+            }
+            prev_line = line;
         }
     }
 
@@ -182,22 +195,58 @@ impl Tablature {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let measure_elements = self
-            .canvas_measures
-            .iter()
-            .map(|m| m.view())
-            .collect::<Vec<Element<Message>>>();
+        let has_layout = self.line_tracker.tablature_container_width > 0.0;
 
-        let wrapped_row = Row::with_children(measure_elements).wrap();
+        if has_layout {
+            // Build explicit rows using LineTracker line assignments.
+            // Each measure uses FillPortion to stretch and fill the row width.
+            let row_width = self.line_tracker.tablature_container_width;
+            let mut rows: Vec<Element<Message>> = Vec::new();
+            let mut current_row: Vec<Element<Message>> = Vec::new();
+            let mut current_line = 0_u32;
 
-        let content = container(wrapped_row).padding(INNER_PADDING);
+            for cm in &self.canvas_measures {
+                let line = self.line_tracker.get_line(cm.measure_id);
+                if line != current_line && !current_row.is_empty() {
+                    rows.push(
+                        Row::with_children(std::mem::take(&mut current_row))
+                            .width(row_width)
+                            .into(),
+                    );
+                }
+                current_line = line;
+                current_row.push(cm.view_fill());
+            }
+            if !current_row.is_empty() {
+                rows.push(Row::with_children(current_row).width(row_width).into());
+            }
 
-        scrollable(content)
-            .id(self.scroll_id.clone())
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .direction(scrollable::Direction::default())
-            .into()
+            let content = column(rows).padding(INNER_PADDING);
+
+            scrollable(content)
+                .id(self.scroll_id.clone())
+                .height(Length::Fill)
+                .width(Length::Fill)
+                .direction(scrollable::Direction::default())
+                .into()
+        } else {
+            // Before container size is known, use wrapping layout with natural widths
+            let measure_elements = self
+                .canvas_measures
+                .iter()
+                .map(|m| m.view())
+                .collect::<Vec<Element<Message>>>();
+
+            let content =
+                column![Row::with_children(measure_elements).wrap()].padding(INNER_PADDING);
+
+            scrollable(content)
+                .id(self.scroll_id.clone())
+                .height(Length::Fill)
+                .width(Length::Fill)
+                .direction(scrollable::Direction::default())
+                .into()
+        }
     }
 
     pub fn update_track(&mut self, track: usize) {
@@ -217,24 +266,111 @@ struct LineTracker {
 
 impl LineTracker {
     pub fn make(measures: &[CanvasMeasure], tablature_container_width: f32) -> Self {
+        let widths: Vec<f32> = measures.iter().map(|m| m.total_measure_len).collect();
+        Self::make_from_widths(&widths, tablature_container_width)
+    }
+
+    fn make_from_widths(widths: &[f32], tablature_container_width: f32) -> Self {
         let mut line_tracker = Self {
-            measure_to_line: vec![0; measures.len()],
+            measure_to_line: vec![0; widths.len()],
             tablature_container_width,
         };
         let mut current_line = 1;
         let mut horizontal_cursor = 0.0;
-        for measure in measures {
-            horizontal_cursor += measure.total_measure_len;
+        for (i, &width) in widths.iter().enumerate() {
+            horizontal_cursor += width;
             if horizontal_cursor >= tablature_container_width {
                 current_line += 1;
-                horizontal_cursor = measure.total_measure_len;
+                horizontal_cursor = width;
             }
-            line_tracker.measure_to_line[measure.measure_id] = current_line;
+            line_tracker.measure_to_line[i] = current_line;
         }
         line_tracker
     }
 
     pub fn get_line(&self, measure_id: usize) -> u32 {
         self.measure_to_line[measure_id]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_tracker_single_line() {
+        let widths = vec![100.0, 100.0, 100.0];
+        let tracker = LineTracker::make_from_widths(&widths, 500.0);
+        assert_eq!(tracker.get_line(0), 1);
+        assert_eq!(tracker.get_line(1), 1);
+        assert_eq!(tracker.get_line(2), 1);
+    }
+
+    #[test]
+    fn line_tracker_wraps_to_multiple_lines() {
+        let widths = vec![100.0, 100.0, 100.0, 100.0];
+        let tracker = LineTracker::make_from_widths(&widths, 250.0);
+        // first two fit (200 < 250), third overflows (300 >= 250)
+        assert_eq!(tracker.get_line(0), 1);
+        assert_eq!(tracker.get_line(1), 1);
+        assert_eq!(tracker.get_line(2), 2);
+        assert_eq!(tracker.get_line(3), 2);
+    }
+
+    #[test]
+    fn line_tracker_exact_fit_wraps() {
+        // measures that exactly fill the width should trigger a wrap
+        let widths = vec![100.0, 100.0, 100.0];
+        let tracker = LineTracker::make_from_widths(&widths, 200.0);
+        assert_eq!(tracker.get_line(0), 1);
+        assert_eq!(tracker.get_line(1), 2); // 200 >= 200 triggers wrap
+        assert_eq!(tracker.get_line(2), 3); // 200 >= 200 triggers wrap again
+    }
+
+    #[test]
+    fn line_tracker_single_wide_measure() {
+        // a measure wider than the container gets its own line
+        let widths = vec![50.0, 300.0, 50.0];
+        let tracker = LineTracker::make_from_widths(&widths, 200.0);
+        assert_eq!(tracker.get_line(0), 1);
+        assert_eq!(tracker.get_line(1), 2);
+        assert_eq!(tracker.get_line(2), 3);
+    }
+
+    #[test]
+    fn line_tracker_varying_widths() {
+        let widths = vec![80.0, 60.0, 90.0, 70.0, 50.0];
+        let tracker = LineTracker::make_from_widths(&widths, 200.0);
+        // line 1: 80 + 60 = 140 < 200
+        // line 1: 140 + 90 = 230 >= 200 → wrap
+        // line 2: 90 + 70 = 160 < 200
+        // line 2: 160 + 50 = 210 >= 200 → wrap
+        assert_eq!(tracker.get_line(0), 1);
+        assert_eq!(tracker.get_line(1), 1);
+        assert_eq!(tracker.get_line(2), 2);
+        assert_eq!(tracker.get_line(3), 2);
+        assert_eq!(tracker.get_line(4), 3);
+    }
+
+    #[test]
+    fn line_tracker_empty() {
+        let widths: Vec<f32> = vec![];
+        let tracker = LineTracker::make_from_widths(&widths, 500.0);
+        assert_eq!(tracker.measure_to_line.len(), 0);
+    }
+
+    #[test]
+    fn first_on_line_detection() {
+        let widths = vec![100.0, 100.0, 100.0, 100.0];
+        let tracker = LineTracker::make_from_widths(&widths, 250.0);
+        // lines: [1, 1, 2, 2]
+        let mut prev_line = 0_u32;
+        let mut first_on_line = Vec::new();
+        for i in 0..widths.len() {
+            let line = tracker.get_line(i);
+            first_on_line.push(line != prev_line);
+            prev_line = line;
+        }
+        assert_eq!(first_on_line, vec![true, false, true, false]);
     }
 }

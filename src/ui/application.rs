@@ -263,8 +263,11 @@ impl RuxApplication {
                                 self.beat_sender.clone(),
                             );
                             self.audio_player = Some(audio_player);
-                            // reset tablature scroll
-                            scroll_to(tablature_scroll_id, AbsoluteOffset::<f32>::default())
+                            // reset tablature scroll and trigger layout computation
+                            Task::batch([
+                                scroll_to(tablature_scroll_id, AbsoluteOffset::<f32>::default()),
+                                Task::done(Message::WindowResized),
+                            ])
                         } else {
                             Task::done(Message::ReportError("Failed to parse GP file".to_string()))
                         }
