@@ -4,6 +4,10 @@ use iced::widget::{
 };
 use iced::{Color, Element, Length};
 
+// Shared UI colors
+pub const COLOR_GRAY: Color = Color::from_rgb8(0x40, 0x44, 0x4B);
+pub const COLOR_DARK_RED: Color = Color::from_rgb8(200, 50, 50);
+
 pub fn untitled_text_table_box() -> Container<'static, Message> {
     let message =
         "Tips:\n - use the space bar to play/pause\n - use ctr+up/down to change the tempo";

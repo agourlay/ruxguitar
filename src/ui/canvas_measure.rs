@@ -214,8 +214,8 @@ impl canvas::Program<Message> for CanvasMeasure {
             let measure_start_y = FIRST_STRING_Y;
 
             // colors
-            let color_gray = Color::from_rgb8(0x40, 0x44, 0x4B);
-            let color_dark_red = Color::from_rgb8(200, 50, 50);
+            let color_gray = crate::ui::utils::COLOR_GRAY;
+            let color_dark_red = crate::ui::utils::COLOR_DARK_RED;
 
             // draw focused box
             if self.is_focused {

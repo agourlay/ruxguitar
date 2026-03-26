@@ -2,9 +2,7 @@ use iced::advanced::text::Shaping::Auto;
 use iced::widget::operation::scroll_to;
 use iced::widget::space::horizontal;
 use iced::widget::{Id, Text, column, container, pick_list, row, selector, text};
-use iced::{
-    Alignment, Border, Color, Element, Size, Subscription, Task, Theme, keyboard, stream, window,
-};
+use iced::{Alignment, Border, Element, Size, Subscription, Task, Theme, keyboard, stream, window};
 use std::fmt::Display;
 
 use crate::ApplicationArgs;
@@ -457,7 +455,7 @@ impl RuxApplication {
             .padding(10)
             .style(|_theme| container::Style {
                 border: Border::default()
-                    .color(Color::from_rgb8(0x40, 0x44, 0x4B)) // gray
+                    .color(crate::ui::utils::COLOR_GRAY)
                     .width(1),
                 ..Default::default()
             });
