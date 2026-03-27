@@ -177,7 +177,8 @@ impl Tablature {
                 // compute progress of the measure within the song
                 let line_tracker = &self.line_tracker;
                 let focus_line = line_tracker.get_line(next_focus_id);
-                let estimated_y = (focus_line - 1) as f32 * self.canvas_measure_height;
+                let estimated_y =
+                    INNER_PADDING + (focus_line - 1) as f32 * self.canvas_measure_height;
                 if focus_line < 2 {
                     return None;
                 }
