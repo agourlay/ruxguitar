@@ -15,12 +15,11 @@ impl MidiEvent {
         matches!(self.event, MidiEventType::MidiMessage(_, _, _, _))
     }
 
-    pub const fn is_tempo_change(&self) -> bool {
-        matches!(self.event, MidiEventType::TempoChange(_))
-    }
-
     pub const fn is_note_event(&self) -> bool {
-        !self.is_tempo_change() || !self.is_midi_message()
+        matches!(
+            self.event,
+            MidiEventType::NoteOn(_, _, _) | MidiEventType::NoteOff(_, _)
+        )
     }
 
     pub const fn new_note_on(

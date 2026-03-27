@@ -219,8 +219,8 @@ fn new_output_stream(
 
     assert!(
         config.sample_format().is_float(),
-        "{}",
-        format!("Unsupported sample format {}", config.sample_format())
+        "Unsupported sample format {}",
+        config.sample_format()
     );
     let stream_config: cpal::StreamConfig = config.into();
     let sample_rate = stream_config.sample_rate;
