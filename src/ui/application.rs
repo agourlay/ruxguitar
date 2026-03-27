@@ -302,6 +302,9 @@ impl RuxApplication {
                 Task::none()
             }
             Message::PlayPause => {
+                if self.tab_file_is_loading {
+                    return Task::none();
+                }
                 if let Some(audio_player) = &mut self.audio_player {
                     audio_player.toggle_play();
                 }
@@ -352,6 +355,9 @@ impl RuxApplication {
                 Task::none()
             }
             Message::IncreaseTempo => {
+                if self.tab_file_is_loading {
+                    return Task::none();
+                }
                 if let Some(current_index) = TempoSelection::PRESET
                     .iter()
                     .position(|t| t == &self.tempo_selection)
@@ -363,6 +369,9 @@ impl RuxApplication {
                 Task::none()
             }
             Message::DecreaseTempo => {
+                if self.tab_file_is_loading {
+                    return Task::none();
+                }
                 if let Some(current_index) = TempoSelection::PRESET
                     .iter()
                     .position(|t| t == &self.tempo_selection)
