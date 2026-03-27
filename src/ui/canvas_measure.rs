@@ -406,17 +406,9 @@ impl canvas::Program<Message> for CanvasMeasure {
     fn mouse_interaction(
         &self,
         _state: &Self::State,
-        bounds: Rectangle,
-        cursor: Cursor,
+        _bounds: Rectangle,
+        _cursor: Cursor,
     ) -> Interaction {
-        match cursor {
-            Cursor::Available(_point) => {
-                if let Some(_cursor_position) = cursor.position_in(bounds) {
-                    log::debug!("Mouse over measure {:?}", self.measure_id);
-                }
-            }
-            Cursor::Unavailable | Cursor::Levitating(_) => {}
-        }
         Interaction::default()
     }
 }
