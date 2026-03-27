@@ -55,12 +55,20 @@ impl Config {
             // create empty config
             Config::default().save_config()?;
         }
-        let file = File::open(config_path)?;
+        let file = File::open(&config_path)?;
         let reader = BufReader::new(file);
-        let config: Config = serde_json::from_reader(reader).map_err(|err| {
-            RuxError::ConfigError(format!("Could not read local configuration {err:}"))
-        })?;
-        Ok(config)
+        match serde_json::from_reader(reader) {
+            Ok(config) => Ok(config),
+            Err(err) => {
+                log::warn!(
+                    "Could not read local configuration {}: {err}, resetting to default",
+                    config_path.display()
+                );
+                let default_config = Config::default();
+                default_config.save_config()?;
+                Ok(default_config)
+            }
+        }
     }
 
     /// Assumes the config folder exists
