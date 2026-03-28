@@ -1,5 +1,6 @@
 use crate::parser::song_parser::{
-    Beat, HarmonicType, Note, NoteEffect, NoteType, SlapEffect, SlideType, Song, TimeSignature,
+    Beat, BeatStrokeDirection, HarmonicType, Note, NoteEffect, NoteType, SlapEffect, SlideType,
+    Song, TimeSignature,
 };
 use crate::ui::application::Message;
 use iced::advanced::mouse;
@@ -493,8 +494,8 @@ fn draw_beat(
         };
         frame.fill_text(note_effect_text);
     }
-    if !beat.effect.stroke.is_empty() {
-        // TODO display correct arrow on the chord
+    if !beat.effect.stroke.is_empty() && !beat.notes.is_empty() {
+        draw_stroke_arrow(frame, beat, beat_position_x, measure_start_y);
     }
 
     // Annotate note effect above (same position for all notes)
@@ -648,6 +649,55 @@ fn draw_close_repeat(
         ..Text::default()
     };
     frame.fill_text(repeat_count_text);
+}
+
+fn draw_stroke_arrow(
+    frame: &mut Frame<Renderer>,
+    beat: &Beat,
+    beat_position_x: f32,
+    measure_start_y: f32,
+) {
+    let min_string = beat.notes.iter().map(|n| n.string).min().unwrap_or(1);
+    let max_string = beat.notes.iter().map(|n| n.string).max().unwrap_or(1);
+    let top_y = measure_start_y + (f32::from(min_string) - 1.0) * STRING_LINE_HEIGHT;
+    let bottom_y = measure_start_y + (f32::from(max_string) - 1.0) * STRING_LINE_HEIGHT;
+    let arrow_x = beat_position_x + 10.0;
+    let arrow_size = 3.0;
+
+    let stroke = Stroke::default().with_width(0.8).with_color(Color::WHITE);
+
+    // vertical line spanning the chord
+    frame.stroke(
+        &Path::line(Point::new(arrow_x, top_y), Point::new(arrow_x, bottom_y)),
+        stroke,
+    );
+
+    // arrowhead: down stroke = pick goes low-to-high strings = arrowhead at top
+    match beat.effect.stroke.direction {
+        BeatStrokeDirection::Down => {
+            let tip = Point::new(arrow_x, top_y - arrow_size);
+            frame.stroke(
+                &Path::line(Point::new(arrow_x - arrow_size, top_y), tip),
+                stroke,
+            );
+            frame.stroke(
+                &Path::line(Point::new(arrow_x + arrow_size, top_y), tip),
+                stroke,
+            );
+        }
+        BeatStrokeDirection::Up => {
+            let tip = Point::new(arrow_x, bottom_y + arrow_size);
+            frame.stroke(
+                &Path::line(Point::new(arrow_x - arrow_size, bottom_y), tip),
+                stroke,
+            );
+            frame.stroke(
+                &Path::line(Point::new(arrow_x + arrow_size, bottom_y), tip),
+                stroke,
+            );
+        }
+        BeatStrokeDirection::None => {}
+    }
 }
 
 fn draw_alternative_ending(

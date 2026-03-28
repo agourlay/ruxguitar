@@ -246,8 +246,7 @@ impl RuxApplication {
                             self.track_selection = default_track_selection;
                             // share song ownership with tablature and player
                             let song_rc = Rc::new(song);
-                            let playback_order =
-                                compute_playback_order(&song_rc.measure_headers);
+                            let playback_order = compute_playback_order(&song_rc.measure_headers);
                             let tablature_scroll_id = Id::new("tablature-scroll-elements");
                             let tablature = Tablature::new(
                                 song_rc.clone(),
