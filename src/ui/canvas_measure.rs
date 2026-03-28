@@ -340,6 +340,16 @@ impl canvas::Program<Message> for CanvasMeasure {
             };
             frame.fill_text(measure_count_text);
 
+            // alternative ending bracket (e.g., "1.", "2.", "1.2.")
+            if measure_header.repeat_alternative > 0 {
+                draw_alternative_ending(
+                    frame,
+                    measure_header.repeat_alternative,
+                    measure_start_x,
+                    actual_width,
+                );
+            }
+
             // add notes on top of strings
             let measure = &track.measures[self.measure_id];
             // TODO draw second voice if present?
@@ -638,6 +648,51 @@ fn draw_close_repeat(
         ..Text::default()
     };
     frame.fill_text(repeat_count_text);
+}
+
+fn draw_alternative_ending(
+    frame: &mut Frame<Renderer>,
+    repeat_alternative: u8,
+    measure_start_x: f32,
+    measure_width: f32,
+) {
+    let bracket_y = MEASURE_ANNOTATION_Y;
+    let bracket_height = 10.0;
+    let bracket_start = measure_start_x + 2.0;
+    let bracket_end = measure_start_x + measure_width;
+
+    let stroke = Stroke::default().with_width(1.0).with_color(Color::WHITE);
+
+    // vertical line down
+    let start = Point::new(bracket_start, bracket_y);
+    let down = Point::new(bracket_start, bracket_y + bracket_height);
+    frame.stroke(&Path::line(start, down), stroke);
+
+    // horizontal line across
+    let right = Point::new(bracket_end, bracket_y);
+    frame.stroke(&Path::line(start, right), stroke);
+
+    // build label from bitmask (e.g., 1 → "1.", 2 → "2.", 3 → "1.2.")
+    let mut label = String::new();
+    for bit in 0..8_u8 {
+        if repeat_alternative & (1 << bit) != 0 {
+            if !label.is_empty() {
+                label.push('.');
+            }
+            label.push_str(&(bit + 1).to_string());
+        }
+    }
+    label.push('.');
+
+    let label_text = Text {
+        shaping: Auto,
+        content: label,
+        color: Color::WHITE,
+        size: 9.0.into(),
+        position: Point::new(bracket_start + 3.0, bracket_y),
+        ..Text::default()
+    };
+    frame.fill_text(label_text);
 }
 
 fn draw_repeat_dots(

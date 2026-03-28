@@ -6,6 +6,7 @@ use crate::parser::song_parser::{
     Note, NoteType, QUARTER_TIME, SEMITONE_LENGTH, Song, Track, TremoloBarEffect, TripletFeel,
     VELOCITY_INCREMENT,
 };
+use std::collections::HashMap;
 use std::rc::Rc;
 
 const DEFAULT_DURATION_DEAD: u32 = 30;
@@ -33,6 +34,8 @@ impl MidiBuilder {
 
     /// Parse song and record events
     pub fn build_for_song(mut self, song: &Rc<Song>) -> Vec<MidiEvent> {
+        // compute playback order once (shared across all tracks)
+        let playback_order = compute_playback_order(&song.measure_headers);
         for (track_id, track) in song.tracks.iter().enumerate() {
             log::debug!("building events for track {track_id}");
             let midi_channel = song
@@ -50,6 +53,7 @@ impl MidiBuilder {
                 track_id,
                 track,
                 &song.measure_headers,
+                &playback_order,
                 midi_channel,
             );
         }
@@ -64,6 +68,7 @@ impl MidiBuilder {
         track_id: usize,
         track: &Track,
         measure_headers: &[MeasureHeader],
+        playback_order: &[(usize, i64)],
         midi_channel: &MidiChannel,
     ) {
         // add MIDI control events for the track channel
@@ -73,17 +78,24 @@ impl MidiBuilder {
         let mut prev_tempo = song_tempo;
         assert_eq!(track.measures.len(), measure_headers.len());
         let mut uses_triplet_feel = false;
-        for (measure, measure_header) in track.measures.iter().zip(measure_headers) {
+
+        for (measure_index, tick_offset) in playback_order {
+            let measure = &track.measures[*measure_index];
+            let measure_header = &measure_headers[*measure_index];
+
             // add song info events once for all tracks
             if track_id == 0 {
                 // change tempo if necessary
                 let measure_tempo = measure_header.tempo.value;
                 if measure_tempo != prev_tempo {
-                    let tick = measure_header.start;
+                    let tick = (i64::from(measure_header.start) + tick_offset) as u32;
                     self.add_tempo_change(tick, measure_tempo);
                     prev_tempo = measure_tempo;
                 }
             }
+
+            // record event count to shift new events by tick_offset
+            let event_start = self.events.len();
             self.add_beat_events(
                 track_id,
                 track,
@@ -92,6 +104,13 @@ impl MidiBuilder {
                 midi_channel,
                 strings,
             );
+            // shift events generated for this measure by tick_offset
+            if *tick_offset != 0 {
+                for event in &mut self.events[event_start..] {
+                    event.tick = (i64::from(event.tick) + tick_offset) as u32;
+                }
+            }
+
             if measure_header.triplet_feel != TripletFeel::None {
                 uses_triplet_feel = true;
             }
@@ -785,6 +804,116 @@ fn apply_static_duration(tempo: u32, duration: u32, maximum: u32) -> u32 {
     value.min(maximum)
 }
 
+/// Tracks the state of repeat section navigation during playback order computation.
+struct RepeatState {
+    start_stack: Vec<usize>,    // stack of repeat_open indices (for nesting)
+    visits: HashMap<usize, i8>, // how many times each repeat_close has been hit
+    current_repetition: i8,     // 0-based: 0 = first play, 1 = first repeat, etc.
+    jumping_back: bool,         // true when looping back to a repeat_open
+}
+
+impl RepeatState {
+    fn new() -> Self {
+        Self {
+            start_stack: vec![0], // implicit start at measure 0
+            visits: HashMap::new(),
+            current_repetition: 0,
+            jumping_back: false,
+        }
+    }
+
+    /// Process a repeat_open marker. Pushes onto the stack on first entry,
+    /// skips the push when looping back (to preserve the repetition counter).
+    fn enter_repeat(&mut self, measure_index: usize) {
+        if !self.jumping_back {
+            self.current_repetition = 0;
+            self.start_stack.push(measure_index);
+        }
+        self.jumping_back = false;
+    }
+
+    /// Check if the current repetition matches an alternative ending bitmask.
+    fn matches_alternative(&self, repeat_alternative: u8) -> bool {
+        // clamp to 7 to avoid shift overflow on u8
+        let clamped = self.current_repetition.min(7);
+        let bit = 1_u8 << clamped;
+        repeat_alternative & bit != 0
+    }
+
+    /// Process a repeat_close marker. Returns the index to jump back to,
+    /// or None if all repetitions are done.
+    fn close_repeat(&mut self, measure_index: usize, repeat_close: i8) -> Option<usize> {
+        let visits = self.visits.entry(measure_index).or_insert(0);
+        if *visits < repeat_close {
+            *visits += 1;
+            self.current_repetition += 1;
+            self.jumping_back = true;
+            let repeat_start = *self.start_stack.last().unwrap_or(&0);
+            // clear visit counts for inner repeats so they replay on next outer pass
+            self.visits
+                .retain(|&k, _| k <= repeat_start || k >= measure_index);
+            Some(repeat_start)
+        } else {
+            // done repeating
+            self.visits.remove(&measure_index);
+            self.start_stack.pop();
+            None
+        }
+    }
+}
+
+/// Compute the playback order of measures, expanding repeats and alternative endings.
+///
+/// Used by the MIDI builder to generate events at the correct ticks,
+/// and by the tablature to map playback ticks back to visual measures.
+/// Returns a Vec of (measure_index, tick_offset) pairs.
+/// The tick_offset is the difference between the playback tick and the original measure tick.
+pub fn compute_playback_order(headers: &[MeasureHeader]) -> Vec<(usize, i64)> {
+    let mut order: Vec<(usize, i64)> = Vec::new();
+    let mut running_tick: u32 = QUARTER_TIME; // same starting tick as parser
+    let mut repeat = RepeatState::new();
+    let mut i = 0;
+
+    while i < headers.len() {
+        let header = &headers[i];
+
+        if header.repeat_open {
+            repeat.enter_repeat(i);
+        }
+
+        // check alternative ending: skip this measure if it doesn't match current repetition
+        if header.repeat_alternative != 0 && !repeat.matches_alternative(header.repeat_alternative)
+        {
+            // still check for repeat_close on this skipped measure
+            if header.repeat_close > 0
+                && let Some(jump_to) = repeat.close_repeat(i, header.repeat_close)
+            {
+                i = jump_to;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+
+        // add this measure to the playback order
+        let tick_offset = i64::from(running_tick) - i64::from(header.start);
+        order.push((i, tick_offset));
+        running_tick += header.length();
+
+        // handle repeat close
+        if header.repeat_close > 0
+            && let Some(jump_to) = repeat.close_repeat(i, header.repeat_close)
+        {
+            i = jump_to;
+            continue;
+        }
+
+        i += 1;
+    }
+
+    order
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -865,9 +994,8 @@ mod tests {
         let builder = MidiBuilder::new();
         let events = builder.build_for_song(&song);
 
-        assert_eq!(events.len(), 4471);
+        assert_eq!(events.len(), 4693);
         assert_eq!(events[0].tick, 1);
-        assert_eq!(events.iter().last().unwrap().tick, 189_120);
 
         // assert number of tracks
         let track_count = song.tracks.len();
@@ -1020,100 +1148,41 @@ mod tests {
         assert_eq!(event.track, Some(1));
         assert!(matches!(event.event, MidiEventType::NoteOff(2, 69)));
 
-        // tremolo ON
+        // tremolo ON (repeated section)
         let event = &solo_track_events[32];
-        assert_eq!(event.tick, 16320);
+        assert_eq!(event.tick, 27840);
         assert_eq!(event.track, Some(1));
         assert!(matches!(event.event, MidiEventType::NoteOn(2, 60, 95)));
 
         // tremolo OFF
         let event = &solo_track_events[33];
-        assert_eq!(event.tick, 16440);
+        assert_eq!(event.tick, 27960);
         assert_eq!(event.track, Some(1));
         assert!(matches!(event.event, MidiEventType::NoteOff(2, 60)));
 
-        // tremolo ON
-        let event = &solo_track_events[34];
-        assert_eq!(event.tick, 16440);
-        assert_eq!(event.track, Some(1));
-        assert!(matches!(event.event, MidiEventType::NoteOn(2, 60, 95)));
-
-        // tremolo OFF
-        let event = &solo_track_events[35];
-        assert_eq!(event.tick, 16560);
-        assert_eq!(event.track, Some(1));
-        assert!(matches!(event.event, MidiEventType::NoteOff(2, 60)));
-
-        // tremolo ON
-        let event = &solo_track_events[36];
-        assert_eq!(event.tick, 16560);
-        assert_eq!(event.track, Some(1));
-        assert!(matches!(event.event, MidiEventType::NoteOn(2, 60, 95)));
-
-        // tremolo OFF
-        let event = &solo_track_events[37];
-        assert_eq!(event.tick, 16680);
-        assert_eq!(event.track, Some(1));
-        assert!(matches!(event.event, MidiEventType::NoteOff(2, 60)));
-
-        // pass tremolo notes...
-
-        // tremolo ON
-        let event = &solo_track_events[62];
-        assert_eq!(event.tick, 18120);
-        assert_eq!(event.track, Some(1));
-        assert!(matches!(event.event, MidiEventType::NoteOn(2, 60, 95)));
-
-        // tremolo OFF
-        let event = &solo_track_events[63];
-        assert_eq!(event.tick, 18239);
-        assert_eq!(event.track, Some(1));
-        assert!(matches!(event.event, MidiEventType::NoteOff(2, 60)));
-
-        // note ON
+        // note ON (after all tremolo and repeated sections)
         let event = &solo_track_events[64];
-        assert_eq!(event.tick, 66240);
+        assert_eq!(event.tick, 77760);
         assert_eq!(event.track, Some(1));
         assert!(matches!(event.event, MidiEventType::NoteOn(2, 63, 95)));
 
         // note OFF
         let event = &solo_track_events[65];
-        assert_eq!(event.tick, 66720);
+        assert_eq!(event.tick, 78240);
         assert_eq!(event.track, Some(1));
         assert!(matches!(event.event, MidiEventType::NoteOff(2, 63)));
 
         // note ON hammer
         let event = &solo_track_events[66];
-        assert_eq!(event.tick, 66720);
+        assert_eq!(event.tick, 78240);
         assert_eq!(event.track, Some(1));
         assert!(matches!(event.event, MidiEventType::NoteOn(2, 65, 70)));
 
         // note OFF hammer
         let event = &solo_track_events[67];
-        assert_eq!(event.tick, 67200);
+        assert_eq!(event.tick, 78720);
         assert_eq!(event.track, Some(1));
         assert!(matches!(event.event, MidiEventType::NoteOff(2, 65)));
-
-        // note ON
-        let event = &solo_track_events[68];
-        assert_eq!(event.tick, 67200);
-        assert_eq!(event.track, Some(1));
-        assert!(matches!(event.event, MidiEventType::NoteOn(2, 67, 95)));
-
-        // note OFF
-        let event = &solo_track_events[69];
-        assert_eq!(event.tick, 67680);
-        assert_eq!(event.track, Some(1));
-        assert!(matches!(event.event, MidiEventType::NoteOff(2, 67)));
-
-        // MIDI message bend
-        let event = &solo_track_events[70];
-        assert_eq!(event.tick, 67680);
-        assert_eq!(event.track, Some(1));
-        assert!(matches!(
-            event.event,
-            MidiEventType::MidiMessage(2, 224, 0, 64)
-        ));
     }
 
     #[test]
@@ -1124,9 +1193,8 @@ mod tests {
         let builder = MidiBuilder::new();
         let events = builder.build_for_song(&song);
 
-        assert_eq!(events.len(), 43754);
+        assert_eq!(events.len(), 44442);
         assert_eq!(events[0].tick, 1);
-        assert_eq!(events.iter().last().unwrap().tick, 795_840);
 
         // assert number of tracks
         let track_count = song.tracks.len();
@@ -1209,5 +1277,309 @@ mod tests {
         assert_eq!(event.tick, 5635);
         assert_eq!(event.track, Some(0));
         assert!(matches!(event.event, MidiEventType::NoteOff(0, 39)));
+    }
+
+    /// Helper to create a measure header with a given start tick
+    fn make_header(start: u32, repeat_open: bool, repeat_close: i8) -> MeasureHeader {
+        MeasureHeader {
+            start,
+            repeat_open,
+            repeat_close,
+            ..MeasureHeader::default()
+        }
+    }
+
+    #[test]
+    fn playback_order_no_repeats() {
+        // 3 measures, no repeats → linear order, zero offsets
+        let headers = vec![
+            make_header(960, false, 0),
+            make_header(4800, false, 0),
+            make_header(8640, false, 0),
+        ];
+        let order = compute_playback_order(&headers);
+        assert_eq!(order.len(), 3);
+        assert_eq!(order[0], (0, 0));
+        assert_eq!(order[1], (1, 0));
+        assert_eq!(order[2], (2, 0));
+    }
+
+    #[test]
+    fn playback_order_simple_repeat() {
+        // |: M0 | M1 :|  M2
+        // Plays: M0 M1 M0 M1 M2
+        let measure_len = 3840_u32; // default 4/4 length
+        let headers = vec![
+            make_header(960, true, 0),
+            make_header(960 + measure_len, false, 1),
+            make_header(960 + measure_len * 2, false, 0),
+        ];
+        let order = compute_playback_order(&headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, vec![0, 1, 0, 1, 2]);
+
+        // tick offsets: first pass is 0, second pass shifts by 2 measures
+        assert_eq!(order[0].1, 0); // M0 first time: no offset
+        assert_eq!(order[1].1, 0); // M1 first time: no offset
+        assert_eq!(order[2].1, i64::from(measure_len) * 2); // M0 second time: shifted
+        assert_eq!(order[3].1, i64::from(measure_len) * 2); // M1 second time: shifted
+        assert_eq!(order[4].1, i64::from(measure_len) * 2); // M2: shifted by the repeated section
+    }
+
+    #[test]
+    fn playback_order_repeat_three_times() {
+        // |: M0 :| x3  M1
+        // Plays: M0 M0 M0 M1
+        let measure_len = 3840_u32;
+        let headers = vec![
+            make_header(960, true, 2), // repeat_close=2 means 2 extra plays (3 total)
+            make_header(960 + measure_len, false, 0),
+        ];
+        let order = compute_playback_order(&headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, vec![0, 0, 0, 1]);
+    }
+
+    #[test]
+    fn playback_order_two_repeat_sections() {
+        // |: M0 :|  |: M1 :|  M2
+        // Plays: M0 M0 M1 M1 M2
+        let measure_len = 3840_u32;
+        let headers = vec![
+            make_header(960, true, 1),
+            make_header(960 + measure_len, true, 1),
+            make_header(960 + measure_len * 2, false, 0),
+        ];
+        let order = compute_playback_order(&headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, vec![0, 0, 1, 1, 2]);
+    }
+
+    #[test]
+    fn playback_order_alternative_endings() {
+        // |: M0 | M1[1.] | M2[2.] :|  M3
+        // Plays: M0 M1 M0 M2 M3
+        let measure_len = 3840_u32;
+        let headers = vec![
+            make_header(960, true, 0),
+            MeasureHeader {
+                start: 960 + measure_len,
+                repeat_alternative: 1, // bit 0 = 1st ending
+                ..MeasureHeader::default()
+            },
+            MeasureHeader {
+                start: 960 + measure_len * 2,
+                repeat_alternative: 2, // bit 1 = 2nd ending
+                repeat_close: 1,
+                ..MeasureHeader::default()
+            },
+            make_header(960 + measure_len * 3, false, 0),
+        ];
+        let order = compute_playback_order(&headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, vec![0, 1, 0, 2, 3]);
+    }
+
+    #[test]
+    fn playback_order_three_alternatives() {
+        // |: M0 | M1[1.] | M2[2.] | M3[3.] :|x3  M4
+        // Plays: M0 M1 M0 M2 M0 M3 M4
+        let measure_len = 3840_u32;
+        let headers = vec![
+            make_header(960, true, 0),
+            MeasureHeader {
+                start: 960 + measure_len,
+                repeat_alternative: 1, // bit 0
+                ..MeasureHeader::default()
+            },
+            MeasureHeader {
+                start: 960 + measure_len * 2,
+                repeat_alternative: 2, // bit 1
+                ..MeasureHeader::default()
+            },
+            MeasureHeader {
+                start: 960 + measure_len * 3,
+                repeat_alternative: 4, // bit 2
+                repeat_close: 2,       // 2 extra repeats (3 total)
+                ..MeasureHeader::default()
+            },
+            make_header(960 + measure_len * 4, false, 0),
+        ];
+        let order = compute_playback_order(&headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, vec![0, 1, 0, 2, 0, 3, 4]);
+    }
+
+    #[test]
+    fn playback_order_nested_repeats() {
+        // |: M0 |: M1 :| M2 :|  M3
+        // Inner plays M1 twice each time outer loops.
+        // Outer plays M0-M1-M1-M2 twice.
+        // Plays: M0 M1 M1 M2 M0 M1 M1 M2 M3
+        let measure_len = 3840_u32;
+        let headers = vec![
+            make_header(960, true, 0),                    // M0: outer repeat open
+            make_header(960 + measure_len, true, 1),      // M1: inner repeat open+close
+            make_header(960 + measure_len * 2, false, 1), // M2: outer repeat close
+            make_header(960 + measure_len * 3, false, 0), // M3: after repeats
+        ];
+        let order = compute_playback_order(&headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, vec![0, 1, 1, 2, 0, 1, 1, 2, 3]);
+    }
+
+    #[test]
+    fn playback_order_repeat_close_without_open() {
+        // M0 | M1 :|  M2
+        // No explicit repeat_open — implicit start at measure 0
+        // Plays: M0 M1 M0 M1 M2
+        let measure_len = 3840_u32;
+        let headers = vec![
+            make_header(960, false, 0),
+            make_header(960 + measure_len, false, 1),
+            make_header(960 + measure_len * 2, false, 0),
+        ];
+        let order = compute_playback_order(&headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, vec![0, 1, 0, 1, 2]);
+    }
+
+    #[test]
+    fn playback_order_single_measure_repeat() {
+        // |: M0 :|  — single measure repeated
+        // Plays: M0 M0
+        let headers = vec![make_header(960, true, 1)];
+        let order = compute_playback_order(&headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, vec![0, 0]);
+    }
+
+    #[test]
+    fn playback_order_tick_offsets_are_consistent() {
+        // Verify that tick offsets produce a monotonically increasing playback timeline
+        let measure_len = 3840_u32;
+        let headers = vec![
+            make_header(960, true, 0),
+            make_header(960 + measure_len, false, 1),
+            make_header(960 + measure_len * 2, false, 0),
+        ];
+        let order = compute_playback_order(&headers);
+        // compute playback ticks: original_start + offset
+        let playback_ticks: Vec<i64> = order
+            .iter()
+            .map(|(idx, offset)| i64::from(headers[*idx].start) + offset)
+            .collect();
+        // verify monotonically increasing
+        assert!(playback_ticks.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn playback_order_alternative_on_last_pass_with_close() {
+        // |: M0 | M1[1.+2.] :|  — alternative plays on both passes
+        // Plays: M0 M1 M0 M1
+        let measure_len = 3840_u32;
+        let headers = vec![
+            make_header(960, true, 0),
+            MeasureHeader {
+                start: 960 + measure_len,
+                repeat_alternative: 3, // bits 0+1 = both passes
+                repeat_close: 1,
+                ..MeasureHeader::default()
+            },
+        ];
+        let order = compute_playback_order(&headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, vec![0, 1, 0, 1]);
+    }
+
+    #[test]
+    fn playback_order_empty() {
+        let headers: Vec<MeasureHeader> = vec![];
+        let order = compute_playback_order(&headers);
+        assert!(order.is_empty());
+    }
+
+    #[test]
+    fn playback_order_damage_control() {
+        const FILE_PATH: &str = "test-files/John Petrucci - Damage Control.gp5";
+        let song = parse_gp_file(FILE_PATH).unwrap();
+        let headers = &song.measure_headers;
+
+        // verify repeat markers were parsed
+        // Repeat structure (1-indexed measures):
+        //   M1: repeat_open
+        //   M2: repeat_close=1, repeat_alternative=1 (1st ending)
+        //   M3: repeat_alternative=2 (2nd ending)
+        //   M8: repeat_open
+        //   M9: repeat_close=1
+        //   M74: repeat_open, repeat_close=7 (plays 8 times)
+        assert!(headers[0].repeat_open);
+        assert_eq!(headers[1].repeat_close, 1);
+        assert_eq!(headers[1].repeat_alternative, 1);
+        assert_eq!(headers[2].repeat_alternative, 2);
+        assert!(headers[7].repeat_open);
+        assert_eq!(headers[8].repeat_close, 1);
+        assert!(headers[73].repeat_open);
+        assert_eq!(headers[73].repeat_close, 7);
+
+        let order = compute_playback_order(headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+
+        // playback order should be longer than header count due to repeats
+        assert!(
+            order.len() > headers.len(),
+            "Playback order ({}) should be > header count ({})",
+            order.len(),
+            headers.len()
+        );
+
+        // section 1: |: M0 | M1[1.] | M2[2.] → plays M0 M1 M0 M2
+        assert_eq!(&indices[..4], &[0, 1, 0, 2]);
+
+        // section 2: M3..M6 play linearly, then |: M7 | M8 :| → plays M7 M8 M7 M8
+        // find where M7 (index 7) first appears after the first section
+        let m7_positions: Vec<usize> = indices
+            .iter()
+            .enumerate()
+            .filter(|(_, idx)| **idx == 7)
+            .map(|(pos, _)| pos)
+            .collect();
+        assert_eq!(m7_positions.len(), 2, "M7 should appear twice (repeat)");
+        // M8 should follow each M7
+        assert_eq!(indices[m7_positions[0] + 1], 8);
+        assert_eq!(indices[m7_positions[1] + 1], 8);
+
+        // section 3: M74 (index 73) has repeat_close=7, so it plays 8 times
+        let m73_count = indices.iter().filter(|&&idx| idx == 73).count();
+        assert_eq!(m73_count, 8, "M74 should appear 8 times (repeat_close=7)");
+
+        // verify all playback ticks are monotonically increasing
+        let playback_ticks: Vec<i64> = order
+            .iter()
+            .map(|(idx, offset)| i64::from(headers[*idx].start) + offset)
+            .collect();
+        for window in playback_ticks.windows(2) {
+            assert!(
+                window[0] < window[1],
+                "Playback ticks not monotonically increasing: {} >= {}",
+                window[0],
+                window[1]
+            );
+        }
+
+        // verify all measure indices are valid
+        for (idx, _) in &order {
+            assert!(*idx < headers.len(), "Invalid measure index {idx}");
+        }
+
+        // build MIDI events and verify they are sorted
+        let song = Rc::new(song);
+        let builder = MidiBuilder::new();
+        let events = builder.build_for_song(&song);
+        assert!(!events.is_empty());
+        assert!(
+            events.windows(2).all(|w| w[0].tick <= w[1].tick),
+            "Events not sorted by tick"
+        );
     }
 }

@@ -6,6 +6,7 @@ use iced::{Alignment, Border, Element, Size, Subscription, Task, Theme, keyboard
 use std::fmt::Display;
 
 use crate::ApplicationArgs;
+use crate::audio::midi_builder::compute_playback_order;
 use crate::audio::midi_player::AudioPlayer;
 use crate::config::Config;
 use crate::parser::song_parser::{GpVersion, Song, parse_gp_data};
@@ -245,11 +246,14 @@ impl RuxApplication {
                             self.track_selection = default_track_selection;
                             // share song ownership with tablature and player
                             let song_rc = Rc::new(song);
+                            let playback_order =
+                                compute_playback_order(&song_rc.measure_headers);
                             let tablature_scroll_id = Id::new("tablature-scroll-elements");
                             let tablature = Tablature::new(
                                 song_rc.clone(),
                                 default_track,
                                 tablature_scroll_id.clone(),
+                                &playback_order,
                             );
                             self.tablature = Some(tablature);
                             // audio player initialization

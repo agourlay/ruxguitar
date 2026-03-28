@@ -21,11 +21,19 @@ pub struct Tablature {
 }
 
 impl Tablature {
-    pub fn new(song: Rc<Song>, track_id: usize, scroll_id: Id) -> Self {
+    pub fn new(
+        song: Rc<Song>,
+        track_id: usize,
+        scroll_id: Id,
+        playback_order: &[(usize, i64)],
+    ) -> Self {
         let measure_count = song.measure_headers.len();
+        // build tick-to-measure map including expanded repeat ticks
         let mut measure_per_tick = BTreeMap::new();
-        for (i, measure) in song.measure_headers.iter().enumerate() {
-            measure_per_tick.insert(measure.start, i as u32);
+        for (measure_index, tick_offset) in playback_order {
+            let header = &song.measure_headers[*measure_index];
+            let playback_tick = (i64::from(header.start) + tick_offset) as u32;
+            measure_per_tick.insert(playback_tick, *measure_index as u32);
         }
         let mut tab = Self {
             song,
@@ -124,26 +132,28 @@ impl Tablature {
     ///
     /// Returns the measure and beat indexes
     pub fn get_measure_beat_indexes_for_tick(&self, track_id: usize, tick: u32) -> (usize, usize) {
-        // range scan on `measure_per_tick` to find measure index for tick
-        let measure_index = self
+        // range scan on `measure_per_tick` to find measure index and playback start tick
+        let (playback_start, measure_index) = self
             .measure_per_tick
-            .range(0..=tick) // range is growing but the cost is still O(log n) with size of the btreemap
+            .range(0..=tick)
             .next_back()
-            .map(|(_event_tick, &m_id)| m_id)
+            .map(|(&event_tick, &m_id)| (event_tick, m_id as usize))
             .unwrap_or_else(|| {
                 log::warn!("No measure index found for tick:{tick}");
-                0
+                (0, 0)
             });
 
-        // indexed as u32 to save space
-        let measure_index = measure_index as usize;
+        // compute tick offset between playback position and original measure position
+        let original_start = self.song.measure_headers[measure_index].start;
+        let tick_offset = i64::from(playback_start) - i64::from(original_start);
 
         // get beat index within the measure containing the tick
-        // only a few beats per measure, full scan is Ok.
+        // adjust tick by removing the offset to compare with original beat.start values
+        let original_tick = (i64::from(tick) - tick_offset) as u32;
         let voice = &self.song.tracks[track_id].measures[measure_index].voices[0];
         let mut beat_index = 0;
         for (j, beat) in voice.beats.iter().enumerate() {
-            if beat.start > tick {
+            if beat.start > original_tick {
                 break;
             }
             beat_index = j;
