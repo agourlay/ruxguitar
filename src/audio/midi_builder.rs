@@ -1542,7 +1542,7 @@ mod tests {
 
     #[test]
     fn playback_order_damage_control() {
-        const FILE_PATH: &str = "test-files/John Petrucci - Damage Control.gp5";
+        const FILE_PATH: &str = "test-files/John Petrucci - Damage Control (ver 6 by Feio666).gp5";
         let song = parse_gp_file(FILE_PATH).unwrap();
         let headers = &song.measure_headers;
 
