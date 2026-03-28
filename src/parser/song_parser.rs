@@ -681,6 +681,18 @@ impl BeatStroke {
     }
 }
 
+/// Convert raw GP stroke byte to a duration value.
+const fn to_stroke_value(raw: i8) -> u16 {
+    match raw {
+        1 | 2 => DURATION_SIXTY_FOURTH as u16,
+        3 => DURATION_THIRTY_SECOND as u16,
+        4 => DURATION_SIXTEENTH as u16,
+        5 => DURATION_EIGHTH as u16,
+        6 => QUARTER,
+        _ => DURATION_SIXTY_FOURTH as u16,
+    }
+}
+
 impl Default for BeatStroke {
     fn default() -> Self {
         BeatStroke {
@@ -1088,11 +1100,11 @@ pub fn parse_beat_effects<'a>(
             let (inner, (stroke_up, stroke_down)) = (parse_i8, parse_i8).parse(i)?;
             i = inner;
             if stroke_up > 0 {
-                beat.effect.stroke.value = stroke_up as u16;
+                beat.effect.stroke.value = to_stroke_value(stroke_up);
                 beat.effect.stroke.direction = BeatStrokeDirection::Up;
             }
             if stroke_down > 0 {
-                beat.effect.stroke.value = stroke_down as u16;
+                beat.effect.stroke.value = to_stroke_value(stroke_down);
                 beat.effect.stroke.direction = BeatStrokeDirection::Down;
             }
         }

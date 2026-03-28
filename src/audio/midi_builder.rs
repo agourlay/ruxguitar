@@ -2,9 +2,9 @@ use crate::audio::FIRST_TICK;
 /// Thanks to `TuxGuitar` for the reference implementation in `MidiSequenceParser.java`
 use crate::audio::midi_event::MidiEvent;
 use crate::parser::song_parser::{
-    Beat, BendEffect, BendPoint, HarmonicType, MIN_VELOCITY, Measure, MeasureHeader, MidiChannel,
-    Note, NoteType, QUARTER_TIME, SEMITONE_LENGTH, Song, Track, TremoloBarEffect, TripletFeel,
-    VELOCITY_INCREMENT,
+    Beat, BeatStrokeDirection, BendEffect, BendPoint, HarmonicType, MIN_VELOCITY, Measure,
+    MeasureHeader, MidiChannel, Note, NoteType, QUARTER_TIME, SEMITONE_LENGTH, Song, Track,
+    TremoloBarEffect, TripletFeel, VELOCITY_INCREMENT,
 };
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -186,7 +186,9 @@ impl MidiBuilder {
         let track_offset = track.offset;
         let beat_duration = beat.duration.time();
         let stroke = &beat.effect.stroke;
-        let _stroke_increment = stroke.increment_for_duration(beat_duration);
+        let stroke_increment = stroke.increment_for_duration(beat_duration);
+        // pre-compute per-string stroke offsets (only for strings with non-tied notes)
+        let stroke_offsets = compute_stroke_offsets(beat, stroke_increment, strings.len());
         for note in &beat.notes {
             if note.kind != NoteType::Tie {
                 let (string_id, string_tuning) = strings[note.string as usize - 1];
@@ -207,7 +209,12 @@ impl MidiBuilder {
                 );
                 assert_ne!(duration, 0);
 
-                // TODO apply stroke effect
+                // apply stroke effect: stagger note start times across strings
+                let stroke_offset = stroke_offsets[note.string as usize - 1];
+                if stroke_offset > 0 {
+                    note_start += stroke_offset;
+                    duration = duration.saturating_sub(stroke_offset);
+                }
 
                 // surrounding notes on the same string on the previous & next beat
                 let previous_note =
@@ -804,6 +811,39 @@ fn apply_static_duration(tempo: u32, duration: u32, maximum: u32) -> u32 {
     value.min(maximum)
 }
 
+/// Compute per-string stroke offsets for a beat, following TuxGuitar's approach:
+/// only strings with non-tied notes receive incremental offsets.
+fn compute_stroke_offsets(beat: &Beat, stroke_increment: u32, string_count: usize) -> Vec<u32> {
+    let mut offsets = vec![0_u32; string_count];
+    if stroke_increment == 0 || beat.effect.stroke.direction == BeatStrokeDirection::None {
+        return offsets;
+    }
+
+    // build bitmask of strings that have non-tied notes
+    let mut strings_used: u32 = 0;
+    for note in &beat.notes {
+        if note.kind != NoteType::Tie {
+            strings_used |= 1 << (note.string as u32 - 1);
+        }
+    }
+
+    // assign cumulative offsets in stroke direction order
+    let mut stroke_move: u32 = 0;
+    for i in 0..string_count {
+        let index = match beat.effect.stroke.direction {
+            BeatStrokeDirection::Down => (string_count - 1) - i,
+            BeatStrokeDirection::Up => i,
+            BeatStrokeDirection::None => unreachable!(),
+        };
+        if strings_used & (1 << index) != 0 {
+            offsets[index] = stroke_move;
+            stroke_move += stroke_increment;
+        }
+    }
+
+    offsets
+}
+
 /// Tracks the state of repeat section navigation during playback order computation.
 struct RepeatState {
     start_stack: Vec<usize>,    // stack of repeat_open indices (for nesting)
@@ -918,6 +958,7 @@ pub fn compute_playback_order(headers: &[MeasureHeader]) -> Vec<(usize, i64)> {
 mod tests {
     use super::*;
     use crate::audio::midi_event::MidiEventType;
+    use crate::parser::song_parser::{NoteEffect, NoteType};
     use crate::parser::song_parser_tests::parse_gp_file;
     use std::collections::HashSet;
     use std::io::Write;
@@ -1581,5 +1622,50 @@ mod tests {
             events.windows(2).all(|w| w[0].tick <= w[1].tick),
             "Events not sorted by tick"
         );
+    }
+
+    fn make_note(string: i8) -> Note {
+        let mut note = Note::new(NoteEffect::default());
+        note.string = string;
+        note.kind = NoteType::Normal;
+        note
+    }
+
+    #[test]
+    fn stroke_offsets_no_stroke() {
+        let beat = Beat::default();
+        let offsets = compute_stroke_offsets(&beat, 0, 6);
+        assert_eq!(offsets, vec![0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn stroke_offsets_down_stroke() {
+        // down stroke: thickest string (6, index 5) plays first
+        let mut beat = Beat::default();
+        beat.effect.stroke.direction = BeatStrokeDirection::Down;
+        beat.notes = vec![make_note(1), make_note(3), make_note(5)];
+        let increment = 10;
+        let offsets = compute_stroke_offsets(&beat, increment, 6);
+        // string 5 (index 4) plays first (offset 0), string 3 (index 2) second, string 1 (index 0) third
+        assert_eq!(offsets[4], 0); // string 5: first
+        assert_eq!(offsets[2], 10); // string 3: second
+        assert_eq!(offsets[0], 20); // string 1: third
+        // strings without notes have 0 offset
+        assert_eq!(offsets[1], 0);
+        assert_eq!(offsets[3], 0);
+        assert_eq!(offsets[5], 0);
+    }
+
+    #[test]
+    fn stroke_offsets_up_stroke() {
+        // up stroke: thinnest string (1, index 0) plays first
+        let mut beat = Beat::default();
+        beat.effect.stroke.direction = BeatStrokeDirection::Up;
+        beat.notes = vec![make_note(1), make_note(3), make_note(5)];
+        let increment = 10;
+        let offsets = compute_stroke_offsets(&beat, increment, 6);
+        assert_eq!(offsets[0], 0); // string 1: first
+        assert_eq!(offsets[2], 10); // string 3: second
+        assert_eq!(offsets[4], 20); // string 5: third
     }
 }
