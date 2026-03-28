@@ -1573,7 +1573,10 @@ mod tests {
 
         // verify repeated measures appear multiple times in playback order
         let first_repeat_open = repeats.iter().find(|(_, open, _, _)| *open).unwrap().0;
-        let appearances = indices.iter().filter(|&&idx| idx == first_repeat_open).count();
+        let appearances = indices
+            .iter()
+            .filter(|&&idx| idx == first_repeat_open)
+            .count();
         assert!(
             appearances > 1,
             "First repeated measure should appear more than once"
