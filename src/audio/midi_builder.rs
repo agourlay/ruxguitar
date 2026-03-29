@@ -32,10 +32,19 @@ impl MidiBuilder {
         Self { events: Vec::new() }
     }
 
-    /// Parse song and record events
-    pub fn build_for_song(mut self, song: &Rc<Song>) -> Vec<MidiEvent> {
-        // compute playback order once (shared across all tracks)
+    /// Parse song and record events, computing playback order internally.
+    #[cfg(test)]
+    pub fn build_for_song(self, song: &Rc<Song>) -> Vec<MidiEvent> {
         let playback_order = compute_playback_order(&song.measure_headers);
+        self.build_for_song_with_order(song, &playback_order)
+    }
+
+    /// Parse song and record events using a pre-computed playback order.
+    pub fn build_for_song_with_order(
+        mut self,
+        song: &Rc<Song>,
+        playback_order: &[(usize, i64)],
+    ) -> Vec<MidiEvent> {
         for (track_id, track) in song.tracks.iter().enumerate() {
             log::debug!("building events for track {track_id}");
             let midi_channel = song
@@ -53,7 +62,7 @@ impl MidiBuilder {
                 track_id,
                 track,
                 &song.measure_headers,
-                &playback_order,
+                playback_order,
                 midi_channel,
             );
         }

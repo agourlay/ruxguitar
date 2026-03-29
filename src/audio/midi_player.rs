@@ -36,6 +36,7 @@ impl AudioPlayer {
         tempo_percentage: u32,
         sound_font_file: Option<PathBuf>,
         beat_sender: Arc<Sender<u32>>,
+        playback_order: &[(usize, i64)],
     ) -> Self {
         // default to no solo track
         let solo_track_id = None;
@@ -49,7 +50,7 @@ impl AudioPlayer {
 
         // midi sequencer initialization
         let builder = MidiBuilder::new();
-        let events = builder.build_for_song(&song);
+        let events = builder.build_for_song_with_order(&song, playback_order);
 
         // sound font setup
         let sound_font = if let Some(sound_font_file) = sound_font_file {

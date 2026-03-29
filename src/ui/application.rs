@@ -262,6 +262,7 @@ impl RuxApplication {
                                 self.tempo_selection.percentage,
                                 self.sound_font_file.clone(),
                                 self.beat_sender.clone(),
+                                &playback_order,
                             );
                             self.audio_player = Some(audio_player);
                             // reset tablature scroll and trigger layout computation
