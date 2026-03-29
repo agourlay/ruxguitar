@@ -353,7 +353,7 @@ impl canvas::Program<Message> for CanvasMeasure {
 
             // add notes on top of strings
             let measure = &track.measures[self.measure_id];
-            // TODO draw second voice if present?
+            // TODO draw second voice if present (audio playback already handles all voices)
             let beats = &measure.voices[0].beats;
             let beats_len = beats.len();
             log::debug!("{beats_len} beats");

@@ -209,7 +209,7 @@ impl std::fmt::Display for KeySignature {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum TripletFeel {
     None,
     Eighth,
@@ -1322,9 +1322,6 @@ pub fn parse_measure_header(
             i = inner;
             mh.triplet_feel = triplet_feel;
         } else if song_version <= GpVersion::GP4_06 {
-            // TODO triplet feel should come from the Song level in that case
-            // mh.triplet_feel = triplet_feel;
-
             // Beginning of repeat
             if (flags & 0x08) != 0 {
                 log::debug!("Parsing repeat close");
@@ -1669,7 +1666,18 @@ pub fn parse_gp_data(file_data: &[u8]) -> Result<Song, RuxError> {
         log::error!("Failed to parse music data: {e:?}");
         RuxError::ParsingError("Failed to parse music data".to_string())
     })?;
-    let song = parser.take_song();
+    let mut song = parser.take_song();
+
+    // For GP4 and earlier, triplet feel is defined at the song level.
+    // Propagate it to all measure headers so the MIDI builder can apply it.
+    if song.version < GpVersion::GP5
+        && let Some(true) = song.triplet_feel
+    {
+        for header in &mut song.measure_headers {
+            header.triplet_feel = TripletFeel::Eighth;
+        }
+    }
+
     Ok(song)
 }
 

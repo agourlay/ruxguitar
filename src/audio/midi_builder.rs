@@ -77,8 +77,6 @@ impl MidiBuilder {
         let strings = &track.strings;
         let mut prev_tempo = song_tempo;
         assert_eq!(track.measures.len(), measure_headers.len());
-        let mut uses_triplet_feel = false;
-
         for (measure_index, tick_offset) in playback_order {
             let measure = &track.measures[*measure_index];
             let measure_header = &measure_headers[*measure_index];
@@ -110,13 +108,6 @@ impl MidiBuilder {
                     event.tick = (i64::from(event.tick) + tick_offset) as u32;
                 }
             }
-
-            if measure_header.triplet_feel != TripletFeel::None {
-                uses_triplet_feel = true;
-            }
-        }
-        if uses_triplet_feel {
-            log::warn!("Triplet feel not supported on track {track_id}");
         }
     }
 
@@ -149,6 +140,9 @@ impl MidiBuilder {
                         .get(voice.measure_index as usize + 1)
                         .and_then(|next_measure| next_measure.voices[0].beats.first())
                 });
+                // apply triplet feel adjustment to beat timing
+                let triplet_adj =
+                    apply_triplet_feel(beat, previous_beat, next_beat, measure_header.triplet_feel);
                 self.add_notes(
                     track_id,
                     track,
@@ -160,6 +154,7 @@ impl MidiBuilder {
                     beat,
                     next_beat,
                     strings,
+                    triplet_adj,
                 );
             }
         }
@@ -178,13 +173,14 @@ impl MidiBuilder {
         beat: &Beat,
         next_beat: Option<&Beat>,
         strings: &[(i32, i32)],
+        triplet_adj: TripletAdjustment,
     ) {
         let channel_id = midi_channel.channel_id;
         let tempo = measure_header.tempo.value;
-        // TODO when to use effect channel instead?
+        // GP files define an effect channel per track, but TuxGuitar doesn't use it for playback.
         assert!(channel_id < 16);
         let track_offset = track.offset;
-        let beat_duration = beat.duration.time();
+        let beat_duration = triplet_adj.duration;
         let stroke = &beat.effect.stroke;
         let stroke_increment = stroke.increment_for_duration(beat_duration);
         // pre-compute per-string stroke offsets (only for strings with non-tied notes)
@@ -194,8 +190,8 @@ impl MidiBuilder {
                 let (string_id, string_tuning) = strings[note.string as usize - 1];
                 assert_eq!(string_id, i32::from(note.string));
 
-                // note starts on beat
-                let mut note_start = beat.start;
+                // note starts on beat (adjusted for triplet feel)
+                let mut note_start = triplet_adj.start;
 
                 // apply effects on duration
                 let mut duration = apply_duration_effect(
@@ -811,6 +807,102 @@ fn apply_static_duration(tempo: u32, duration: u32, maximum: u32) -> u32 {
     value.min(maximum)
 }
 
+/// Triplet feel adjustment for a beat's start and duration.
+struct TripletAdjustment {
+    start: u32,
+    duration: u32,
+}
+
+/// Apply triplet feel (swing) to a beat's timing.
+/// Pairs of equal-duration notes are converted to a long-short triplet pattern.
+fn apply_triplet_feel(
+    beat: &Beat,
+    previous_beat: Option<&Beat>,
+    next_beat: Option<&Beat>,
+    triplet_feel: TripletFeel,
+) -> TripletAdjustment {
+    let beat_start = beat.start;
+    let beat_duration = beat.duration.time();
+
+    match triplet_feel {
+        TripletFeel::None => TripletAdjustment {
+            start: beat_start,
+            duration: beat_duration,
+        },
+        TripletFeel::Eighth => apply_triplet_feel_for_duration(
+            beat_start,
+            beat_duration,
+            previous_beat,
+            next_beat,
+            QUARTER_TIME / 2,
+            QUARTER_TIME,
+        ),
+        TripletFeel::Sixteenth => apply_triplet_feel_for_duration(
+            beat_start,
+            beat_duration,
+            previous_beat,
+            next_beat,
+            QUARTER_TIME / 4,
+            QUARTER_TIME / 2,
+        ),
+    }
+}
+
+/// Apply triplet feel for a specific note duration level.
+/// `target_duration` is the straight note duration to match (e.g., 480 for eighth, 240 for sixteenth).
+/// `boundary` is the rhythmic boundary for pairing (e.g., 960 for eighth pairs, 480 for sixteenth pairs).
+fn apply_triplet_feel_for_duration(
+    beat_start: u32,
+    beat_duration: u32,
+    previous_beat: Option<&Beat>,
+    next_beat: Option<&Beat>,
+    target_duration: u32,
+    boundary: u32,
+) -> TripletAdjustment {
+    if beat_duration != target_duration {
+        return TripletAdjustment {
+            start: beat_start,
+            duration: beat_duration,
+        };
+    }
+
+    // triplet duration = target_duration * 2 / 3
+    let triplet_duration = target_duration * 2 / 3;
+
+    // first beat of pair: on the boundary
+    if beat_start.is_multiple_of(boundary) {
+        // check that next beat is also the same duration (forming a pair)
+        let next_qualifies = next_beat.is_none_or(|nb| {
+            nb.start > beat_start + beat_duration || nb.duration.time() == target_duration
+        });
+        if next_qualifies {
+            return TripletAdjustment {
+                start: beat_start,
+                duration: triplet_duration * 2, // long note
+            };
+        }
+    }
+    // second beat of pair: on the half-boundary
+    else if beat_start.is_multiple_of(boundary / 2) {
+        // check that previous beat is also the same duration
+        let prev_qualifies = previous_beat.is_none_or(|pb| {
+            pb.start < beat_start - beat_duration || pb.duration.time() == target_duration
+        });
+        if prev_qualifies {
+            let adjusted_start = (beat_start - beat_duration) + triplet_duration * 2;
+            return TripletAdjustment {
+                start: adjusted_start,
+                duration: triplet_duration, // short note
+            };
+        }
+    }
+
+    TripletAdjustment {
+        start: beat_start,
+        duration: beat_duration,
+    }
+}
+
 /// Compute per-string stroke offsets for a beat, following TuxGuitar's approach:
 /// only strings with non-tied notes receive incremental offsets.
 fn compute_stroke_offsets(beat: &Beat, stroke_increment: u32, string_count: usize) -> Vec<u32> {
@@ -958,7 +1050,7 @@ pub fn compute_playback_order(headers: &[MeasureHeader]) -> Vec<(usize, i64)> {
 mod tests {
     use super::*;
     use crate::audio::midi_event::MidiEventType;
-    use crate::parser::song_parser::{NoteEffect, NoteType};
+    use crate::parser::song_parser::{DURATION_EIGHTH, DURATION_SIXTEENTH, NoteEffect, NoteType};
     use crate::parser::song_parser_tests::parse_gp_file;
     use std::collections::HashSet;
     use std::io::Write;
@@ -1610,6 +1702,159 @@ mod tests {
             events.windows(2).all(|w| w[0].tick <= w[1].tick),
             "Events not sorted by tick"
         );
+    }
+
+    #[test]
+    fn triplet_feel_guthrie_eric() {
+        const FILE_PATH: &str = "test-files/Guthrie Govan - Eric.gp5";
+        let song = parse_gp_file(FILE_PATH).unwrap();
+
+        // verify triplet feel is parsed
+        let triplet_measure_indices: Vec<usize> = song
+            .measure_headers
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| h.triplet_feel != TripletFeel::None)
+            .map(|(i, _)| i)
+            .collect();
+        assert!(
+            !triplet_measure_indices.is_empty(),
+            "Expected triplet feel measures in Guthrie Govan - Eric"
+        );
+
+        let first_triplet_idx = triplet_measure_indices[0];
+        let measure_start = song.measure_headers[first_triplet_idx].start;
+        let measure_end = measure_start + song.measure_headers[first_triplet_idx].length();
+
+        // build events and verify they are sorted
+        let song = Rc::new(song);
+        let builder = MidiBuilder::new();
+        let events = builder.build_for_song(&song);
+        assert!(!events.is_empty());
+        assert!(
+            events.windows(2).all(|w| w[0].tick <= w[1].tick),
+            "Events not sorted by tick"
+        );
+
+        let note_ons: Vec<u32> = events
+            .iter()
+            .filter(|e| {
+                e.tick >= measure_start
+                    && e.tick < measure_end
+                    && matches!(e.event, MidiEventType::NoteOn(_, _, _))
+            })
+            .map(|e| e.tick)
+            .collect();
+
+        // if there are consecutive eighth notes, the gaps should be uneven (640 + 320)
+        // rather than even (480 + 480)
+        if note_ons.len() >= 3 {
+            let gaps: Vec<u32> = note_ons.windows(2).map(|w| w[1] - w[0]).collect();
+            let has_uneven_gaps = gaps.windows(2).any(|w| w[0] != w[1]);
+            // at least some gaps should differ (swing feel)
+            assert!(
+                has_uneven_gaps || gaps.iter().all(|&g| g != 480),
+                "Expected uneven note spacing from triplet feel in measure {} (gaps: {gaps:?})",
+                first_triplet_idx + 1
+            );
+        }
+    }
+
+    #[test]
+    fn triplet_feel_none_no_change() {
+        let beat = Beat {
+            start: 960,
+            ..Beat::default()
+        };
+        let adj = apply_triplet_feel(&beat, None, None, TripletFeel::None);
+        assert_eq!(adj.start, 960);
+        assert_eq!(adj.duration, beat.duration.time());
+    }
+
+    #[test]
+    fn triplet_feel_eighth_first_beat() {
+        // first eighth note on quarter boundary → extended to 2/3 triplet * 2
+        let mut beat = Beat {
+            start: 960,
+            ..Beat::default()
+        };
+        beat.duration.value = u16::from(DURATION_EIGHTH);
+        let adj = apply_triplet_feel(&beat, None, None, TripletFeel::Eighth);
+        // triplet_duration = 480 * 2 / 3 = 320, long note = 640
+        assert_eq!(adj.start, 960);
+        assert_eq!(adj.duration, 640);
+    }
+
+    #[test]
+    fn triplet_feel_eighth_second_beat() {
+        // second eighth note on half-quarter boundary → shortened to 1/3 triplet
+        let mut beat = Beat {
+            start: 960 + 480, // half-quarter boundary
+            ..Beat::default()
+        };
+        beat.duration.value = u16::from(DURATION_EIGHTH);
+        let adj = apply_triplet_feel(&beat, None, None, TripletFeel::Eighth);
+        // triplet_duration = 320, short note, start shifts to 960 + 640 = 1600
+        assert_eq!(adj.start, 1600);
+        assert_eq!(adj.duration, 320);
+    }
+
+    #[test]
+    fn triplet_feel_preserves_total_time() {
+        // first + second beat durations should sum to the original pair
+        let mut first = Beat {
+            start: 960,
+            ..Beat::default()
+        };
+        first.duration.value = u16::from(DURATION_EIGHTH);
+        let mut second = Beat {
+            start: 960 + 480,
+            ..Beat::default()
+        };
+        second.duration.value = u16::from(DURATION_EIGHTH);
+        let adj1 = apply_triplet_feel(&first, None, Some(&second), TripletFeel::Eighth);
+        let adj2 = apply_triplet_feel(&second, Some(&first), None, TripletFeel::Eighth);
+        // total should be 960 (one quarter note)
+        assert_eq!(adj1.duration + adj2.duration, 960);
+        // second starts where first ends
+        assert_eq!(adj2.start, adj1.start + adj1.duration);
+    }
+
+    #[test]
+    fn triplet_feel_wrong_duration_no_change() {
+        // quarter note should not be affected by eighth triplet feel
+        let beat = Beat {
+            start: 960,
+            ..Beat::default()
+        };
+        // default duration is quarter (960), not eighth
+        let adj = apply_triplet_feel(&beat, None, None, TripletFeel::Eighth);
+        assert_eq!(adj.start, 960);
+        assert_eq!(adj.duration, 960);
+    }
+
+    #[test]
+    fn triplet_feel_sixteenth_pair() {
+        // sixteenth pair on eighth-note boundary
+        // target_duration = 240, boundary = 480
+        // triplet_duration = 240 * 2 / 3 = 160
+        let mut first = Beat {
+            start: 960,
+            ..Beat::default()
+        };
+        first.duration.value = u16::from(DURATION_SIXTEENTH);
+        let mut second = Beat {
+            start: 960 + 240,
+            ..Beat::default()
+        };
+        second.duration.value = u16::from(DURATION_SIXTEENTH);
+        let adj1 = apply_triplet_feel(&first, None, Some(&second), TripletFeel::Sixteenth);
+        let adj2 = apply_triplet_feel(&second, Some(&first), None, TripletFeel::Sixteenth);
+        assert_eq!(adj1.start, 960);
+        assert_eq!(adj1.duration, 320); // long: 160 * 2
+        assert_eq!(adj2.start, 1280); // 960 + 320
+        assert_eq!(adj2.duration, 160); // short: 160
+        assert_eq!(adj1.duration + adj2.duration, 480); // total = one eighth note
     }
 
     fn make_note(string: i8) -> Note {
