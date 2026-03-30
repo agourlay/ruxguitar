@@ -9,9 +9,24 @@ The design of the application is described in details in the blog article "[Play
 
 ![capture](ruxguitar.gif)
 
+## Features
+
+- GP4 and GP5 file support
+- MIDI playback with embedded soundfont (or custom soundfont)
+- Tablature rendering with measures stretched to fit screen width
+- Repeat sections with alternative endings
+- Stroke effect (audio staggering and visual arrows)
+- Triplet feel / swing playback
+- Tempo control (25% to 200%)
+- Solo mode (isolate single track)
+- Track selection
+- Keyboard shortcuts (Space = play/pause, Ctrl+Up/Down = tempo)
+
 ## Limitations
 
-- supports only gp5 & gp4 files
+- no editing capabilities (read-only player)
+- no score notation (tablature only)
+- supports only GP5 and GP4 files
 
 ## Usage
 
@@ -51,7 +66,7 @@ For instance I like to use `FluidR3_GM.sf2` which is present on most systems and
 - **Why is the file picker not opening on Linux?**
   - Install the `XDG Destop Portal` package for your [desktop environment](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces).
 
-- **Why are the strings no rendered on the tablature?**
+- **Why are the strings not rendered on the tablature?**
   - You might need to disable antialiasing using the `--no-antialiasing` option.
 
 - **Does it run on Windows 7 or Windows 8?**
@@ -82,4 +97,4 @@ Make sure to check the necessary dependencies for your system from the [CI confi
 
 ## Acknowledgements
 
-This project is heavily inspired by the great [TuxGuitar](https://sourceforge.net/p/tuxguitar/code/HEAD/tree/trunk/) project.
+This project is heavily inspired by the great [TuxGuitar](https://github.com/helge17/tuxguitar) project.
