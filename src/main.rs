@@ -29,8 +29,8 @@ pub fn main_result() -> Result<(), RuxError> {
 
     // args
     let mut args = CliArgs::parse();
-    let sound_font_file = args.sound_font_file.take().map(PathBuf::from);
-    let tab_file_path = args.tab_file_path.take().map(PathBuf::from);
+    let sound_font_file = args.sound_font_file.take();
+    let tab_file_path = args.tab_file_path.take();
 
     // check if sound font file exists
     if let Some(sound_font_file) = &sound_font_file {
@@ -71,10 +71,10 @@ pub fn main_result() -> Result<(), RuxError> {
 pub struct CliArgs {
     /// Optional path to a sound font file.
     #[arg(long)]
-    sound_font_file: Option<String>,
+    sound_font_file: Option<PathBuf>,
     /// Optional path to tab file to by-pass the file picker.
     #[arg(long)]
-    tab_file_path: Option<String>,
+    tab_file_path: Option<PathBuf>,
     /// Disable antialiasing.
     #[arg(long, default_value_t = false)]
     no_antialiasing: bool,
