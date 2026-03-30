@@ -34,7 +34,7 @@ impl MidiSequencer {
 
     #[allow(clippy::missing_const_for_fn)]
     pub fn set_tick(&mut self, tick: u32) {
-        self.last_tick = tick;
+        self.last_tick = tick.saturating_sub(1);
         self.current_tick = tick;
     }
 

@@ -201,9 +201,14 @@ impl Tablature {
     }
 
     pub fn focus_on_measure(&mut self, new_measure_id: usize) {
-        let measure_headers = &self.song.measure_headers[new_measure_id];
-        let tick = measure_headers.start;
-        self.focus_on_tick(tick);
+        let current_focus_id = self.focused_measure;
+        if current_focus_id != new_measure_id {
+            let current_canvas = self.canvas_measures.get_mut(current_focus_id).unwrap();
+            current_canvas.toggle_focused();
+            self.focused_measure = new_measure_id;
+            let next_canvas = self.canvas_measures.get_mut(new_measure_id).unwrap();
+            next_canvas.toggle_focused();
+        }
     }
 
     pub fn view(&self) -> Element<'_, Message> {

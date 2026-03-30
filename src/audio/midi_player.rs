@@ -27,6 +27,7 @@ pub struct AudioPlayer {
     synthesizer: Arc<Mutex<Synthesizer>>,        // Synthesizer for audio output
     sound_font: Arc<SoundFont>,                  // Sound font for synthesizer
     beat_sender: Arc<Sender<u32>>,               // Notify beat changes
+    measure_playback_ticks: Vec<u32>,            // first playback tick per measure (for seeking)
 }
 
 impl AudioPlayer {
@@ -51,6 +52,19 @@ impl AudioPlayer {
         // midi sequencer initialization
         let builder = MidiBuilder::new();
         let events = builder.build_for_song_with_order(&song, playback_order);
+
+        // build first-playback-tick lookup per measure (for seeking)
+        let measure_count = song.measure_headers.len();
+        let mut measure_playback_ticks = vec![0_u32; measure_count];
+        let mut seen = vec![false; measure_count];
+        for &(measure_index, tick_offset) in playback_order {
+            if !seen[measure_index] {
+                seen[measure_index] = true;
+                let header = &song.measure_headers[measure_index];
+                measure_playback_ticks[measure_index] =
+                    (i64::from(header.start) + tick_offset) as u32;
+            }
+        }
 
         // sound font setup
         let sound_font = if let Some(ref sound_font_file) = sound_font_file {
@@ -82,6 +96,7 @@ impl AudioPlayer {
             synthesizer,
             sound_font,
             beat_sender,
+            measure_playback_ticks,
         })
     }
 
@@ -189,7 +204,7 @@ impl AudioPlayer {
     pub fn focus_measure(&self, measure_id: usize) {
         log::debug!("Focus audio player on measure:{measure_id}");
         let measure = &self.song.measure_headers[measure_id];
-        let measure_start_tick = measure.start;
+        let measure_start_tick = self.measure_playback_ticks[measure_id];
         let tempo = measure.tempo.value;
 
         // move sequencer to measure start tick
