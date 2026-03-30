@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 const INNER_PADDING: f32 = 10.0;
-const SCROLLBAR_WIDTH: f32 = 10.0; // iced default scrollbar width
+const SCROLLBAR_WIDTH: f32 = 10.0; // iced default scrollbar width (iced_widget/src/scrollable.rs)
 
 pub struct Tablature {
     pub song: Rc<Song>,
@@ -285,7 +285,7 @@ impl LineTracker {
         let mut horizontal_cursor = 0.0;
         for (i, &width) in widths.iter().enumerate() {
             horizontal_cursor += width;
-            if horizontal_cursor >= tablature_container_width {
+            if horizontal_cursor > tablature_container_width {
                 current_line += 1;
                 horizontal_cursor = width;
             }
@@ -324,13 +324,13 @@ mod tests {
     }
 
     #[test]
-    fn line_tracker_exact_fit_wraps() {
-        // measures that exactly fill the width should trigger a wrap
+    fn line_tracker_exact_fit_stays() {
+        // measures that exactly fill the width should stay on the same line
         let widths = vec![100.0, 100.0, 100.0];
         let tracker = LineTracker::make_from_widths(&widths, 200.0);
         assert_eq!(tracker.get_line(0), 1);
-        assert_eq!(tracker.get_line(1), 2); // 200 >= 200 triggers wrap
-        assert_eq!(tracker.get_line(2), 3); // 200 >= 200 triggers wrap again
+        assert_eq!(tracker.get_line(1), 1); // 200 == 200, fits exactly
+        assert_eq!(tracker.get_line(2), 2); // 300 > 200, wraps
     }
 
     #[test]

@@ -53,7 +53,7 @@ impl MusicParser {
         Ok((i, ()))
     }
 
-    pub fn parse_tracks(
+    fn parse_tracks(
         &mut self,
         tracks_count: usize,
     ) -> impl FnMut(&[u8]) -> IResult<&[u8], Vec<Track>> + '_ {
@@ -79,10 +79,7 @@ impl MusicParser {
         }
     }
 
-    pub fn parse_track(
-        &mut self,
-        number: usize,
-    ) -> impl FnMut(&[u8]) -> IResult<&[u8], Track> + '_ {
+    fn parse_track(&mut self, number: usize) -> impl FnMut(&[u8]) -> IResult<&[u8], Track> + '_ {
         move |i| {
             log::debug!("--------");
             log::debug!("Parsing track {number}");
@@ -170,7 +167,7 @@ impl MusicParser {
 
     /// Read MIDI channel. MIDI channel in Guitar Pro is represented by two integers.
     /// First is zero-based number of channel, second is zero-based number of channel used for effects.
-    pub fn parse_track_channel(&mut self) -> impl FnMut(&[u8]) -> IResult<&[u8], i32> + '_ {
+    fn parse_track_channel(&mut self) -> impl FnMut(&[u8]) -> IResult<&[u8], i32> + '_ {
         log::debug!("Parsing track channel");
         |i| {
             let (i, (mut gm_channel_1, mut gm_channel_2)) = (parse_int, parse_int).parse(i)?;
@@ -206,7 +203,7 @@ impl MusicParser {
     /// - measure n/track 2
     /// - ...
     /// - measure n/track m
-    pub fn parse_measures(
+    fn parse_measures(
         &mut self,
         measure_count: i32,
         track_count: i32,
@@ -238,7 +235,7 @@ impl MusicParser {
         }
     }
 
-    pub fn parse_measure(
+    fn parse_measure(
         &mut self,
         measure_start: u32,
         measure_index: usize,
@@ -271,7 +268,7 @@ impl MusicParser {
         }
     }
 
-    pub fn parse_voice(
+    fn parse_voice(
         &mut self,
         mut beat_start: u32,
         track_index: usize,
@@ -301,7 +298,7 @@ impl MusicParser {
         }
     }
 
-    pub fn parse_beat(
+    fn parse_beat(
         &mut self,
         start: u32,
         track_index: usize,
@@ -407,7 +404,7 @@ impl MusicParser {
         -1
     }
 
-    pub fn parse_mix_change(
+    fn parse_mix_change(
         &mut self,
         measure_index: usize,
     ) -> impl FnMut(&[u8]) -> IResult<&[u8], ()> + '_ {
@@ -487,7 +484,7 @@ impl MusicParser {
         }
     }
 
-    pub fn parse_note<'a>(
+    fn parse_note<'a>(
         &'a self,
         note: &'a mut Note,
         guitar_string: &'a (i32, i32),

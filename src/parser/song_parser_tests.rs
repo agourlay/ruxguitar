@@ -763,4 +763,14 @@ mod tests {
         );
         assert_eq!(beat.notes.len(), 0);
     }
+
+    #[test]
+    fn gp_version_ordering() {
+        // GpVersion derives PartialOrd from variant declaration order.
+        // This test ensures the ordering is correct and catches accidental reordering.
+        assert!(GpVersion::GP3 < GpVersion::GP4);
+        assert!(GpVersion::GP4 < GpVersion::GP4_06);
+        assert!(GpVersion::GP4_06 < GpVersion::GP5);
+        assert!(GpVersion::GP5 < GpVersion::GP5_10);
+    }
 }

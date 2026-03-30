@@ -127,7 +127,7 @@ impl CanvasMeasure {
     /// The portion is proportional to the natural width of the measure.
     pub fn view_fill(&self) -> Element<'_, Message> {
         // Use total_measure_len as the portion weight (rounded to u16)
-        let portion = (self.total_measure_len as u16).max(1);
+        let portion = (self.total_measure_len.round() as u16).max(1);
         let canvas = Canvas::new(self)
             .height(self.vertical_measure_height)
             .width(Length::FillPortion(portion));

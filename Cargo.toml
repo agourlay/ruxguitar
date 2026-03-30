@@ -47,7 +47,6 @@ iced = { version = "0.14.0", features = [
     "canvas",
     "tokio",
     "selector",
-    "debug",
 ] }
 tokio = { version = "1.50.0", features = ["fs", "sync"] }
 rfd = "0.17.2"

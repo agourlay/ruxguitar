@@ -355,7 +355,7 @@ impl BendEffect {
         if self.points.len() < 2 {
             return 0;
         }
-        let first = self.points.first().unwrap().value;
+        let first = self.points[0].value;
         for p in &self.points[1..] {
             match first.cmp(&p.value) {
                 std::cmp::Ordering::Greater => return -1,
