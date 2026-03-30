@@ -13,10 +13,7 @@ The design of the application is described in details in the blog article "[Play
 
 - GP4 and GP5 file support
 - MIDI playback with embedded soundfont (or custom soundfont)
-- Tablature rendering with measures stretched to fit screen width
 - Repeat sections with alternative endings
-- Stroke effect (audio staggering and visual arrows)
-- Triplet feel / swing playback
 - Tempo control (25% to 200%)
 - Solo mode (isolate single track)
 - Track selection
