@@ -6,8 +6,8 @@ use iced::{Alignment, Border, Element, Size, Subscription, Task, Theme, keyboard
 use std::fmt::Display;
 
 use crate::ApplicationArgs;
-use crate::audio::midi_builder::compute_playback_order;
 use crate::audio::midi_player::AudioPlayer;
+use crate::audio::playback_order::compute_playback_order;
 use crate::config::Config;
 use crate::parser::song_parser::{GpVersion, Song, parse_gp_data};
 use crate::ui::icons::{open_icon, pause_icon, play_icon, solo_icon, stop_icon};
