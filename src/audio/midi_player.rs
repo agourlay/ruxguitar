@@ -37,7 +37,7 @@ impl AudioPlayer {
         sound_font_file: Option<PathBuf>,
         beat_sender: Arc<Sender<u32>>,
         playback_order: &[(usize, i64)],
-    ) -> Self {
+    ) -> Result<Self, AudioPlayerError> {
         // default to no solo track
         let solo_track_id = None;
 
@@ -53,22 +53,27 @@ impl AudioPlayer {
         let events = builder.build_for_song_with_order(&song, playback_order);
 
         // sound font setup
-        let sound_font = if let Some(sound_font_file) = sound_font_file {
-            let mut sf2 = File::open(sound_font_file).unwrap();
-            SoundFont::new(&mut sf2).unwrap()
+        let sound_font = if let Some(ref sound_font_file) = sound_font_file {
+            let mut sf2 = File::open(sound_font_file).map_err(|e| {
+                AudioPlayerError::SoundFontFileError(format!("{}: {e}", sound_font_file.display()))
+            })?;
+            SoundFont::new(&mut sf2).map_err(|e| {
+                AudioPlayerError::SoundFontLoadError(format!("{}: {e}", sound_font_file.display()))
+            })?
         } else {
             let mut sf2 = TIMIDITY_SOUND_FONT;
-            SoundFont::new(&mut sf2).unwrap()
+            SoundFont::new(&mut sf2)
+                .map_err(|e| AudioPlayerError::SoundFontLoadError(format!("embedded: {e}")))?
         };
         let sound_font = Arc::new(sound_font);
 
         // build new default synthesizer for the stream
-        let synthesizer = Self::make_synthesizer(sound_font.clone(), DEFAULT_SAMPLE_RATE);
+        let synthesizer = Self::make_synthesizer(sound_font.clone(), DEFAULT_SAMPLE_RATE)?;
         let midi_sequencer = MidiSequencer::new(events);
 
         let synthesizer = Arc::new(Mutex::new(synthesizer));
         let sequencer = Arc::new(Mutex::new(midi_sequencer));
-        Self {
+        Ok(Self {
             is_playing: false,
             song,
             stream: None,
@@ -77,14 +82,18 @@ impl AudioPlayer {
             synthesizer,
             sound_font,
             beat_sender,
-        }
+        })
     }
 
-    fn make_synthesizer(sound_font: Arc<SoundFont>, sample_rate: u32) -> Synthesizer {
+    fn make_synthesizer(
+        sound_font: Arc<SoundFont>,
+        sample_rate: u32,
+    ) -> Result<Synthesizer, AudioPlayerError> {
         let synthesizer_settings = SynthesizerSettings::new(sample_rate as i32);
         let synthesizer_settings = Arc::new(synthesizer_settings);
         debug_assert_eq!(synthesizer_settings.sample_rate, sample_rate as i32);
-        Synthesizer::new(&sound_font, &synthesizer_settings).unwrap()
+        Synthesizer::new(&sound_font, &synthesizer_settings)
+            .map_err(|e| AudioPlayerError::SynthesizerError(e.to_string()))
     }
 
     pub const fn is_playing(&self) -> bool {
@@ -134,17 +143,22 @@ impl AudioPlayer {
         self.stream.take();
     }
 
-    pub fn toggle_play(&mut self) {
+    /// Toggle play/pause. Returns an error message if playback fails.
+    pub fn toggle_play(&mut self) -> Option<String> {
         log::info!("Toggle audio stream");
         if let Some(ref stream) = self.stream {
             if self.is_playing {
                 self.is_playing = false;
-                stream.pause().unwrap();
+                if let Err(err) = stream.pause() {
+                    return Some(format!("Failed to pause audio stream: {err}"));
+                }
             } else {
                 self.is_playing = true;
                 // reset last time to not advance time too fast on resume
                 self.sequencer.lock().unwrap().reset_last_time();
-                stream.play().unwrap();
+                if let Err(err) = stream.play() {
+                    return Some(format!("Failed to resume audio stream: {err}"));
+                }
             }
         } else {
             self.is_playing = true;
@@ -163,12 +177,13 @@ impl AudioPlayer {
                     self.stream = Some(Rc::new(stream));
                 }
                 Err(err) => {
-                    log::error!("Failed to create audio stream: {err}");
                     self.is_playing = false;
                     self.stream = None;
+                    return Some(format!("Failed to create audio stream: {err}"));
                 }
             }
         }
+        None
     }
 
     pub fn focus_measure(&self, measure_id: usize) {
@@ -194,11 +209,19 @@ impl AudioPlayer {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum AudioStreamError {
+pub enum AudioPlayerError {
     #[error("audio device not found")]
     CpalDeviceNotFound,
     #[error("no output configuration found: {0}")]
     CpalOutputConfigNotFound(DefaultStreamConfigError),
+    #[error("failed to open sound font file: {0}")]
+    SoundFontFileError(String),
+    #[error("failed to load sound font: {0}")]
+    SoundFontLoadError(String),
+    #[error("failed to create synthesizer: {0}")]
+    SynthesizerError(String),
+    #[error("failed to create audio stream: {0}")]
+    StreamError(String),
 }
 
 /// Create a new output stream for audio playback.
@@ -208,21 +231,22 @@ fn new_output_stream(
     synthesizer: Arc<Mutex<Synthesizer>>,
     sound_font: Arc<SoundFont>,
     beat_notifier: Arc<Sender<u32>>,
-) -> Result<cpal::Stream, AudioStreamError> {
+) -> Result<cpal::Stream, AudioPlayerError> {
     let host = cpal::default_host();
     let Some(device) = host.default_output_device() else {
-        return Err(AudioStreamError::CpalDeviceNotFound);
+        return Err(AudioPlayerError::CpalDeviceNotFound);
     };
 
     let config = device
         .default_output_config()
-        .map_err(AudioStreamError::CpalOutputConfigNotFound)?;
+        .map_err(AudioPlayerError::CpalOutputConfigNotFound)?;
 
-    assert!(
-        config.sample_format().is_float(),
-        "Unsupported sample format {}",
-        config.sample_format()
-    );
+    if !config.sample_format().is_float() {
+        return Err(AudioPlayerError::StreamError(format!(
+            "Unsupported sample format {}",
+            config.sample_format()
+        )));
+    }
     let stream_config: cpal::StreamConfig = config.into();
     let sample_rate = stream_config.sample_rate;
 
@@ -231,7 +255,7 @@ fn new_output_stream(
     let mut synthesizer_guard = synthesizer.lock().unwrap();
     if sample_rate != DEFAULT_SAMPLE_RATE {
         // audio output is not using the default sample rate - recreate synthesizer with proper sample rate
-        let new_synthesizer = AudioPlayer::make_synthesizer(sound_font, sample_rate);
+        let new_synthesizer = AudioPlayer::make_synthesizer(sound_font, sample_rate)?;
         *synthesizer_guard = new_synthesizer;
     }
 
@@ -369,7 +393,9 @@ fn new_output_stream(
         err_fn,
         None, // blocking stream
     );
-    let stream = stream.unwrap();
-    stream.play().unwrap();
+    let stream = stream.map_err(|e| AudioPlayerError::StreamError(e.to_string()))?;
+    stream
+        .play()
+        .map_err(|e| AudioPlayerError::StreamError(e.to_string()))?;
     Ok(stream)
 }

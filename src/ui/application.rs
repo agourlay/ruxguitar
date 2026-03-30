@@ -256,20 +256,29 @@ impl RuxApplication {
                             );
                             self.tablature = Some(tablature);
                             // audio player initialization
-                            let audio_player = AudioPlayer::new(
+                            match AudioPlayer::new(
                                 song_rc.clone(),
                                 song_rc.tempo.value,
                                 self.tempo_selection.percentage,
                                 self.sound_font_file.clone(),
                                 self.beat_sender.clone(),
                                 &playback_order,
-                            );
-                            self.audio_player = Some(audio_player);
-                            // reset tablature scroll and trigger layout computation
-                            Task::batch([
-                                scroll_to(tablature_scroll_id, AbsoluteOffset::<f32>::default()),
-                                Task::done(Message::WindowResized),
-                            ])
+                            ) {
+                                Ok(audio_player) => {
+                                    self.audio_player = Some(audio_player);
+                                    // reset tablature scroll and trigger layout computation
+                                    Task::batch([
+                                        scroll_to(
+                                            tablature_scroll_id,
+                                            AbsoluteOffset::<f32>::default(),
+                                        ),
+                                        Task::done(Message::WindowResized),
+                                    ])
+                                }
+                                Err(err) => Task::done(Message::ReportError(format!(
+                                    "Failed to initialize audio: {err}"
+                                ))),
+                            }
                         } else {
                             Task::done(Message::ReportError("Failed to parse GP file".to_string()))
                         }
@@ -309,8 +318,10 @@ impl RuxApplication {
                 if self.tab_file_is_loading {
                     return Task::none();
                 }
-                if let Some(audio_player) = &mut self.audio_player {
-                    audio_player.toggle_play();
+                if let Some(audio_player) = &mut self.audio_player
+                    && let Some(err) = audio_player.toggle_play()
+                {
+                    return Task::done(Message::ReportError(err));
                 }
                 // Hack to make sure the tablature is aware of its size
                 Task::done(Message::WindowResized)
