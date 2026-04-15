@@ -34,8 +34,11 @@ impl MidiSequencer {
 
     #[allow(clippy::missing_const_for_fn)]
     pub fn set_tick(&mut self, tick: u32) {
-        self.last_tick = tick.saturating_sub(1);
-        self.current_tick = tick;
+        // set last_tick before the target so get_next_events includes events at target tick
+        // set current_tick = last_tick so advance() triggers the init path (bumps by 1)
+        let adjusted = tick.saturating_sub(1);
+        self.last_tick = adjusted;
+        self.current_tick = adjusted;
     }
 
     pub fn reset_last_time(&mut self) {
@@ -131,6 +134,7 @@ fn tick_increase(tempo_bpm: u32, elapsed_seconds: f32) -> u32 {
 mod tests {
     use super::*;
     use crate::audio::midi_builder::MidiBuilder;
+    use crate::audio::midi_event::MidiEventType;
     use crate::parser::song_parser_tests::parse_gp_file;
     use std::rc::Rc;
     use std::time::Duration;
@@ -192,5 +196,90 @@ mod tests {
             }
         }
         assert_eq!(pos, events.len());
+    }
+
+    #[test]
+    fn set_tick_includes_events_at_target() {
+        // events at ticks 100, 200, 300
+        let events = vec![
+            MidiEvent {
+                tick: 100,
+                event: MidiEventType::NoteOn(0, 60, 95),
+                track: Some(0),
+            },
+            MidiEvent {
+                tick: 200,
+                event: MidiEventType::NoteOn(0, 62, 95),
+                track: Some(0),
+            },
+            MidiEvent {
+                tick: 300,
+                event: MidiEventType::NoteOn(0, 64, 95),
+                track: Some(0),
+            },
+        ];
+        let mut sequencer = MidiSequencer::new(events);
+
+        // seek to tick 200 — set_tick sets both ticks to 199
+        sequencer.set_tick(200);
+        // first advance_tick triggers init: last_tick stays 199, current_tick becomes 200
+        sequencer.advance_tick(1);
+        let batch = sequencer.get_next_events().unwrap();
+
+        // should include the event at tick 200
+        assert!(
+            batch.iter().any(|e| e.tick == 200),
+            "set_tick should include events at the target tick, got: {batch:?}"
+        );
+        // should NOT include event at tick 100 (before target)
+        assert!(
+            !batch.iter().any(|e| e.tick == 100),
+            "set_tick should not include events before target tick"
+        );
+    }
+
+    #[test]
+    fn set_tick_on_song_with_repeats() {
+        // verify seeking works correctly with repeat-expanded events
+        const FILE_PATH: &str = "test-files/John Petrucci - Damage Control.gp5";
+        let song = parse_gp_file(FILE_PATH).unwrap();
+        let playback_order =
+            crate::audio::playback_order::compute_playback_order(&song.measure_headers);
+
+        // build measure_playback_ticks (same logic as AudioPlayer::new)
+        let measure_count = song.measure_headers.len();
+        let mut measure_playback_ticks = vec![0_u32; measure_count];
+        let mut seen = vec![false; measure_count];
+        for &(measure_index, tick_offset) in &playback_order {
+            if !seen[measure_index] {
+                seen[measure_index] = true;
+                let header = &song.measure_headers[measure_index];
+                measure_playback_ticks[measure_index] =
+                    (i64::from(header.start) + tick_offset) as u32;
+            }
+        }
+
+        let song = Rc::new(song);
+        let builder = MidiBuilder::new();
+        let events = builder.build_for_song(&song);
+        let mut sequencer = MidiSequencer::new(events.clone());
+
+        // seek to measure 5 (index 4)
+        let target_measure = 4;
+        let target_tick = measure_playback_ticks[target_measure];
+        assert!(target_tick > 0, "Measure 5 should have a non-zero playback tick");
+
+        sequencer.set_tick(target_tick);
+        sequencer.advance_tick(1);
+        let batch = sequencer.get_next_events().unwrap();
+
+        // verify we get events at or near the target tick, not from earlier measures
+        if !batch.is_empty() {
+            let min_tick = batch.iter().map(|e| e.tick).min().unwrap();
+            assert!(
+                min_tick >= target_tick,
+                "After seeking to tick {target_tick}, got events at tick {min_tick}"
+            );
+        }
     }
 }
