@@ -267,7 +267,10 @@ mod tests {
         // seek to measure 5 (index 4)
         let target_measure = 4;
         let target_tick = measure_playback_ticks[target_measure];
-        assert!(target_tick > 0, "Measure 5 should have a non-zero playback tick");
+        assert!(
+            target_tick > 0,
+            "Measure 5 should have a non-zero playback tick"
+        );
 
         sequencer.set_tick(target_tick);
         sequencer.advance_tick(1);
