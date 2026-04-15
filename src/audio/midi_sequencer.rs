@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn set_tick_on_song_with_repeats() {
         // verify seeking works correctly with repeat-expanded events
-        const FILE_PATH: &str = "test-files/John Petrucci - Damage Control.gp5";
+        const FILE_PATH: &str = "test-files/John Petrucci - Damage Control (ver 6 by Feio666).gp5";
         let song = parse_gp_file(FILE_PATH).unwrap();
         let playback_order =
             crate::audio::playback_order::compute_playback_order(&song.measure_headers);
