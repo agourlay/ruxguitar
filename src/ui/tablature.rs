@@ -183,18 +183,7 @@ impl Tablature {
                 self.focused_measure = next_focus_id;
                 let next_canvas = self.canvas_measures.get_mut(next_focus_id).unwrap();
                 next_canvas.toggle_focused();
-
-                // compute progress of the measure within the song
-                let line_tracker = &self.line_tracker;
-                let focus_line = line_tracker.get_line(next_focus_id);
-                // scroll so the previous line is still visible above
-                let scroll_line = focus_line.saturating_sub(2);
-                let estimated_y = INNER_PADDING + scroll_line as f32 * self.canvas_measure_height;
-                if focus_line < 2 {
-                    return None;
-                }
-                log::debug!("scrolling to focus_line {focus_line} estimated_y {estimated_y}");
-                return Some(estimated_y);
+                return self.scroll_offset_for_measure(next_focus_id);
             }
         }
         None
@@ -209,6 +198,23 @@ impl Tablature {
             let next_canvas = self.canvas_measures.get_mut(new_measure_id).unwrap();
             next_canvas.toggle_focused();
         }
+    }
+
+    pub const fn focused_measure(&self) -> usize {
+        self.focused_measure
+    }
+
+    pub const fn measure_count(&self) -> usize {
+        self.canvas_measures.len()
+    }
+
+    pub fn scroll_offset_for_measure(&self, measure_id: usize) -> Option<f32> {
+        let focus_line = self.line_tracker.get_line(measure_id);
+        if focus_line < 2 {
+            return None;
+        }
+        let scroll_line = focus_line.saturating_sub(2);
+        Some(INNER_PADDING + scroll_line as f32 * self.canvas_measure_height)
     }
 
     pub fn view(&self) -> Element<'_, Message> {

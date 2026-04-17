@@ -15,7 +15,7 @@ use crate::ui::picker::{FilePickerError, load_file, open_file_dialog};
 use crate::ui::tablature::Tablature;
 use crate::ui::utils::{action_gated, action_toggle, modal, untitled_text_table_box};
 use iced::futures::{SinkExt, Stream};
-use iced::keyboard::key::Named::{ArrowDown, ArrowUp, Space};
+use iced::keyboard::key::Named::{ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Space};
 use iced::widget::scrollable::AbsoluteOffset;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -123,6 +123,8 @@ pub enum Message {
     TrackSelected(TrackSelection),                                           // track selection
     FocusMeasure(usize),           // used when clicking on measure in tablature
     FocusTick(u32),                // focus on a specific tick in the tablature
+    NextMeasure,                   // focus next measure
+    PreviousMeasure,               // focus previous measure
     PlayPause,                     // toggle play/pause
     StopPlayer,                    // stop playback
     ToggleSolo,                    // toggle solo mode
@@ -184,6 +186,21 @@ impl RuxApplication {
             Some(song_info) => format!("Ruxguitar - {}", song_info.file_name),
             None => String::from("Ruxguitar - untitled"),
         }
+    }
+
+    fn focus_measure_with_scroll(&mut self, measure_id: usize) -> Task<Message> {
+        let Some(tablature) = &mut self.tablature else {
+            return Task::none();
+        };
+        tablature.focus_on_measure(measure_id);
+        let scroll_offset = tablature.scroll_offset_for_measure(measure_id);
+        let scroll_id = tablature.scroll_id.clone();
+        if let Some(audio_player) = &self.audio_player {
+            audio_player.focus_measure(measure_id);
+        }
+        scroll_offset.map_or_else(Task::none, |y| {
+            scroll_to(scroll_id, AbsoluteOffset { x: 0.0, y })
+        })
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -313,6 +330,20 @@ impl RuxApplication {
                     );
                 }
                 Task::none()
+            }
+            Message::NextMeasure => {
+                let target = self.tablature.as_ref().and_then(|t| {
+                    let next = t.focused_measure() + 1;
+                    (next < t.measure_count()).then_some(next)
+                });
+                target.map_or_else(Task::none, |m| self.focus_measure_with_scroll(m))
+            }
+            Message::PreviousMeasure => {
+                let target = self
+                    .tablature
+                    .as_ref()
+                    .and_then(|t| t.focused_measure().checked_sub(1));
+                target.map_or_else(Task::none, |m| self.focus_measure_with_scroll(m))
             }
             Message::PlayPause => {
                 if self.tab_file_is_loading {
@@ -569,6 +600,11 @@ impl RuxApplication {
                 }
                 keyboard::Key::Named(ArrowDown) if modifiers.control() => {
                     Some(Message::DecreaseTempo)
+                }
+                keyboard::Key::Named(ArrowLeft) => Some(Message::PreviousMeasure),
+                keyboard::Key::Named(ArrowRight) => Some(Message::NextMeasure),
+                keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s") => {
+                    Some(Message::ToggleSolo)
                 }
                 _ => None,
             }

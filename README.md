@@ -17,7 +17,11 @@ The design of the application is described in details in the blog article "[Play
 - Tempo control (25% to 200%)
 - Solo mode (isolate single track)
 - Track selection
-- Keyboard shortcuts (Space = play/pause, Ctrl+Up/Down = tempo)
+- Keyboard shortcuts:
+    - `Space` play/pause
+    - `Ctrl+Up` / `Ctrl+Down` tempo up/down
+    - `Left` / `Right` previous/next measure
+    - `S` toggle solo
 
 ## Limitations
 
