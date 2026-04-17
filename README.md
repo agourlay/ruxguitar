@@ -11,7 +11,7 @@ The design of the application is described in details in the blog article "[Play
 
 ## Features
 
-- GP4 and GP5 file support
+- GP4 and GP5 file support (drag-and-drop supported)
 - MIDI playback with embedded soundfont (or custom soundfont)
 - Repeat sections with alternative endings
 - Tempo control (25% to 200%)

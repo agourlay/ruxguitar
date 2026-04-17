@@ -224,8 +224,12 @@ impl RuxApplication {
                 }
             }
             Message::OpenFile(path) => {
-                self.tab_file_is_loading = true;
-                Task::perform(load_file(path), Message::FileOpened)
+                if self.tab_file_is_loading {
+                    Task::none()
+                } else {
+                    self.tab_file_is_loading = true;
+                    Task::perform(load_file(path), Message::FileOpened)
+                }
             }
             Message::FileOpened(result) => {
                 self.tab_file_is_loading = false;
@@ -620,6 +624,15 @@ impl RuxApplication {
 
         let window_resized = window::resize_events().map(|_| Message::WindowResized);
         subscriptions.push(window_resized);
+
+        let file_dropped = window::events().filter_map(|(_, event)| {
+            if let window::Event::FileDropped(path) = event {
+                Some(Message::OpenFile(path))
+            } else {
+                None
+            }
+        });
+        subscriptions.push(file_dropped);
 
         Subscription::batch(subscriptions)
     }
