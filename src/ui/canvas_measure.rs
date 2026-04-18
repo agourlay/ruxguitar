@@ -25,16 +25,16 @@ const TIE: char = '\u{2323}'; // ⌣ https://unicodeplus.com/U+2323
 
 // Drawing constants
 
-// Measure label + marker
+// Vertical layout above the staff (y grows downward):
+//   y=3   MEASURE_ANNOTATION_Y   measure number / marker title
+//   y=15  CHORD_ANNOTATION_Y     chord name
+//   y=27  NOTE_EFFECT_ANNOTATION_Y  vibrato / hammer / slide labels
+//   y=38  BEAT_TEXT_ANNOTATION_Y beat.text ("Verse", "fill", ...)
+//   y=50  FIRST_STRING_Y         first tab line
 const MEASURE_ANNOTATION_Y: f32 = 3.0;
-
-// Chord label level
 const CHORD_ANNOTATION_Y: f32 = 15.0;
-
-// Note effect level
 const NOTE_EFFECT_ANNOTATION_Y: f32 = 27.0;
-
-// First string level
+const BEAT_TEXT_ANNOTATION_Y: f32 = 38.0;
 const FIRST_STRING_Y: f32 = 50.0;
 
 // Distance between strings
@@ -529,6 +529,19 @@ fn draw_beat(
             ..Text::default()
         };
         frame.fill_text(note_effect_text);
+    }
+
+    // user-authored text attached to the beat (e.g. "Verse", "fill")
+    if !beat.text.is_empty() {
+        let beat_text = Text {
+            shaping: Auto,
+            content: beat.text.clone(),
+            color: Color::WHITE,
+            size: 8.0.into(),
+            position: Point::new(beat_position_x + 3.0, BEAT_TEXT_ANNOTATION_Y),
+            ..Text::default()
+        };
+        frame.fill_text(beat_text);
     }
 }
 
