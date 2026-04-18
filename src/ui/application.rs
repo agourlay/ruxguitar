@@ -13,6 +13,7 @@ use crate::parser::song_parser::{GpVersion, Song, parse_gp_data};
 use crate::ui::icons::{open_icon, pause_icon, play_icon, solo_icon, stop_icon};
 use crate::ui::picker::{FilePickerError, load_file, open_file_dialog};
 use crate::ui::tablature::Tablature;
+use crate::ui::tuning::tuning_label;
 use crate::ui::utils::{action_gated, action_toggle, modal, untitled_text_table_box};
 use iced::futures::{SinkExt, Stream};
 use iced::keyboard::key::Named::{ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Space};
@@ -101,17 +102,26 @@ impl Display for TempoSelection {
 pub struct TrackSelection {
     index: usize,
     name: String,
+    tuning: Option<String>,
 }
 
 impl TrackSelection {
-    const fn new(index: usize, name: String) -> Self {
-        Self { index, name }
+    const fn new(index: usize, name: String, tuning: Option<String>) -> Self {
+        Self {
+            index,
+            name,
+            tuning,
+        }
     }
 }
 
 impl Display for TrackSelection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} - {}", self.index + 1, self.name)
+        write!(f, "{} - {}", self.index + 1, self.name)?;
+        if let Some(tuning) = &self.tuning {
+            write!(f, " ({tuning})")?;
+        }
+        Ok(())
     }
 }
 
@@ -251,7 +261,13 @@ impl RuxApplication {
                                 .iter()
                                 .enumerate()
                                 .map(|(index, track)| {
-                                    TrackSelection::new(index, track.name.clone())
+                                    let tuning = song
+                                        .midi_channels
+                                        .iter()
+                                        .find(|c| c.channel_id == track.channel_id)
+                                        .filter(|c| !c.is_percussion())
+                                        .and_then(|_| tuning_label(&track.strings));
+                                    TrackSelection::new(index, track.name.clone(), tuning)
                                 })
                                 .collect();
                             if track_selections.is_empty() {

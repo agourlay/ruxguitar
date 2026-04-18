@@ -3,4 +3,5 @@ mod canvas_measure;
 mod icons;
 mod picker;
 mod tablature;
+mod tuning;
 mod utils;
