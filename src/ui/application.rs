@@ -9,7 +9,7 @@ use crate::ApplicationArgs;
 use crate::audio::midi_player::AudioPlayer;
 use crate::audio::playback_order::compute_playback_order;
 use crate::config::Config;
-use crate::parser::song_parser::{GpVersion, Song, parse_gp_data};
+use crate::parser::song_parser::{GpVersion, MeasureHeader, QUARTER_TIME, Song, parse_gp_data};
 use crate::ui::icons::{open_icon, pause_icon, play_icon, solo_icon, stop_icon};
 use crate::ui::picker::{FilePickerError, load_file, open_file_dialog};
 use crate::ui::tablature::Tablature;
@@ -475,7 +475,25 @@ impl RuxApplication {
             };
             let play_button = action_gated(icon, message, Some(Message::PlayPause));
             let stop_button = action_gated(stop_icon(), "Stop", Some(Message::StopPlayer));
-            row![play_button, stop_button,]
+            let counter = self
+                .tablature
+                .as_ref()
+                .map(|tab| {
+                    let headers = &tab.song.measure_headers;
+                    let focused = tab.focused_measure();
+                    let total_measures = tab.measure_count();
+                    let current_seconds = song_time_up_to_measure(headers, focused);
+                    let total_seconds = song_time_up_to_measure(headers, total_measures);
+                    format!(
+                        "Measure {}/{} \u{2022} {}/{}",
+                        focused + 1,
+                        total_measures,
+                        format_mmss(current_seconds),
+                        format_mmss(total_seconds),
+                    )
+                })
+                .unwrap_or_default();
+            row![play_button, stop_button, text(counter).size(14)]
                 .spacing(10)
                 .align_y(Alignment::Center)
         } else {
@@ -652,6 +670,29 @@ impl RuxApplication {
 
         Subscription::batch(subscriptions)
     }
+}
+
+/// Seconds elapsed from the song's start up to (but not including) `measure_idx`.
+/// Tempo changes across measures are honored. Repeats are ignored — we compute
+/// the song's linear duration, not expanded playback time.
+fn song_time_up_to_measure(headers: &[MeasureHeader], measure_idx: usize) -> f32 {
+    headers
+        .iter()
+        .take(measure_idx)
+        .enumerate()
+        .map(|(i, h)| {
+            let next_start = headers
+                .get(i + 1)
+                .map_or(h.start + h.length(), |next| next.start);
+            let duration_ticks = next_start.saturating_sub(h.start) as f32;
+            duration_ticks / QUARTER_TIME as f32 * 60.0 / h.tempo.value as f32
+        })
+        .sum()
+}
+
+fn format_mmss(seconds: f32) -> String {
+    let total = seconds.max(0.0) as u32;
+    format!("{}:{:02}", total / 60, total % 60)
 }
 
 struct BeatSubscriptionData(Arc<Mutex<Receiver<u32>>>);
