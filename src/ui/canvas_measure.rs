@@ -30,12 +30,13 @@ const TIE: char = '\u{2323}'; // ⌣ https://unicodeplus.com/U+2323
 //   y=15  CHORD_ANNOTATION_Y     chord name
 //   y=27  NOTE_EFFECT_ANNOTATION_Y  vibrato / hammer / slide labels
 //   y=38  BEAT_TEXT_ANNOTATION_Y beat.text ("Verse", "fill", ...)
-//   y=50  FIRST_STRING_Y         first tab line
+//   y=60  FIRST_STRING_Y         first tab line (leaves room for the
+//                                focus box to not sit on the first string)
 const MEASURE_ANNOTATION_Y: f32 = 3.0;
 const CHORD_ANNOTATION_Y: f32 = 15.0;
 const NOTE_EFFECT_ANNOTATION_Y: f32 = 27.0;
 const BEAT_TEXT_ANNOTATION_Y: f32 = 38.0;
-const FIRST_STRING_Y: f32 = 50.0;
+const FIRST_STRING_Y: f32 = 60.0;
 
 // Distance between strings
 const STRING_LINE_HEIGHT: f32 = 13.0;
