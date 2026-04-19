@@ -38,6 +38,9 @@ const NOTE_EFFECT_ANNOTATION_Y: f32 = 27.0;
 const BEAT_TEXT_ANNOTATION_Y: f32 = 38.0;
 const FIRST_STRING_Y: f32 = 60.0;
 
+// Space below the last string (just enough for focus box clearance).
+const BOTTOM_PADDING: f32 = 16.0;
+
 // Distance between strings
 const STRING_LINE_HEIGHT: f32 = 13.0;
 
@@ -97,7 +100,7 @@ impl CanvasMeasure {
         let string_count = track.strings.len();
         // total height of measure (same for all measures in track)
         let vertical_measure_height = STRING_LINE_HEIGHT * (string_count - 1) as f32;
-        let vertical_measure_height = vertical_measure_height + FIRST_STRING_Y * 2.0;
+        let vertical_measure_height = vertical_measure_height + FIRST_STRING_Y + BOTTOM_PADDING;
         Self {
             measure_id,
             track_id,
