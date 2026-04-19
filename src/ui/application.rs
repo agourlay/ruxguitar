@@ -16,7 +16,7 @@ use crate::ui::tablature::Tablature;
 use crate::ui::tuning::tuning_label;
 use crate::ui::utils::{action_gated, action_toggle, modal, untitled_text_table_box};
 use iced::futures::{SinkExt, Stream};
-use iced::keyboard::key::Named::{ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Space};
+use iced::keyboard::key::Named::{ArrowDown, ArrowLeft, ArrowRight, ArrowUp, F11, Space};
 use iced::widget::scrollable::AbsoluteOffset;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -40,6 +40,7 @@ pub struct RuxApplication {
     beat_receiver: Arc<Mutex<Receiver<u32>>>, // beat receiver
     config: Config,                           // local configuration
     error_message: Option<String>,            // error message to display
+    is_fullscreen: bool,                      // F11 toggles fullscreen + hides chrome
 }
 
 #[derive(Debug)]
@@ -175,6 +176,7 @@ pub enum Message {
     DecreaseTempo,                 // decrease selection
     ClearError,                    // clear error message
     ReportError(String),           // report error message
+    ToggleFullscreen,              // toggle fullscreen + hide chrome
 }
 
 impl RuxApplication {
@@ -194,6 +196,7 @@ impl RuxApplication {
             beat_sender: Arc::new(beat_sender),
             config,
             error_message: None,
+            is_fullscreen: false,
         }
     }
 
@@ -478,6 +481,15 @@ impl RuxApplication {
                 }
                 Task::none()
             }
+            Message::ToggleFullscreen => {
+                self.is_fullscreen = !self.is_fullscreen;
+                let mode = if self.is_fullscreen {
+                    window::Mode::Fullscreen
+                } else {
+                    window::Mode::Windowed
+                };
+                window::latest().and_then(move |id| window::set_mode(id, mode))
+            }
             Message::ClearError => {
                 self.error_message = None;
                 Task::none()
@@ -620,10 +632,14 @@ impl RuxApplication {
 
         let tablature = container(tablature_view).id(self.tablature_id.clone());
 
-        let base = column![controls, tablature, rule::horizontal(1), status,]
-            .spacing(20)
-            .padding(10)
-            .into();
+        let base: Element<Message> = if self.is_fullscreen {
+            column![tablature].spacing(20).padding(10).into()
+        } else {
+            column![controls, tablature, rule::horizontal(1), status,]
+                .spacing(20)
+                .padding(10)
+                .into()
+        };
 
         // add error modal if any
         if let Some(error_message) = &self.error_message {
@@ -684,6 +700,7 @@ impl RuxApplication {
                 keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s") => {
                     Some(Message::ToggleSolo)
                 }
+                keyboard::Key::Named(F11) => Some(Message::ToggleFullscreen),
                 _ => None,
             }
         });

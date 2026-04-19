@@ -22,6 +22,7 @@ The design of the application is described in details in the blog article "[Play
     - `Ctrl+Up` / `Ctrl+Down` tempo up/down
     - `Left` / `Right` previous/next measure
     - `S` toggle solo
+    - `F11` toggle fullscreen
 
 ## Limitations
 
