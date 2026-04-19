@@ -37,22 +37,22 @@ fn preset_name(pitches_sorted: &[i32]) -> Option<&'static str> {
         [38, 43, 50, 55, 59, 62] => Some("Open G"),
         [38, 45, 50, 53, 57, 64] => Some("Open D minor (high E)"),
         // 7-string guitar
-        [35, 40, 45, 50, 55, 59, 64] => Some("Standard B (7-string)"),
-        [34, 39, 44, 49, 54, 58, 63] => Some("Half-step down (7-string)"),
-        [33, 38, 43, 48, 53, 57, 62] => Some("Standard A (7-string)"),
-        [33, 40, 45, 50, 55, 59, 64] => Some("Drop A (7-string)"),
-        [29, 34, 39, 44, 49, 53, 58] => Some("Standard F (7-string)"),
+        [35, 40, 45, 50, 55, 59, 64] => Some("Standard B"),
+        [34, 39, 44, 49, 54, 58, 63] => Some("Half-step down"),
+        [33, 38, 43, 48, 53, 57, 62] => Some("Standard A"),
+        [33, 40, 45, 50, 55, 59, 64] => Some("Drop A"),
+        [29, 34, 39, 44, 49, 53, 58] => Some("Standard F"),
         // 4-string bass
-        [28, 33, 38, 43] => Some("Standard E (bass)"),
-        [27, 32, 37, 42] => Some("Half-step down (bass)"),
-        [26, 31, 36, 41] => Some("Standard D (bass)"),
-        [26, 33, 38, 43] => Some("Drop D (bass)"),
+        [28, 33, 38, 43] => Some("Standard E"),
+        [27, 32, 37, 42] => Some("Half-step down"),
+        [26, 31, 36, 41] => Some("Standard D"),
+        [26, 33, 38, 43] => Some("Drop D"),
         // 5-string bass
-        [23, 28, 33, 38, 43] => Some("Standard B (5-string bass)"),
-        [22, 27, 32, 37, 42] => Some("Half-step down (5-string bass)"),
-        [21, 28, 33, 38, 43] => Some("Drop A (5-string bass)"),
+        [23, 28, 33, 38, 43] => Some("Standard B"),
+        [22, 27, 32, 37, 42] => Some("Half-step down"),
+        [21, 28, 33, 38, 43] => Some("Drop A"),
         // 6-string bass
-        [23, 28, 33, 38, 43, 48] => Some("Standard B (6-string bass)"),
+        [23, 28, 33, 38, 43, 48] => Some("Standard B"),
         _ => None,
     }
 }
@@ -129,7 +129,7 @@ mod tests {
             (6, 40),
             (7, 33),
         ];
-        assert_eq!(tuning_label(&strings).as_deref(), Some("Drop A (7-string)"));
+        assert_eq!(tuning_label(&strings).as_deref(), Some("Drop A"));
     }
 
     #[test]
@@ -144,10 +144,7 @@ mod tests {
             (6, 38),
             (7, 33),
         ];
-        assert_eq!(
-            tuning_label(&strings).as_deref(),
-            Some("Standard A (7-string)")
-        );
+        assert_eq!(tuning_label(&strings).as_deref(), Some("Standard A"));
     }
 
     #[test]
@@ -162,16 +159,13 @@ mod tests {
             (6, 34),
             (7, 29),
         ];
-        assert_eq!(
-            tuning_label(&strings).as_deref(),
-            Some("Standard F (7-string)")
-        );
+        assert_eq!(tuning_label(&strings).as_deref(), Some("Standard F"));
     }
 
     #[test]
     fn standard_bass() {
         let strings = vec![(1, 43), (2, 38), (3, 33), (4, 28)];
-        assert_eq!(tuning_label(&strings).as_deref(), Some("Standard E (bass)"));
+        assert_eq!(tuning_label(&strings).as_deref(), Some("Standard E"));
     }
 
     #[test]
@@ -195,27 +189,21 @@ mod tests {
     fn drop_a_5_string_bass() {
         // A E A D G
         let strings = vec![(1, 43), (2, 38), (3, 33), (4, 28), (5, 21)];
-        assert_eq!(
-            tuning_label(&strings).as_deref(),
-            Some("Drop A (5-string bass)")
-        );
+        assert_eq!(tuning_label(&strings).as_deref(), Some("Drop A"));
     }
 
     #[test]
     fn standard_d_bass() {
         // D G C F
         let strings = vec![(1, 41), (2, 36), (3, 31), (4, 26)];
-        assert_eq!(tuning_label(&strings).as_deref(), Some("Standard D (bass)"));
+        assert_eq!(tuning_label(&strings).as_deref(), Some("Standard D"));
     }
 
     #[test]
     fn standard_b_6_string_bass() {
         // B E A D G C
         let strings = vec![(1, 48), (2, 43), (3, 38), (4, 33), (5, 28), (6, 23)];
-        assert_eq!(
-            tuning_label(&strings).as_deref(),
-            Some("Standard B (6-string bass)")
-        );
+        assert_eq!(tuning_label(&strings).as_deref(), Some("Standard B"));
     }
 
     #[test]
