@@ -1,7 +1,7 @@
 use iced::advanced::text::Shaping::Auto;
 use iced::widget::operation::scroll_to;
 use iced::widget::space::horizontal;
-use iced::widget::{Id, Text, column, container, pick_list, row, selector, text};
+use iced::widget::{Id, Text, column, container, pick_list, row, rule, selector, text};
 use iced::{Alignment, Border, Element, Size, Subscription, Task, Theme, keyboard, stream, window};
 use std::fmt::Display;
 
@@ -46,6 +46,11 @@ pub struct RuxApplication {
 struct SongDisplayInfo {
     name: String,
     artist: String,
+    subtitle: String,
+    album: String,
+    author: String,
+    writer: String,
+    copyright: String,
     gp_version: GpVersion,
     file_name: String,
 }
@@ -55,8 +60,33 @@ impl SongDisplayInfo {
         Self {
             name: song.song_info.name.clone(),
             artist: song.song_info.artist.clone(),
+            subtitle: song.song_info.subtitle.clone(),
+            album: song.song_info.album.clone(),
+            author: song.song_info.author.clone(),
+            writer: song.song_info.writer.clone(),
+            copyright: song.song_info.copyright.clone(),
             gp_version: song.version,
             file_name,
+        }
+    }
+
+    /// Metadata fields joined with " \u{2022} ", skipping empty ones.
+    /// Returns `None` if no metadata is available.
+    fn metadata_line(&self) -> Option<String> {
+        let parts: Vec<&str> = [
+            self.subtitle.as_str(),
+            self.album.as_str(),
+            self.author.as_str(),
+            self.writer.as_str(),
+            self.copyright.as_str(),
+        ]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect();
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" \u{2022} "))
         }
     }
 }
@@ -562,8 +592,16 @@ impl RuxApplication {
         } else {
             String::new()
         };
+        let metadata_line = self
+            .song_info
+            .as_ref()
+            .and_then(SongDisplayInfo::metadata_line)
+            .unwrap_or_default();
+
         let status = row![
             Text::new(song_info).shaping(Auto),
+            horizontal(),
+            Text::new(metadata_line).shaping(Auto),
             horizontal(),
             text(if let Some(song) = &self.song_info {
                 format!("{:?}", song.gp_version)
@@ -573,6 +611,8 @@ impl RuxApplication {
         ]
         .spacing(10);
 
+        let status = container(status).padding(4);
+
         let tablature_view = self
             .tablature
             .as_ref()
@@ -580,7 +620,7 @@ impl RuxApplication {
 
         let tablature = container(tablature_view).id(self.tablature_id.clone());
 
-        let base = column![controls, tablature, status,]
+        let base = column![controls, tablature, rule::horizontal(1), status,]
             .spacing(20)
             .padding(10)
             .into();
