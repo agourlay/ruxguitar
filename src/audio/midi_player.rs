@@ -135,6 +135,15 @@ impl AudioPlayer {
         params_guard.set_tempo_percentage(new_tempo_percentage);
     }
 
+    pub fn master_volume(&self) -> f32 {
+        self.player_params.lock().unwrap().master_volume()
+    }
+
+    pub fn set_master_volume(&self, volume: f32) {
+        let mut params_guard = self.player_params.lock().unwrap();
+        params_guard.set_master_volume(volume);
+    }
+
     pub fn stop(&mut self) {
         // Pause stream
         if let Some(stream) = &self.stream {
@@ -394,6 +403,8 @@ fn new_output_stream(
                 &mut right[..output_channel_len],
             );
 
+            let master_volume = player_params_guard.master_volume();
+
             // Drop locks
             drop(sequencer_guard);
             drop(synthesizer_guard);
@@ -401,8 +412,8 @@ fn new_output_stream(
 
             // Interleave the left and right channels into the output buffer.
             for i in 0..output_channel_len {
-                output[i * 2] = left[i];
-                output[i * 2 + 1] = right[i];
+                output[i * 2] = left[i] * master_volume;
+                output[i * 2 + 1] = right[i] * master_volume;
             }
         },
         err_fn,

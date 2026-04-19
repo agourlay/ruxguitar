@@ -1,7 +1,7 @@
 use iced::advanced::text::Shaping::Auto;
 use iced::widget::operation::scroll_to;
 use iced::widget::space::horizontal;
-use iced::widget::{Id, Text, column, container, pick_list, row, rule, selector, text};
+use iced::widget::{Id, Text, column, container, pick_list, row, rule, selector, slider, text};
 use iced::{Alignment, Border, Element, Size, Subscription, Task, Theme, keyboard, stream, window};
 use std::fmt::Display;
 
@@ -177,6 +177,7 @@ pub enum Message {
     ClearError,                    // clear error message
     ReportError(String),           // report error message
     ToggleFullscreen,              // toggle fullscreen + hide chrome
+    MasterVolumeChanged(f32),      // master volume slider (0.0 .. 1.0)
 }
 
 impl RuxApplication {
@@ -490,6 +491,12 @@ impl RuxApplication {
                 };
                 window::latest().and_then(move |id| window::set_mode(id, mode))
             }
+            Message::MasterVolumeChanged(volume) => {
+                if let Some(audio_player) = &self.audio_player {
+                    audio_player.set_master_volume(volume);
+                }
+                Task::none()
+            }
             Message::ClearError => {
                 self.error_message = None;
                 Task::none()
@@ -571,9 +578,25 @@ impl RuxApplication {
             .text_size(14)
             .padding([5, 10]);
 
-            row![tempo_label, tempo_percentage, solo_mode, track_pick_list,]
-                .spacing(10)
-                .align_y(Alignment::Center)
+            let volume_label = text("Volume").size(14);
+            let current_volume = self
+                .audio_player
+                .as_ref()
+                .map_or(1.0, AudioPlayer::master_volume);
+            let volume_slider = slider(0.0..=1.0, current_volume, Message::MasterVolumeChanged)
+                .step(0.01_f32)
+                .width(100);
+
+            row![
+                tempo_label,
+                tempo_percentage,
+                volume_label,
+                volume_slider,
+                solo_mode,
+                track_pick_list,
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
         };
 
         let controls = row![

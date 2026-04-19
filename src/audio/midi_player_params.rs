@@ -3,6 +3,7 @@ pub struct MidiPlayerParams {
     tempo: u32,
     tempo_percentage: u32,
     solo_track_id: Option<usize>,
+    master_volume: f32,
 }
 
 impl MidiPlayerParams {
@@ -11,7 +12,17 @@ impl MidiPlayerParams {
             tempo,
             tempo_percentage,
             solo_track_id,
+            master_volume: 1.0,
         }
+    }
+
+    pub const fn master_volume(&self) -> f32 {
+        self.master_volume
+    }
+
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn set_master_volume(&mut self, volume: f32) {
+        self.master_volume = volume.clamp(0.0, 1.0);
     }
 
     pub const fn solo_track_id(&self) -> Option<usize> {
