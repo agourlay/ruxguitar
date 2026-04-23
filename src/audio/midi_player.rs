@@ -10,8 +10,9 @@ use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 use std::fs::File;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use tokio::sync::watch::Sender;
+use tokio::sync::Notify;
 
 const DEFAULT_SAMPLE_RATE: u32 = 44100; // number of samples per second
 
@@ -26,7 +27,8 @@ pub struct AudioPlayer {
     player_params: Arc<Mutex<MidiPlayerParams>>, // Use to communicate play changes to sequencer
     synthesizer: Arc<Mutex<Synthesizer>>,        // Synthesizer for audio output
     sound_font: Arc<SoundFont>,                  // Sound font for synthesizer
-    beat_sender: Arc<Sender<u32>>,               // Notify beat changes
+    current_tick: Arc<AtomicU32>,                // Latest tick reached by the audio callback
+    beat_notify: Arc<Notify>,                    // Wake UI when current_tick changes
     measure_playback_ticks: Vec<u32>,            // first playback tick per measure (for seeking)
 }
 
@@ -36,7 +38,8 @@ impl AudioPlayer {
         song_tempo: u32,
         tempo_percentage: u32,
         sound_font_file: Option<PathBuf>,
-        beat_sender: Arc<Sender<u32>>,
+        current_tick: Arc<AtomicU32>,
+        beat_notify: Arc<Notify>,
         playback_order: &[(usize, i64)],
     ) -> Result<Self, AudioPlayerError> {
         // default to no solo track
@@ -95,7 +98,8 @@ impl AudioPlayer {
             player_params,
             synthesizer,
             sound_font,
-            beat_sender,
+            current_tick,
+            beat_notify,
             measure_playback_ticks,
         })
     }
@@ -193,7 +197,8 @@ impl AudioPlayer {
                 self.player_params.clone(),
                 self.synthesizer.clone(),
                 self.sound_font.clone(),
-                self.beat_sender.clone(),
+                self.current_tick.clone(),
+                self.beat_notify.clone(),
             );
 
             match stream {
@@ -254,7 +259,8 @@ fn new_output_stream(
     player_params: Arc<Mutex<MidiPlayerParams>>,
     synthesizer: Arc<Mutex<Synthesizer>>,
     sound_font: Arc<SoundFont>,
-    beat_notifier: Arc<Sender<u32>>,
+    current_tick: Arc<AtomicU32>,
+    beat_notify: Arc<Notify>,
 ) -> Result<cpal::Stream, AudioPlayerError> {
     let host = cpal::default_host();
     let Some(device) = host.default_output_device() else {
@@ -336,9 +342,8 @@ fn new_output_stream(
                     .iter()
                     .any(super::midi_event::MidiEvent::is_note_event)
                 {
-                    beat_notifier
-                        .send(tick)
-                        .expect("Failed to send beat notification");
+                    current_tick.store(tick, Ordering::Release);
+                    beat_notify.notify_one();
                 }
                 for midi_event in events {
                     match midi_event.event {

@@ -21,26 +21,26 @@ use iced::widget::scrollable::AbsoluteOffset;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::sync::watch::{Receiver, Sender};
+use std::sync::atomic::{AtomicU32, Ordering};
+use tokio::sync::Notify;
 
 const ICONS_FONT: &[u8] = include_bytes!("../../resources/icons.ttf");
 
 pub struct RuxApplication {
-    song_info: Option<SongDisplayInfo>,       // parsed song
-    track_selection: TrackSelection,          // selected track
-    all_tracks: Vec<TrackSelection>,          // all possible tracks
-    tablature: Option<Tablature>,             // loaded tablature
-    tablature_id: Id,                         // tablature container id
-    tempo_selection: TempoSelection,          // tempo percentage for playback
-    audio_player: Option<AudioPlayer>,        // audio player
-    tab_file_is_loading: bool,                // file loading flag in progress
-    sound_font_file: Option<PathBuf>,         // sound font file
-    beat_sender: Arc<Sender<u32>>,            // beat notifier
-    beat_receiver: Arc<Mutex<Receiver<u32>>>, // beat receiver
-    config: Config,                           // local configuration
-    error_message: Option<String>,            // error message to display
-    is_fullscreen: bool,                      // F11 toggles fullscreen + hides chrome
+    song_info: Option<SongDisplayInfo>, // parsed song
+    track_selection: TrackSelection,    // selected track
+    all_tracks: Vec<TrackSelection>,    // all possible tracks
+    tablature: Option<Tablature>,       // loaded tablature
+    tablature_id: Id,                   // tablature container id
+    tempo_selection: TempoSelection,    // tempo percentage for playback
+    audio_player: Option<AudioPlayer>,  // audio player
+    tab_file_is_loading: bool,          // file loading flag in progress
+    sound_font_file: Option<PathBuf>,   // sound font file
+    current_tick: Arc<AtomicU32>,       // latest tick published by audio callback
+    beat_notify: Arc<Notify>,           // wake-up signal from audio callback
+    config: Config,                     // local configuration
+    error_message: Option<String>,      // error message to display
+    is_fullscreen: bool,                // F11 toggles fullscreen + hides chrome
 }
 
 #[derive(Debug)]
@@ -182,7 +182,6 @@ pub enum Message {
 
 impl RuxApplication {
     fn new(sound_font_file: Option<PathBuf>, config: Config) -> Self {
-        let (beat_sender, beat_receiver) = tokio::sync::watch::channel(0_u32);
         Self {
             song_info: None,
             track_selection: TrackSelection::default(),
@@ -193,8 +192,8 @@ impl RuxApplication {
             audio_player: None,
             tab_file_is_loading: false,
             sound_font_file,
-            beat_receiver: Arc::new(Mutex::new(beat_receiver)),
-            beat_sender: Arc::new(beat_sender),
+            current_tick: Arc::new(AtomicU32::new(0)),
+            beat_notify: Arc::new(Notify::new()),
             config,
             error_message: None,
             is_fullscreen: false,
@@ -332,7 +331,8 @@ impl RuxApplication {
                                 song_rc.tempo.value,
                                 self.tempo_selection.percentage,
                                 self.sound_font_file.clone(),
-                                self.beat_sender.clone(),
+                                self.current_tick.clone(),
+                                self.beat_notify.clone(),
                                 &playback_order,
                             ) {
                                 Ok(audio_player) => {
@@ -679,20 +679,17 @@ impl RuxApplication {
     }
 
     fn audio_player_beat_subscription(
-        beat_receiver: Arc<Mutex<Receiver<u32>>>,
+        current_tick: Arc<AtomicU32>,
+        beat_notify: Arc<Notify>,
     ) -> impl Stream<Item = Message> {
         stream::channel(1, async move |mut output| {
-            let mut receiver = beat_receiver.lock().await;
             loop {
-                // get tick from audio player
-                let tick = *receiver.borrow_and_update();
-                // publish to UI
+                beat_notify.notified().await;
+                let tick = current_tick.load(Ordering::Acquire);
                 output
                     .send(Message::FocusTick(tick))
                     .await
                     .expect("send failed");
-                // wait for next beat
-                receiver.changed().await.expect("receiver failed");
             }
         })
     }
@@ -730,10 +727,9 @@ impl RuxApplication {
         subscriptions.push(keyboard_subscription);
 
         // next beat notifier subscription
-        let beat_receiver = self.beat_receiver.clone();
         subscriptions.push(Subscription::run_with(
-            BeatSubscriptionData(beat_receiver.clone()),
-            |data| Self::audio_player_beat_subscription(data.0.clone()),
+            BeatSubscriptionData(self.current_tick.clone(), self.beat_notify.clone()),
+            |data| Self::audio_player_beat_subscription(data.0.clone(), data.1.clone()),
         ));
 
         let window_resized = window::resize_events().map(|_| Message::WindowResized);
@@ -775,7 +771,7 @@ fn format_mmss(seconds: f32) -> String {
     format!("{}:{:02}", total / 60, total % 60)
 }
 
-struct BeatSubscriptionData(Arc<Mutex<Receiver<u32>>>);
+struct BeatSubscriptionData(Arc<AtomicU32>, Arc<Notify>);
 
 impl std::hash::Hash for BeatSubscriptionData {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
