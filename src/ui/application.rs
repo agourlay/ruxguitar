@@ -2,7 +2,9 @@ use iced::advanced::text::Shaping::Auto;
 use iced::widget::operation::scroll_to;
 use iced::widget::space::horizontal;
 use iced::widget::{Id, Text, column, container, pick_list, row, rule, selector, slider, text};
-use iced::{Alignment, Border, Element, Size, Subscription, Task, Theme, keyboard, stream, window};
+use iced::{
+    Alignment, Border, Element, Length, Size, Subscription, Task, Theme, keyboard, stream, window,
+};
 use std::fmt::Display;
 
 use crate::ApplicationArgs;
@@ -633,16 +635,21 @@ impl RuxApplication {
             .and_then(SongDisplayInfo::metadata_line)
             .unwrap_or_default();
 
+        let gp_version = if let Some(song) = &self.song_info {
+            format!("{:?}", song.gp_version)
+        } else {
+            String::new()
+        };
         let status = row![
-            Text::new(song_info).shaping(Auto),
-            horizontal(),
-            Text::new(metadata_line).shaping(Auto),
-            horizontal(),
-            text(if let Some(song) = &self.song_info {
-                format!("{:?}", song.gp_version)
-            } else {
-                String::new()
-            }),
+            container(Text::new(song_info).shaping(Auto))
+                .width(Length::FillPortion(1))
+                .align_x(Alignment::Start),
+            container(Text::new(metadata_line).shaping(Auto))
+                .width(Length::FillPortion(1))
+                .align_x(Alignment::Center),
+            container(text(gp_version))
+                .width(Length::FillPortion(1))
+                .align_x(Alignment::End),
         ]
         .spacing(10);
 
