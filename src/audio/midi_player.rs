@@ -21,15 +21,15 @@ const TIMIDITY_SOUND_FONT: &[u8] = include_bytes!("../../resources/TimGM6mb.sf2"
 
 pub struct AudioPlayer {
     is_playing: bool,
-    song: Rc<Song>,                              // Song to play (shared with app)
-    stream: Option<Rc<cpal::Stream>>,            // Stream is not Send & Sync
-    sequencer: Arc<Mutex<MidiSequencer>>,        // Need a handle to reset sequencer
-    player_params: Arc<Mutex<MidiPlayerParams>>, // Use to communicate play changes to sequencer
-    synthesizer: Arc<Mutex<Synthesizer>>,        // Synthesizer for audio output
-    sound_font: Arc<SoundFont>,                  // Sound font for synthesizer
-    current_tick: Arc<AtomicU32>,                // Latest tick reached by the audio callback
-    beat_notify: Arc<Notify>,                    // Wake UI when current_tick changes
-    measure_playback_ticks: Vec<u32>,            // first playback tick per measure (for seeking)
+    song: Rc<Song>,                       // Song to play (shared with app)
+    stream: Option<Rc<cpal::Stream>>,     // Stream is not Send & Sync
+    sequencer: Arc<Mutex<MidiSequencer>>, // Need a handle to reset sequencer
+    player_params: Arc<MidiPlayerParams>, // Lock-free playback parameters
+    synthesizer: Arc<Mutex<Synthesizer>>, // Synthesizer for audio output
+    sound_font: Arc<SoundFont>,           // Sound font for synthesizer
+    current_tick: Arc<AtomicU32>,         // Latest tick reached by the audio callback
+    beat_notify: Arc<Notify>,             // Wake UI when current_tick changes
+    measure_playback_ticks: Vec<u32>,     // first playback tick per measure (for seeking)
 }
 
 impl AudioPlayer {
@@ -46,11 +46,11 @@ impl AudioPlayer {
         let solo_track_id = None;
 
         // player params
-        let player_params = Arc::new(Mutex::new(MidiPlayerParams::new(
+        let player_params = Arc::new(MidiPlayerParams::new(
             song_tempo,
             tempo_percentage,
             solo_track_id,
-        )));
+        ));
 
         // midi sequencer initialization
         let builder = MidiBuilder::new();
@@ -120,32 +120,30 @@ impl AudioPlayer {
     }
 
     pub fn solo_track_id(&self) -> Option<usize> {
-        self.player_params.lock().unwrap().solo_track_id()
+        self.player_params.solo_track_id()
     }
 
     pub fn toggle_solo_mode(&self, new_track_id: usize) {
-        let mut params_guard = self.player_params.lock().unwrap();
-        if params_guard.solo_track_id() == Some(new_track_id) {
+        if self.player_params.solo_track_id() == Some(new_track_id) {
             log::info!("Disable solo mode on track {new_track_id}");
-            params_guard.set_solo_track_id(None);
+            self.player_params.set_solo_track_id(None);
         } else {
             log::info!("Enable solo mode on track {new_track_id}");
-            params_guard.set_solo_track_id(Some(new_track_id));
+            self.player_params.set_solo_track_id(Some(new_track_id));
         }
     }
 
     pub fn set_tempo_percentage(&self, new_tempo_percentage: u32) {
-        let mut params_guard = self.player_params.lock().unwrap();
-        params_guard.set_tempo_percentage(new_tempo_percentage);
+        self.player_params
+            .set_tempo_percentage(new_tempo_percentage);
     }
 
     pub fn master_volume(&self) -> f32 {
-        self.player_params.lock().unwrap().master_volume()
+        self.player_params.master_volume()
     }
 
     pub fn set_master_volume(&self, volume: f32) {
-        let mut params_guard = self.player_params.lock().unwrap();
-        params_guard.set_master_volume(volume);
+        self.player_params.set_master_volume(volume);
     }
 
     pub fn stop(&mut self) {
@@ -166,6 +164,10 @@ impl AudioPlayer {
         let mut synthesizer_guard = self.synthesizer.lock().unwrap();
         synthesizer_guard.note_off_all(false);
         drop(synthesizer_guard);
+
+        // reset the UI cursor to the first playable tick so the measure lookup resolves cleanly
+        self.current_tick.store(FIRST_TICK, Ordering::Relaxed);
+        self.beat_notify.notify_one();
 
         // Drop stream
         self.stream.take();
@@ -232,8 +234,7 @@ impl AudioPlayer {
         drop(synthesizer_guard);
 
         // set tempo for focuses measure
-        let mut player_params_guard = self.player_params.lock().unwrap();
-        player_params_guard.set_tempo(tempo);
+        self.player_params.set_tempo(tempo);
     }
 }
 
@@ -256,7 +257,7 @@ pub enum AudioPlayerError {
 /// Create a new output stream for audio playback.
 fn new_output_stream(
     sequencer: Arc<Mutex<MidiSequencer>>,
-    player_params: Arc<Mutex<MidiPlayerParams>>,
+    player_params: Arc<MidiPlayerParams>,
     synthesizer: Arc<Mutex<Synthesizer>>,
     sound_font: Arc<SoundFont>,
     current_tick: Arc<AtomicU32>,
@@ -320,9 +321,8 @@ fn new_output_stream(
     let stream = device.build_output_stream(
         &stream_config,
         move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            let mut player_params_guard = player_params.lock().unwrap();
             let mut sequencer_guard = sequencer.lock().unwrap();
-            sequencer_guard.advance(player_params_guard.adjusted_tempo());
+            sequencer_guard.advance(player_params.adjusted_tempo());
             let mut synthesizer_guard = synthesizer.lock().unwrap();
             // process midi events for current tick
             if let Some(events) = sequencer_guard.get_next_events() {
@@ -337,7 +337,7 @@ fn new_output_stream(
                         events.len()
                     );
                 }
-                let solo_track_id = player_params_guard.solo_track_id();
+                let solo_track_id = player_params.solo_track_id();
                 if events
                     .iter()
                     .any(super::midi_event::MidiEvent::is_note_event)
@@ -374,7 +374,7 @@ fn new_output_stream(
                         }
                         MidiEventType::TempoChange(tempo) => {
                             log::info!("Tempo changed to {tempo}");
-                            player_params_guard.set_tempo(tempo);
+                            player_params.set_tempo(tempo);
                         }
                         MidiEventType::MidiMessage(channel, command, data1, data2) => {
                             log::debug!(
@@ -408,12 +408,11 @@ fn new_output_stream(
                 &mut right[..output_channel_len],
             );
 
-            let master_volume = player_params_guard.master_volume();
+            let master_volume = player_params.master_volume();
 
             // Drop locks
             drop(sequencer_guard);
             drop(synthesizer_guard);
-            drop(player_params_guard);
 
             // Interleave the left and right channels into the output buffer.
             for i in 0..output_channel_len {

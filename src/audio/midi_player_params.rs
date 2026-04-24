@@ -1,50 +1,60 @@
-/// Hold values changed during playback of a MIDI events.
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+
+const SOLO_NONE: i32 = -1;
+
+/// Playback parameters shared lock-free between UI and audio callback.
 pub struct MidiPlayerParams {
-    tempo: u32,
-    tempo_percentage: u32,
-    solo_track_id: Option<usize>,
-    master_volume: f32,
+    tempo: AtomicU32,
+    tempo_percentage: AtomicU32,
+    solo_track_id: AtomicI32, // -1 == None
+    master_volume: AtomicU32, // f32 bits
 }
 
 impl MidiPlayerParams {
-    pub const fn new(tempo: u32, tempo_percentage: u32, solo_track_id: Option<usize>) -> Self {
+    pub fn new(tempo: u32, tempo_percentage: u32, solo_track_id: Option<usize>) -> Self {
         Self {
-            tempo,
-            tempo_percentage,
-            solo_track_id,
-            master_volume: 1.0,
+            tempo: AtomicU32::new(tempo),
+            tempo_percentage: AtomicU32::new(tempo_percentage),
+            solo_track_id: AtomicI32::new(solo_track_id.map_or(SOLO_NONE, |id| id as i32)),
+            master_volume: AtomicU32::new(1.0_f32.to_bits()),
         }
     }
 
-    pub const fn master_volume(&self) -> f32 {
+    pub fn master_volume(&self) -> f32 {
+        f32::from_bits(self.master_volume.load(Ordering::Relaxed))
+    }
+
+    pub fn set_master_volume(&self, volume: f32) {
         self.master_volume
+            .store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
     }
 
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn set_master_volume(&mut self, volume: f32) {
-        self.master_volume = volume.clamp(0.0, 1.0);
+    pub fn solo_track_id(&self) -> Option<usize> {
+        match self.solo_track_id.load(Ordering::Relaxed) {
+            SOLO_NONE => None,
+            id => Some(id as usize),
+        }
     }
 
-    pub const fn solo_track_id(&self) -> Option<usize> {
-        self.solo_track_id
-    }
-
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn set_solo_track_id(&mut self, solo_track_id: Option<usize>) {
-        self.solo_track_id = solo_track_id;
+    pub fn set_solo_track_id(&self, solo_track_id: Option<usize>) {
+        self.solo_track_id.store(
+            solo_track_id.map_or(SOLO_NONE, |id| id as i32),
+            Ordering::Relaxed,
+        );
     }
 
     pub fn adjusted_tempo(&self) -> u32 {
-        (self.tempo as f32 * self.tempo_percentage as f32 / 100.0) as u32
+        let tempo = self.tempo.load(Ordering::Relaxed);
+        let pct = self.tempo_percentage.load(Ordering::Relaxed);
+        (tempo as f32 * pct as f32 / 100.0) as u32
     }
 
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn set_tempo(&mut self, tempo: u32) {
-        self.tempo = tempo;
+    pub fn set_tempo(&self, tempo: u32) {
+        self.tempo.store(tempo, Ordering::Relaxed);
     }
 
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn set_tempo_percentage(&mut self, tempo_percentage: u32) {
-        self.tempo_percentage = tempo_percentage;
+    pub fn set_tempo_percentage(&self, tempo_percentage: u32) {
+        self.tempo_percentage
+            .store(tempo_percentage, Ordering::Relaxed);
     }
 }
