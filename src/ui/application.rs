@@ -695,7 +695,7 @@ impl RuxApplication {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let mut subscriptions = Vec::with_capacity(2);
+        let mut subscriptions = Vec::with_capacity(4);
 
         // keyboard event subscription
         let keyboard_subscription = keyboard::listen().filter_map(|event| {
