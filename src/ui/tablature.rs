@@ -151,13 +151,10 @@ impl Tablature {
         // adjust tick by removing the offset to compare with original beat.start values
         let original_tick = (i64::from(tick) - tick_offset) as u32;
         let voice = &self.song.tracks[track_id].measures[measure_index].voices[0];
-        let mut beat_index = 0;
-        for (j, beat) in voice.beats.iter().enumerate() {
-            if beat.start > original_tick {
-                break;
-            }
-            beat_index = j;
-        }
+        let beat_index = voice
+            .beats
+            .partition_point(|beat| beat.start <= original_tick)
+            .saturating_sub(1);
         (measure_index, beat_index)
     }
 
