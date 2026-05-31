@@ -14,7 +14,7 @@ use std::rc::Rc;
 
 // Unicode symbols for musical notation
 const TEMPO_SIGN: char = '\u{1D15F}'; // 𝅗𝅥 https://unicodeplus.com/U+1D15F
-const VIBRATO: char = '\u{301C}'; // 〜 https://unicodeplus.com/U+301C
+const VIBRATO: &str = "\u{301C}\u{301C}"; // 〜〜 https://unicodeplus.com/U+301C
 const HAMMER_ON: char = '\u{25E0}'; // ◠ https://unicodeplus.com/U+25E0
 const HORIZONTAL_BAR: char = '\u{2015}'; // ― https://unicodeplus.com/U+2015
 const SHIFT_SLIDE: char = '\u{27CD}'; // ⟍ https://unicodeplus.com/U+27CD
@@ -846,47 +846,46 @@ fn draw_time_signature(
 }
 
 // Similar to `https://www.tuxguitar.app/files/1.6.0/desktop/help/edit_effects.html`
-fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<String> {
-    let mut annotations: Vec<String> = vec![];
+fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<&'static str> {
+    let mut annotations: Vec<&'static str> = vec![];
     if note_effect.accentuated_note {
-        annotations.push(">".to_string());
+        annotations.push(">");
     }
     if note_effect.heavy_accentuated_note {
-        annotations.push("^".to_string());
+        annotations.push("^");
     }
     if note_effect.palm_mute {
-        annotations.push("P.M".to_string());
+        annotations.push("P.M");
     }
     if note_effect.let_ring {
-        annotations.push("L.R".to_string());
+        annotations.push("L.R");
     }
     if note_effect.fade_in {
-        annotations.push("<".to_string());
+        annotations.push("<");
     }
     if let Some(harmonic) = &note_effect.harmonic {
         match harmonic.kind {
-            HarmonicType::Natural => annotations.push("N.H".to_string()),
-            HarmonicType::Artificial => annotations.push("A.H".to_string()),
-            HarmonicType::Tapped => annotations.push("T.H".to_string()),
-            HarmonicType::Pinch => annotations.push("P.H".to_string()),
-            HarmonicType::Semi => annotations.push("S.H".to_string()),
+            HarmonicType::Natural => annotations.push("N.H"),
+            HarmonicType::Artificial => annotations.push("A.H"),
+            HarmonicType::Tapped => annotations.push("T.H"),
+            HarmonicType::Pinch => annotations.push("P.H"),
+            HarmonicType::Semi => annotations.push("S.H"),
         }
     }
     if note_effect.vibrato {
-        let vibrato = VIBRATO.to_string();
-        annotations.push(vibrato.repeat(2));
+        annotations.push(VIBRATO);
     }
     if note_effect.trill.is_some() {
-        annotations.push("Tr".to_string());
+        annotations.push("Tr");
     }
     if note_effect.tremolo_picking.is_some() {
-        annotations.push("T.P".to_string());
+        annotations.push("T.P");
     }
     if note_effect.tremolo_bar.is_some() {
-        annotations.push("T.B".to_string());
+        annotations.push("T.B");
     }
     if note_effect.slap == SlapEffect::Tapping {
-        annotations.push("T".to_string());
+        annotations.push("T");
     }
     annotations
 }
