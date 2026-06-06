@@ -330,7 +330,7 @@ impl MusicParser {
             // beat chords
             if (flags & 0x02) != 0 {
                 let track = &self.song.tracks[track_index];
-                let (inner, chord) = parse_chord(track.strings.len() as u8)(i)?;
+                let (inner, chord) = parse_chord(track.strings.len() as u8, self.song.version)(i)?;
                 i = inner;
                 beat.effect.chord = Some(chord);
             }
@@ -346,7 +346,8 @@ impl MusicParser {
             let mut note_effect = NoteEffect::default();
             // beat effect
             if (flags & 0x08) != 0 {
-                let (inner, ()) = parse_beat_effects(&mut beat, &mut note_effect)(i)?;
+                let (inner, ()) =
+                    parse_beat_effects(&mut beat, &mut note_effect, self.song.version)(i)?;
                 i = inner;
             }
 
@@ -469,7 +470,10 @@ impl MusicParser {
                 }
             }
 
-            i = skip(i, 1);
+            // GP3 has no trailing byte after the mix change block.
+            if self.song.version > GpVersion::GP3 {
+                i = skip(i, 1);
+            }
 
             if self.song.version >= GpVersion::GP5 {
                 i = skip(i, 1);

@@ -968,7 +968,7 @@ mod tests {
                 continue;
             }
             let extension = path.extension().unwrap();
-            if extension != "gp5" && extension != "gp4" {
+            if extension != "gp5" && extension != "gp4" && extension != "gp3" {
                 continue;
             }
             let file_name = path.file_name().unwrap().to_str().unwrap();

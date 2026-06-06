@@ -63,7 +63,9 @@ mod tests {
                         m.header_index, m_id,
                         "Track:{t_id} Measure:{m_id} File:{file_name}"
                     );
-                    let voice_count = if with_extension == "gp4" { 1 } else { 2 };
+                    // Voice count depends on the parsed format version, not the file
+                    // extension: many .gp3/.gp4 files actually contain newer versions.
+                    let voice_count = if song.version >= GpVersion::GP5 { 2 } else { 1 };
                     assert_eq!(
                         m.voices.len(),
                         voice_count,
@@ -95,7 +97,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "not supported yet"]
     fn parse_all_gp3_files_successfully() {
         parse_all_files_successfully("gp3");
     }
