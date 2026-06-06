@@ -95,6 +95,12 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "not supported yet"]
+    fn parse_all_gp3_files_successfully() {
+        parse_all_files_successfully("gp3");
+    }
+
+    #[test]
     fn parse_gp4_06_canon_rock() {
         init_logger();
         const FILE_PATH: &str = "test-files/canon_rock.gp4";
