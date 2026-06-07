@@ -3,7 +3,6 @@ use crate::audio::midi_event::{FIRST_TICK, MidiEventType};
 use crate::audio::midi_player_params::MidiPlayerParams;
 use crate::audio::midi_sequencer::MidiSequencer;
 use crate::parser::song_parser::Song;
-use cpal::DefaultStreamConfigError;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 use std::fs::File;
@@ -242,7 +241,7 @@ pub enum AudioPlayerError {
     #[error("audio device not found")]
     CpalDeviceNotFound,
     #[error("no output configuration found: {0}")]
-    CpalOutputConfigNotFound(DefaultStreamConfigError),
+    CpalOutputConfigNotFound(cpal::Error),
     #[error("failed to open sound font file: {0}")]
     SoundFontFileError(String),
     #[error("failed to load sound font: {0}")]
@@ -318,7 +317,7 @@ fn new_output_stream(
     let err_fn = |err| log::error!("an error occurred on stream: {err}");
 
     let stream = device.build_output_stream(
-        &stream_config,
+        stream_config,
         move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let mut sequencer_guard = sequencer.lock().unwrap();
             sequencer_guard.advance(player_params.adjusted_tempo());
