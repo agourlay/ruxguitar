@@ -100,7 +100,7 @@ pub fn parse_int_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
     flat_map(parse_int, |len| {
         flat_map(parse_u8, move |str_len| {
             log::debug!("Parsing int byte sized string int_len={len} u8_len={str_len}");
-            parse_string_field(len as usize - 1, str_len as usize)
+            parse_string_field(len.saturating_sub(1) as usize, str_len as usize)
         })
     })
     .parse(i)

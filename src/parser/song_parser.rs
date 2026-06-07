@@ -514,7 +514,7 @@ pub fn parse_duration(flags: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], Duration
         let mut d = Duration::default();
         let (inner, value) = parse_i8(i)?;
         i = inner;
-        d.value = (2_u32.pow((value + 4) as u32) / 4) as u16;
+        d.value = (2_u32.saturating_pow((value + 4) as u32) / 4) as u16;
         log::debug!("Duration value: {}", d.value);
         d.dotted = flags & 0x01 != 0;
 
@@ -875,14 +875,22 @@ pub fn parse_lyrics(i: &[u8]) -> IResult<&[u8], Lyrics> {
 /// <https://dguitar.sourceforge.net/GP4format.html#VERSIONS>
 pub fn parse_gp_version(i: &[u8]) -> IResult<&[u8], GpVersion> {
     log::debug!("Parsing GP version");
-    parse_byte_size_string(30)(i).map(|(i, version_string)| match version_string.as_str() {
-        "FICHIER GUITAR PRO v3.00" => (i, GpVersion::GP3),
-        "FICHIER GUITAR PRO v4.00" => (i, GpVersion::GP4),
-        "FICHIER GUITAR PRO v4.06" => (i, GpVersion::GP4_06),
-        "FICHIER GUITAR PRO v5.00" => (i, GpVersion::GP5),
-        "FICHIER GUITAR PRO v5.10" => (i, GpVersion::GP5_10),
-        _ => panic!("Unsupported GP version: {version_string}"),
-    })
+    let (rest, version_string) = parse_byte_size_string(30)(i)?;
+    let version = match version_string.as_str() {
+        "FICHIER GUITAR PRO v3.00" => GpVersion::GP3,
+        "FICHIER GUITAR PRO v4.00" => GpVersion::GP4,
+        "FICHIER GUITAR PRO v4.06" => GpVersion::GP4_06,
+        "FICHIER GUITAR PRO v5.00" => GpVersion::GP5,
+        "FICHIER GUITAR PRO v5.10" => GpVersion::GP5_10,
+        _ => {
+            log::warn!("Unsupported GP version: {version_string}");
+            return Err(nom::Err::Error(nom::error::Error::new(
+                i,
+                nom::error::ErrorKind::Tag,
+            )));
+        }
+    };
+    Ok((rest, version))
 }
 
 fn parse_notices(i: &[u8]) -> IResult<&[u8], Vec<String>> {
