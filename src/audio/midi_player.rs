@@ -1,6 +1,5 @@
-use crate::audio::FIRST_TICK;
 use crate::audio::midi_builder::MidiBuilder;
-use crate::audio::midi_event::MidiEventType;
+use crate::audio::midi_event::{FIRST_TICK, MidiEventType};
 use crate::audio::midi_player_params::MidiPlayerParams;
 use crate::audio::midi_sequencer::MidiSequencer;
 use crate::parser::song_parser::Song;

@@ -1,13 +1,16 @@
+use super::MidiBuilder;
 use super::effects::{apply_triplet_feel, compute_stroke_offsets};
-use super::*;
-use crate::audio::midi_event::MidiEventType;
+use crate::audio::midi_event::{MidiEvent, MidiEventType};
+use crate::audio::playback_order::compute_playback_order;
 use crate::parser::song_parser::{
-    BeatStrokeDirection, DURATION_EIGHTH, DURATION_SIXTEENTH, NoteEffect, NoteType, TripletFeel,
+    Beat, BeatStrokeDirection, DURATION_EIGHTH, DURATION_SIXTEENTH, Note, NoteEffect, NoteType,
+    TripletFeel,
 };
 use crate::parser::song_parser_tests::parse_gp_file;
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 #[test]
 fn test_midi_events_for_all_files() {

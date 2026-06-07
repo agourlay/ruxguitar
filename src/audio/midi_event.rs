@@ -1,3 +1,6 @@
+/// First tick of a song.
+pub const FIRST_TICK: u32 = 1;
+
 /// A MIDI event.
 /// Try to keep this struct as small as possible because there will be a lot of them.
 #[derive(Debug, Clone, Eq, PartialEq)]
