@@ -175,12 +175,8 @@ fn read_c_string(data: &[u8], offset: usize, max_len: usize) -> String {
 mod tests {
     use super::*;
 
-    const FIXTURES: &[&str] = &[
-        "test-files/Tyr - Evening Star.gpx",
-        "test-files/Gorod - Birds Of Sulphur (ver 2 by MikeShadows).gpx",
-        "test-files/Wretched - Dreams of Chaos.gpx",
-        "test-files/The Human Abstract - Antebellum.gpx",
-    ];
+    // Only fixtures committed to the repo (test-files/ is otherwise gitignored).
+    const FIXTURES: &[&str] = &["test-files/Tyr - Evening Star.gpx"];
 
     #[test]
     fn extracts_score_gpif_from_all_fixtures() {

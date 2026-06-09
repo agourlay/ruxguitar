@@ -532,12 +532,8 @@ mod tests {
     use super::*;
     use crate::parser::gpx::file_system::GpxFileSystem;
 
-    const FIXTURES: &[&str] = &[
-        "test-files/Tyr - Evening Star.gpx",
-        "test-files/Gorod - Birds Of Sulphur (ver 2 by MikeShadows).gpx",
-        "test-files/Wretched - Dreams of Chaos.gpx",
-        "test-files/The Human Abstract - Antebellum.gpx",
-    ];
+    // Only fixtures committed to the repo (test-files/ is otherwise gitignored).
+    const FIXTURES: &[&str] = &["test-files/Tyr - Evening Star.gpx"];
 
     fn read_fixture(path: &str) -> GpxDocument {
         let data = std::fs::read(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
