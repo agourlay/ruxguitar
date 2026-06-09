@@ -5,12 +5,12 @@
 //! duration (rather than Tuxguitar's beat-with-multiple-voices layout).
 
 use crate::RuxError;
-use crate::parser::gpx::archive::read_gp7_gpif;
-use crate::parser::gpx::document::{
+use crate::parser::gp67::archive::read_gp7_gpif;
+use crate::parser::gp67::document::{
     DEFAULT_PERCUSSION_CHANNEL, GpxBar, GpxBeat, GpxDocument, GpxMasterBar, GpxNote, GpxRhythm,
 };
-use crate::parser::gpx::document_reader::{GpifVersion, read_document};
-use crate::parser::gpx::file_system::GpxFileSystem;
+use crate::parser::gp67::document_reader::{GpifVersion, read_document};
+use crate::parser::gp67::file_system::GpxFileSystem;
 use crate::parser::song_parser::{
     BEND_EFFECT_MAX_POSITION_LENGTH, Beat, BeatEffects, BeatStroke, BeatStrokeDirection,
     BendEffect, BendPoint, Chord, DEFAULT_BANK, DEFAULT_PERCUSSION_BANK, DEFAULT_VELOCITY,

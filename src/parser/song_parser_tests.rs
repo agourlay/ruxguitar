@@ -1,7 +1,9 @@
 #[cfg(test)]
 use crate::RuxError;
 #[cfg(test)]
-use crate::parser::song_parser::{Song, parse_gp_data};
+use crate::parser::parse_gp_data;
+#[cfg(test)]
+use crate::parser::song_parser::Song;
 #[cfg(test)]
 use std::io::Read;
 

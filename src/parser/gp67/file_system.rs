@@ -9,7 +9,7 @@
 //! Port of Tuxguitar's `v6/GPXFileSystem`.
 
 use crate::RuxError;
-use crate::parser::gpx::bit_reader::BitReader;
+use crate::parser::gp67::bit_reader::BitReader;
 
 /// `"BCFS"` little-endian magic.
 const HEADER_BCFS: u32 = 0x5346_4342;

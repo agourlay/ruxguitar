@@ -108,7 +108,7 @@ pub fn parse_int_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::primitive_parser::parse_byte_size_string;
+    use crate::parser::gp345::primitive_parser::parse_byte_size_string;
 
     #[test]
     fn test_read_byte_size_string() {

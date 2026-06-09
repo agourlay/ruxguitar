@@ -5,7 +5,7 @@
 //! mapping into the engine `Song` model (Layer 3).
 
 use crate::RuxError;
-use crate::parser::gpx::document::{
+use crate::parser::gp67::document::{
     DEFAULT_PERCUSSION_CHANNEL, GpxAutomation, GpxBar, GpxBeat, GpxChord, GpxDocument,
     GpxMasterBar, GpxNote, GpxRhythm, GpxTrack, GpxVoice,
 };
@@ -530,7 +530,7 @@ fn to_int(s: &str) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::gpx::file_system::GpxFileSystem;
+    use crate::parser::gp67::file_system::GpxFileSystem;
 
     // Only fixtures committed to the repo (test-files/ is otherwise gitignored).
     const FIXTURES: &[&str] = &["test-files/Tyr - Evening Star.gpx"];

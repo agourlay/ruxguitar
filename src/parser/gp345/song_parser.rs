@@ -1,6 +1,6 @@
 use crate::RuxError;
-use crate::parser::music_parser::MusicParser;
-use crate::parser::primitive_parser::{
+use crate::parser::gp345::music_parser::MusicParser;
+use crate::parser::gp345::primitive_parser::{
     parse_bool, parse_byte_size_string, parse_i8, parse_int, parse_int_byte_sized_string,
     parse_int_sized_string, parse_short, parse_u8, skip,
 };
@@ -960,16 +960,9 @@ fn parse_info(version: GpVersion) -> impl FnMut(&[u8]) -> IResult<&[u8], SongInf
     }
 }
 
-pub fn parse_gp_data(file_data: &[u8]) -> Result<Song, RuxError> {
-    // GPX (Guitar Pro 6) and GP7 files are containers, not the flat binary
-    // format below; dispatch on the container magic.
-    if file_data.starts_with(b"BCFS") || file_data.starts_with(b"BCFZ") {
-        return crate::parser::gpx::song_builder::parse_gpx_data(file_data);
-    }
-    if file_data.starts_with(b"PK\x03\x04") {
-        return crate::parser::gpx::song_builder::parse_gp7_data(file_data);
-    }
-
+/// Parse a GP3/GP4/GP5 flat-binary file. Container formats (GP6 `.gpx`, GP7
+/// `.gp`) are dispatched separately; see [`crate::parser::parse_gp_data`].
+pub fn parse_gp345_data(file_data: &[u8]) -> Result<Song, RuxError> {
     let (rest, base_song) = flat_map(parse_gp_version, |version| {
         map(
             (
