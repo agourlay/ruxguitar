@@ -11,7 +11,7 @@ The design of the application is described in details in the blog article "[Play
 
 ## Features
 
-- GP3, GP4 and GP5 file support (drag-and-drop supported)
+- Guitar Pro file support: GP3, GP4, GP5, GP6 (`.gpx`) and GP7 (`.gp`)
 - MIDI playback with embedded soundfont (or custom soundfont)
 - Repeat sections with alternative endings
 - Tempo control (25% to 200%)
@@ -23,12 +23,12 @@ The design of the application is described in details in the blog article "[Play
     - `Left` / `Right` previous/next measure
     - `S` toggle solo
     - `F11` toggle fullscreen
+- Open files via the picker or drag-and-drop
 
 ## Limitations
 
 - no editing capabilities (read-only player)
 - no score notation (tablature only)
-- supports only GP3, GP4 and GP5 files
 
 ## Usage
 

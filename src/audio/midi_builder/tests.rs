@@ -23,7 +23,12 @@ fn test_midi_events_for_all_files() {
             continue;
         }
         let extension = path.extension().unwrap();
-        if extension != "gp5" && extension != "gp4" && extension != "gp3" {
+        if extension != "gp5"
+            && extension != "gp4"
+            && extension != "gp3"
+            && extension != "gpx"
+            && extension != "gp"
+        {
             continue;
         }
         let file_name = path.file_name().unwrap().to_str().unwrap();
@@ -83,7 +88,7 @@ fn test_midi_events_for_demo_song() {
     let builder = MidiBuilder::new();
     let events = builder.build_for_song(&song);
 
-    assert_eq!(events.len(), 4693);
+    assert_eq!(events.len(), 4682);
     assert_eq!(events[0].tick, 1);
 
     // assert number of tracks
@@ -95,7 +100,7 @@ fn test_midi_events_for_demo_song() {
     let rhythm_track_events: Vec<_> = events
         .iter()
         .filter(|e| e.track == Some(0))
-        .skip(10)
+        .skip(11)
         .collect();
 
     // print 20 first for debugging
@@ -179,7 +184,7 @@ fn test_midi_events_for_demo_song() {
     let solo_track_events: Vec<_> = events
         .iter()
         .filter(|e| e.track == Some(1))
-        .skip(10)
+        .skip(11)
         .collect();
 
     //print 100 first for debugging
@@ -243,32 +248,32 @@ fn test_midi_events_for_demo_song() {
     assert_eq!(event.track, Some(1));
     assert!(matches!(event.event, MidiEventType::NoteOn(2, 60, 95)));
 
-    // tremolo OFF
+    // tremolo OFF (now a sixteenth note: 240 ticks, matching the reference)
     let event = &solo_track_events[33];
-    assert_eq!(event.tick, 27960);
+    assert_eq!(event.tick, 28080);
     assert_eq!(event.track, Some(1));
     assert!(matches!(event.event, MidiEventType::NoteOff(2, 60)));
 
     // note ON (after all tremolo and repeated sections)
-    let event = &solo_track_events[64];
+    let event = &solo_track_events[48];
     assert_eq!(event.tick, 77760);
     assert_eq!(event.track, Some(1));
     assert!(matches!(event.event, MidiEventType::NoteOn(2, 63, 95)));
 
     // note OFF
-    let event = &solo_track_events[65];
+    let event = &solo_track_events[49];
     assert_eq!(event.tick, 78240);
     assert_eq!(event.track, Some(1));
     assert!(matches!(event.event, MidiEventType::NoteOff(2, 63)));
 
     // note ON hammer
-    let event = &solo_track_events[66];
+    let event = &solo_track_events[50];
     assert_eq!(event.tick, 78240);
     assert_eq!(event.track, Some(1));
     assert!(matches!(event.event, MidiEventType::NoteOn(2, 65, 70)));
 
     // note OFF hammer
-    let event = &solo_track_events[67];
+    let event = &solo_track_events[51];
     assert_eq!(event.tick, 78720);
     assert_eq!(event.track, Some(1));
     assert!(matches!(event.event, MidiEventType::NoteOff(2, 65)));
@@ -282,7 +287,7 @@ fn test_midi_events_for_bleed() {
     let builder = MidiBuilder::new();
     let events = builder.build_for_song(&song);
 
-    assert_eq!(events.len(), 44442);
+    assert_eq!(events.len(), 44449);
     assert_eq!(events[0].tick, 1);
 
     // assert number of tracks
@@ -294,7 +299,7 @@ fn test_midi_events_for_bleed() {
     let rhythm_track_events: Vec<_> = events
         .iter()
         .filter(|e| e.track == Some(0))
-        .skip(10)
+        .skip(11)
         .collect();
 
     // print 60 first for debugging

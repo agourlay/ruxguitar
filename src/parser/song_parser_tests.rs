@@ -102,6 +102,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_all_gpx_files_successfully() {
+        parse_all_files_successfully("gpx");
+    }
+
+    #[test]
+    fn parse_all_gp7_files_successfully() {
+        parse_all_files_successfully("gp");
+    }
+
+    #[test]
     fn parse_gp4_06_canon_rock() {
         init_logger();
         const FILE_PATH: &str = "test-files/canon_rock.gp4";

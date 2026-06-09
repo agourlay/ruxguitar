@@ -18,6 +18,13 @@ use super::effects::{
 const DEFAULT_BEND: f32 = 64.0;
 const DEFAULT_BEND_SEMI_TONE: f32 = 2.75;
 
+/// Scale a raw Guitar Pro channel byte (0-16) to a MIDI value (0-127),
+/// matching TuxGuitar's `toChannelShort`. Used for channel volume, pan,
+/// chorus and reverb (raw 16 -> 127, raw 8 -> 63, raw 0 -> 0).
+fn to_channel_short(value: i8) -> i32 {
+    (i32::from(value) * 8 - 1).clamp(0, 127)
+}
+
 const NATURAL_FREQUENCIES: [(i32, i32); 6] = [
     (12, 12), //AH12 (+12 frets)
     (9, 28),  //AH9 (+28 frets)
@@ -636,7 +643,15 @@ impl MidiBuilder {
     }
 
     fn add_volume_selection(&mut self, tick: u32, track_id: usize, channel: i32, volume: i32) {
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x27, volume);
+        // Channel Volume coarse (CC 0x07); the prior 0x27 (LSB) left the coarse
+        // byte at its default, so per-track volume was effectively ignored.
+        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x07, volume);
+        self.add_event(event);
+    }
+
+    fn add_balance_selection(&mut self, tick: u32, track_id: usize, channel: i32, balance: i32) {
+        // Pan controller (CC 0x0A).
+        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x0A, balance);
         self.add_event(event);
     }
 
@@ -710,20 +725,26 @@ impl MidiBuilder {
             info_tick,
             track_id,
             i32::from(channel_id),
-            i32::from(midi_channel.volume),
+            to_channel_short(midi_channel.volume),
+        );
+        self.add_balance_selection(
+            info_tick,
+            track_id,
+            i32::from(channel_id),
+            to_channel_short(midi_channel.balance),
         );
         self.add_expression_selection(info_tick, track_id, i32::from(channel_id), 127);
         self.add_chorus_selection(
             info_tick,
             track_id,
             i32::from(channel_id),
-            i32::from(midi_channel.chorus),
+            to_channel_short(midi_channel.chorus),
         );
         self.add_reverb_selection(
             info_tick,
             track_id,
             i32::from(channel_id),
-            i32::from(midi_channel.reverb),
+            to_channel_short(midi_channel.reverb),
         );
         self.add_bank_selection(
             info_tick,
@@ -742,5 +763,21 @@ impl MidiBuilder {
 
     fn add_event(&mut self, event: MidiEvent) {
         self.events.push(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::to_channel_short;
+
+    #[test]
+    fn channel_short_scaling() {
+        // Raw Guitar Pro channel scale (0-16) -> MIDI (0-127), per TuxGuitar.
+        assert_eq!(to_channel_short(0), 0); // silent / hard left
+        assert_eq!(to_channel_short(8), 63); // half / center
+        assert_eq!(to_channel_short(16), 127); // full / hard right
+        // Out-of-range values are clamped.
+        assert_eq!(to_channel_short(-1), 0);
+        assert_eq!(to_channel_short(127), 127);
     }
 }

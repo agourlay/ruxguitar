@@ -388,15 +388,27 @@ impl MusicParser {
         }
     }
 
-    /// Get note value of tied note
+    /// Get note value of tied note.
+    ///
+    /// Mirrors TuxGuitar's `getTiedNoteValue`: scan measures newest-first, then
+    /// beats newest-first, then voices in order, returning the most recent note
+    /// previously played on the same string.
     fn get_tied_note_value(&self, string_index: i8, track_index: usize) -> i16 {
         let track = &self.song.tracks[track_index];
-        for m in (0usize..track.measures.len()).rev() {
-            for v in (0usize..track.measures[m].voices.len()).rev() {
-                for b in 0..track.measures[m].voices[v].beats.len() {
-                    for n in 0..track.measures[m].voices[v].beats[b].notes.len() {
-                        if track.measures[m].voices[v].beats[b].notes[n].string == string_index {
-                            return track.measures[m].voices[v].beats[b].notes[n].value;
+        for measure in track.measures.iter().rev() {
+            let beat_count = measure
+                .voices
+                .iter()
+                .map(|v| v.beats.len())
+                .max()
+                .unwrap_or(0);
+            for b in (0..beat_count).rev() {
+                for voice in &measure.voices {
+                    if let Some(beat) = voice.beats.get(b) {
+                        for note in &beat.notes {
+                            if note.string == string_index {
+                                return note.value;
+                            }
                         }
                     }
                 }

@@ -1,3 +1,4 @@
+pub mod gpx;
 pub mod model;
 mod music_parser;
 mod primitive_parser;

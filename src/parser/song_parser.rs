@@ -297,7 +297,13 @@ pub fn parse_grace_effect(version: GpVersion) -> impl FnMut(&[u8]) -> IResult<&[
         // fret
         let (inner, fret) = parse_u8(i)?;
         i = inner;
-        grace_effect.fret = fret as i8;
+        if version < GpVersion::GP5 {
+            // Pre-GP5 encodes a dead grace note as fret 255.
+            grace_effect.is_dead = fret == 255;
+            grace_effect.fret = if grace_effect.is_dead { 0 } else { fret as i8 };
+        } else {
+            grace_effect.fret = fret as i8;
+        }
 
         // velocity
         let (inner, velocity) = parse_u8(i)?;
@@ -413,13 +419,18 @@ pub fn parse_beat_effects<'a>(
 
         if flags1 & 0x40 != 0 {
             log::debug!("Parsing stroke effect");
-            let (inner, (stroke_up, stroke_down)) = (parse_i8, parse_i8).parse(i)?;
+            let (inner, (first, second)) = (parse_i8, parse_i8).parse(i)?;
             i = inner;
+            // GP5 stores the up stroke first, GP4 stores the down stroke first.
+            let (stroke_up, stroke_down) = if version >= GpVersion::GP5 {
+                (first, second)
+            } else {
+                (second, first)
+            };
             if stroke_up > 0 {
                 beat.effect.stroke.value = to_stroke_value(stroke_up);
                 beat.effect.stroke.direction = BeatStrokeDirection::Up;
-            }
-            if stroke_down > 0 {
+            } else if stroke_down > 0 {
                 beat.effect.stroke.value = to_stroke_value(stroke_down);
                 beat.effect.stroke.direction = BeatStrokeDirection::Down;
             }
@@ -950,6 +961,15 @@ fn parse_info(version: GpVersion) -> impl FnMut(&[u8]) -> IResult<&[u8], SongInf
 }
 
 pub fn parse_gp_data(file_data: &[u8]) -> Result<Song, RuxError> {
+    // GPX (Guitar Pro 6) and GP7 files are containers, not the flat binary
+    // format below; dispatch on the container magic.
+    if file_data.starts_with(b"BCFS") || file_data.starts_with(b"BCFZ") {
+        return crate::parser::gpx::song_builder::parse_gpx_data(file_data);
+    }
+    if file_data.starts_with(b"PK\x03\x04") {
+        return crate::parser::gpx::song_builder::parse_gp7_data(file_data);
+    }
+
     let (rest, base_song) = flat_map(parse_gp_version, |version| {
         map(
             (

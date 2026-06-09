@@ -1,4 +1,5 @@
-1 MidiMessage(0, 176, 39, 13) Some(0)
+1 MidiMessage(0, 176, 7, 103) Some(0)
+1 MidiMessage(0, 176, 10, 63) Some(0)
 1 MidiMessage(0, 176, 43, 127) Some(0)
 1 MidiMessage(0, 176, 93, 0) Some(0)
 1 MidiMessage(0, 176, 91, 0) Some(0)

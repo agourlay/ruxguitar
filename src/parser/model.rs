@@ -41,6 +41,8 @@ pub enum GpVersion {
     GP4_06,
     GP5,
     GP5_10,
+    GP6,
+    GP7,
 }
 
 #[derive(Debug, PartialEq, Default)]
@@ -549,8 +551,8 @@ impl TremoloPickingEffect {
     pub fn from_tremolo_value(value: i8) -> u16 {
         match value {
             1 => u16::from(DURATION_EIGHTH),
-            3 => u16::from(DURATION_SIXTEENTH),
-            2 => u16::from(DURATION_THIRTY_SECOND),
+            2 => u16::from(DURATION_SIXTEENTH),
+            3 => u16::from(DURATION_THIRTY_SECOND),
             other => panic!("Cannot get tremolo value - got {other}"),
         }
     }
