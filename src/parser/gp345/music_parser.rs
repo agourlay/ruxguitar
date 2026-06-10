@@ -473,7 +473,8 @@ impl MusicParser {
                 self.song.measure_headers[measure_index..]
                     .iter_mut()
                     .for_each(|mh| {
-                        mh.tempo.value = tempo_value as u32;
+                        // clamp to 1 BPM like the gp67 builder: tempo 0 would freeze playback
+                        mh.tempo.value = (tempo_value as u32).max(1);
                         mh.tempo.name = Some(tempo_name.clone());
                     });
                 i = skip(i, 1);

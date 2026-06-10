@@ -46,7 +46,9 @@ impl MidiPlayerParams {
     pub fn adjusted_tempo(&self) -> u32 {
         let tempo = self.tempo.load(Ordering::Relaxed);
         let pct = self.tempo_percentage.load(Ordering::Relaxed);
-        (tempo as f32 * pct as f32 / 100.0) as u32
+        // clamp to 1 BPM: at tempo 0 the sequencer would never advance again,
+        // freezing playback with no way to reach the next tempo change event
+        ((tempo as f32 * pct as f32 / 100.0) as u32).max(1)
     }
 
     pub fn set_tempo(&self, tempo: u32) {

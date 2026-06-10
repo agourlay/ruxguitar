@@ -1,11 +1,11 @@
 use crate::audio::midi_event::MidiEvent;
+use crate::parser::song_parser::QUARTER_TIME;
 use std::time::Instant;
 
-const QUARTER_TIME: f32 = 960.0; // 1 quarter note = 960 ticks
-
 pub struct MidiSequencer {
-    current_tick: u32,             // current Midi tick
     last_tick: u32,                // last Midi tick
+    tick_position: f64,            // exact tick position; the current tick is its integer part
+    needs_init: bool,              // true until the first advance after a reset or seek
     last_time: Instant,            // last time in milliseconds
     sorted_events: Vec<MidiEvent>, // sorted Midi events
 }
@@ -20,8 +20,9 @@ impl MidiSequencer {
                 .all(|w| w[0].tick <= w[1].tick)
         );
         Self {
-            current_tick: 0,
             last_tick: 0,
+            tick_position: 0.0,
+            needs_init: true,
             last_time: Instant::now(),
             sorted_events,
         }
@@ -32,27 +33,25 @@ impl MidiSequencer {
         &self.sorted_events
     }
 
-    #[allow(clippy::missing_const_for_fn)]
     pub fn set_tick(&mut self, tick: u32) {
         // set last_tick before the target so get_next_events includes events at target tick
-        // set current_tick = last_tick so advance() triggers the init path (bumps by 1)
+        // mark for init so the next advance() bumps by 1 instead of using a stale clock
         let adjusted = tick.saturating_sub(1);
         self.last_tick = adjusted;
-        self.current_tick = adjusted;
+        self.tick_position = f64::from(adjusted);
+        self.needs_init = true;
     }
 
     pub fn reset_last_time(&mut self) {
         self.last_time = Instant::now();
     }
 
-    #[allow(clippy::missing_const_for_fn)]
     pub fn reset_ticks(&mut self) {
-        self.current_tick = 0;
-        self.last_tick = 0;
+        self.set_tick(0);
     }
 
     pub const fn get_tick(&self) -> u32 {
-        self.current_tick
+        self.tick_position as u32
     }
 
     pub const fn get_last_tick(&self) -> u32 {
@@ -60,12 +59,13 @@ impl MidiSequencer {
     }
 
     pub fn get_next_events(&self) -> Option<&[MidiEvent]> {
+        let current_tick = self.get_tick();
         // do not return events if tick did not change
-        if self.last_tick == self.current_tick {
+        if self.last_tick == current_tick {
             return Some(&[]);
         }
 
-        assert!(self.last_tick <= self.current_tick);
+        assert!(self.last_tick <= current_tick);
 
         // get all events between last tick and next tick using binary search
         // TODO could be improved by saving `end_index` to the next `start_index`
@@ -84,7 +84,7 @@ impl MidiSequencer {
         };
 
         let end_index = match self.sorted_events[start_index..]
-            .binary_search_by_key(&self.current_tick, |event| event.tick)
+            .binary_search_by_key(&current_tick, |event| event.tick)
         {
             Ok(next_position) => start_index + next_position,
             Err(next_position) => {
@@ -100,34 +100,37 @@ impl MidiSequencer {
     }
 
     pub fn advance(&mut self, tempo: u32) {
-        // init sequencer if first advance after reset
-        if self.current_tick == self.last_tick {
-            self.current_tick += 1;
+        // init sequencer if first advance after a reset or seek
+        if self.needs_init {
+            self.needs_init = false;
+            // tick_position is integral here (set from a u32), so the bump is exact
+            self.tick_position += 1.0;
             self.last_time = Instant::now();
             return;
         }
         // check how many ticks have passed since last advance
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_time);
-        let elapsed_secs = elapsed.as_secs_f32();
-        let tick_increase = tick_increase(tempo, elapsed_secs);
         self.last_time = now;
-        self.last_tick = self.current_tick;
-        self.current_tick += tick_increase;
+        self.advance_by(tempo, elapsed.as_secs_f64());
+    }
+
+    fn advance_by(&mut self, tempo: u32, elapsed_secs: f64) {
+        self.last_tick = self.get_tick();
+        self.tick_position += tick_increase(tempo, elapsed_secs);
     }
 
     #[cfg(test)]
-    #[allow(clippy::missing_const_for_fn)]
     pub fn advance_tick(&mut self, tick: u32) {
-        self.last_tick = self.current_tick;
-        self.current_tick += tick;
+        self.needs_init = false;
+        self.last_tick = self.get_tick();
+        self.tick_position += f64::from(tick);
     }
 }
 
-fn tick_increase(tempo_bpm: u32, elapsed_seconds: f32) -> u32 {
-    let tempo_bps = tempo_bpm as f32 / 60.0;
-    let bump = QUARTER_TIME * tempo_bps * elapsed_seconds;
-    bump as u32
+fn tick_increase(tempo_bpm: u32, elapsed_seconds: f64) -> f64 {
+    let tempo_bps = f64::from(tempo_bpm) / 60.0;
+    f64::from(QUARTER_TIME) * tempo_bps * elapsed_seconds
 }
 
 #[cfg(test)]
@@ -143,16 +146,54 @@ mod tests {
     fn test_tick_increase() {
         let tempo = 100;
         let elapsed = Duration::from_millis(32);
-        let result = tick_increase(tempo, elapsed.as_secs_f32());
-        assert_eq!(result, 51);
+        let result = tick_increase(tempo, elapsed.as_secs_f64());
+        assert!((result - 51.2).abs() < 1e-9);
     }
 
     #[test]
     fn test_tick_increase_bis() {
         let tempo = 120;
         let elapsed = Duration::from_millis(100);
-        let result = tick_increase(tempo, elapsed.as_secs_f32());
-        assert_eq!(result, 192);
+        let result = tick_increase(tempo, elapsed.as_secs_f64());
+        assert!((result - 192.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn fractional_ticks_accumulate_across_advances() {
+        let mut sequencer = MidiSequencer::new(vec![]);
+        // first advance after reset bumps to tick 1
+        sequencer.advance(120);
+        assert_eq!(sequencer.get_tick(), 1);
+
+        // simulate 1000 audio callbacks of 5.8 ms each at 120 BPM
+        // (256 frames at 44.1 kHz), i.e. 11.136 ticks per callback
+        for _ in 0..1000 {
+            sequencer.advance_by(120, 0.0058);
+        }
+
+        // exact total: 1 + 11.136 * 1000 = 11137 ticks
+        // truncating per callback would yield 11001 (~1.2% slow)
+        let expected = 1 + 11_136;
+        assert!((i64::from(sequencer.get_tick()) - expected).abs() <= 1);
+    }
+
+    #[test]
+    fn sub_tick_advances_do_not_retrigger_init() {
+        let mut sequencer = MidiSequencer::new(vec![]);
+        sequencer.advance(120);
+        assert_eq!(sequencer.get_tick(), 1);
+
+        // 0.4 ms at 120 BPM is 0.768 ticks: no whole tick passes,
+        // so current_tick stalls at 1 with last_tick == current_tick
+        sequencer.advance_by(120, 0.0004);
+        assert_eq!(sequencer.get_tick(), 1);
+        assert_eq!(sequencer.get_last_tick(), 1);
+
+        // the next sub-tick advance must accumulate to a whole tick,
+        // not fall back into the init path (which would reset the position)
+        sequencer.advance_by(120, 0.0004);
+        assert_eq!(sequencer.get_tick(), 2);
+        assert_eq!(sequencer.get_last_tick(), 1);
     }
     #[test]
     fn test_sequence_demo_song() {
@@ -220,10 +261,10 @@ mod tests {
         ];
         let mut sequencer = MidiSequencer::new(events);
 
-        // seek to tick 200 — set_tick sets both ticks to 199
+        // seek to tick 200 — set_tick sets last_tick and tick_position to 199
         sequencer.set_tick(200);
-        // first advance_tick triggers init: last_tick stays 199, current_tick becomes 200
-        sequencer.advance_tick(1);
+        // first advance takes the init path: last_tick stays 199, current tick becomes 200
+        sequencer.advance(120);
         let batch = sequencer.get_next_events().unwrap();
 
         // should include the event at tick 200
@@ -273,7 +314,7 @@ mod tests {
         );
 
         sequencer.set_tick(target_tick);
-        sequencer.advance_tick(1);
+        sequencer.advance(120);
         let batch = sequencer.get_next_events().unwrap();
 
         // verify we get events at or near the target tick, not from earlier measures
