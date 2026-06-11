@@ -1,63 +1,4 @@
 use crate::parser::song_parser::{MeasureHeader, QUARTER_TIME};
-use std::collections::HashMap;
-
-/// Tracks the state of repeat section navigation during playback order computation.
-struct RepeatState {
-    start_stack: Vec<usize>,    // stack of repeat_open indices (for nesting)
-    visits: HashMap<usize, i8>, // how many times each repeat_close has been hit
-    current_repetition: i8,     // 0-based: 0 = first play, 1 = first repeat, etc.
-    jumping_back: bool,         // true when looping back to a repeat_open
-}
-
-impl RepeatState {
-    fn new() -> Self {
-        Self {
-            start_stack: vec![0], // implicit start at measure 0
-            visits: HashMap::new(),
-            current_repetition: 0,
-            jumping_back: false,
-        }
-    }
-
-    /// Process a repeat_open marker. Pushes onto the stack on first entry,
-    /// skips the push when looping back (to preserve the repetition counter).
-    fn enter_repeat(&mut self, measure_index: usize) {
-        if !self.jumping_back {
-            self.current_repetition = 0;
-            self.start_stack.push(measure_index);
-        }
-        self.jumping_back = false;
-    }
-
-    /// Check if the current repetition matches an alternative ending bitmask.
-    fn matches_alternative(&self, repeat_alternative: u8) -> bool {
-        // clamp to 7 to avoid shift overflow on u8
-        let clamped = self.current_repetition.min(7);
-        let bit = 1_u8 << clamped;
-        repeat_alternative & bit != 0
-    }
-
-    /// Process a repeat_close marker. Returns the index to jump back to,
-    /// or None if all repetitions are done.
-    fn close_repeat(&mut self, measure_index: usize, repeat_close: i8) -> Option<usize> {
-        let visits = self.visits.entry(measure_index).or_insert(0);
-        if *visits < repeat_close {
-            *visits += 1;
-            self.current_repetition += 1;
-            self.jumping_back = true;
-            let repeat_start = *self.start_stack.last().unwrap_or(&0);
-            // clear visit counts for inner repeats so they replay on next outer pass
-            self.visits
-                .retain(|&k, _| k <= repeat_start || k >= measure_index);
-            Some(repeat_start)
-        } else {
-            // done repeating
-            self.visits.remove(&measure_index);
-            self.start_stack.pop();
-            None
-        }
-    }
-}
 
 /// Compute the playback order of measures, expanding repeats and alternative endings.
 ///
@@ -65,50 +6,91 @@ impl RepeatState {
 /// and by the tablature to map playback ticks back to visual measures.
 /// Returns a Vec of (measure_index, tick_offset) pairs.
 /// The tick_offset is the difference between the playback tick and the original measure tick.
+///
+/// Port of TuxGuitar's `MidiRepeatController` semantics:
+/// - the first measure implicitly opens a repeat section
+/// - a repeat_open marker restarts the section (Guitar Pro has no nested repeats)
+///   and resets the counters only on its first pass
+/// - the alternative ending bitmask latches from the first marked measure until
+///   a repeat_close, so unmarked measures under a volta bracket inherit it
+/// - a repeat_close on a skipped measure only clears the latch, it never jumps
+/// - a repeat_close inside an alternative ending always jumps back; the section
+///   ends by falling through an ending without a repeat_close
 pub fn compute_playback_order(headers: &[MeasureHeader]) -> Vec<(usize, i64)> {
     let mut order: Vec<(usize, i64)> = Vec::new();
     let mut running_tick: u32 = QUARTER_TIME; // same starting tick as parser
-    let mut repeat = RepeatState::new();
-    let mut i = 0;
 
-    while i < headers.len() {
-        let header = &headers[i];
+    let mut index: usize = 0;
+    let mut last_played: i64 = -1; // highest measure index played so far
+    let mut repeat_start_index: usize = 0;
+    let mut repeat_open = true; // first measure implicitly opens a repeat
+    let mut repeat_number: i8 = 0; // 0-based repetition counter
+    let mut repeat_alternative: u8 = 0; // latched alternative ending bitmask
+
+    while index < headers.len() {
+        let header = &headers[index];
+        let mut should_play = true;
 
         if header.repeat_open {
-            repeat.enter_repeat(i);
-        }
-
-        // check alternative ending: skip this measure if it doesn't match current repetition
-        if header.repeat_alternative != 0 && !repeat.matches_alternative(header.repeat_alternative)
-        {
-            // still check for repeat_close on this skipped measure
-            if header.repeat_close > 0
-                && let Some(jump_to) = repeat.close_repeat(i, header.repeat_close)
-            {
-                i = jump_to;
-                continue;
+            repeat_start_index = index;
+            repeat_open = true;
+            // reset counters only on the first pass over this measure
+            if index as i64 > last_played {
+                repeat_number = 0;
+                repeat_alternative = 0;
             }
-            i += 1;
-            continue;
+        } else {
+            // latch the alternative ending bitmask from the first marked measure
+            if repeat_alternative == 0 {
+                repeat_alternative = header.repeat_alternative;
+            }
+            // inside an alternative ending, the measure only plays if the
+            // latched mask matches the current repetition
+            if repeat_open
+                && repeat_alternative > 0
+                && repeat_alternative & repetition_bit(repeat_number) == 0
+            {
+                should_play = false;
+                // the close of a skipped ending terminates the latch but never jumps
+                if header.repeat_close > 0 {
+                    repeat_alternative = 0;
+                }
+            }
         }
 
-        // add this measure to the playback order
-        let tick_offset = i64::from(running_tick) - i64::from(header.start);
-        order.push((i, tick_offset));
-        running_tick += header.length();
+        if should_play {
+            last_played = last_played.max(index as i64);
+            let tick_offset = i64::from(running_tick) - i64::from(header.start);
+            order.push((index, tick_offset));
+            running_tick += header.length();
 
-        // handle repeat close
-        if header.repeat_close > 0
-            && let Some(jump_to) = repeat.close_repeat(i, header.repeat_close)
-        {
-            i = jump_to;
-            continue;
+            if repeat_open && header.repeat_close > 0 {
+                if repeat_number < header.repeat_close || repeat_alternative > 0 {
+                    repeat_number += 1;
+                    repeat_alternative = 0;
+                    index = repeat_start_index;
+                    continue;
+                }
+                // done repeating
+                repeat_open = false;
+                repeat_number = 0;
+                repeat_alternative = 0;
+            }
         }
-
-        i += 1;
+        index += 1;
     }
 
     order
+}
+
+/// Bit for the given repetition in an alternative ending bitmask.
+/// Repetitions beyond the 8th never match.
+const fn repetition_bit(repetition: i8) -> u8 {
+    if repetition >= 0 && repetition < 8 {
+        1 << repetition
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]
@@ -191,7 +173,9 @@ mod tests {
 
     #[test]
     fn alternative_endings() {
-        // |: M0 | M1[1.] | M2[2.] :|  M3
+        // |: M0 | M1[1.] :| M2[2.] | M3
+        // Each ending carries its own close (as in real GP files); the last
+        // ending has none and falls through.
         // Plays: M0 M1 M0 M2 M3
         let measure_len = 3840_u32;
         let headers = vec![
@@ -199,12 +183,12 @@ mod tests {
             MeasureHeader {
                 start: 960 + measure_len,
                 repeat_alternative: 1,
+                repeat_close: 1,
                 ..MeasureHeader::default()
             },
             MeasureHeader {
                 start: 960 + measure_len * 2,
                 repeat_alternative: 2,
-                repeat_close: 1,
                 ..MeasureHeader::default()
             },
             make_header(960 + measure_len * 3, false, 0),
@@ -216,7 +200,7 @@ mod tests {
 
     #[test]
     fn three_alternatives() {
-        // |: M0 | M1[1.] | M2[2.] | M3[3.] :|x3  M4
+        // |: M0 | M1[1.] :| M2[2.] :| M3[3.] | M4
         // Plays: M0 M1 M0 M2 M0 M3 M4
         let measure_len = 3840_u32;
         let headers = vec![
@@ -224,17 +208,18 @@ mod tests {
             MeasureHeader {
                 start: 960 + measure_len,
                 repeat_alternative: 1,
+                repeat_close: 1,
                 ..MeasureHeader::default()
             },
             MeasureHeader {
                 start: 960 + measure_len * 2,
                 repeat_alternative: 2,
+                repeat_close: 1,
                 ..MeasureHeader::default()
             },
             MeasureHeader {
                 start: 960 + measure_len * 3,
                 repeat_alternative: 4,
-                repeat_close: 2,
                 ..MeasureHeader::default()
             },
             make_header(960 + measure_len * 4, false, 0),
@@ -247,7 +232,10 @@ mod tests {
     #[test]
     fn nested_repeats() {
         // |: M0 |: M1 :| M2 :|  M3
-        // Plays: M0 M1 M1 M2 M0 M1 M1 M2 M3
+        // Guitar Pro has no nested repeats: the second open restarts the
+        // section, and the outer close is ignored once the inner section
+        // completed (TuxGuitar semantics).
+        // Plays: M0 M1 M1 M2 M3
         let measure_len = 3840_u32;
         let headers = vec![
             make_header(960, true, 0),
@@ -257,7 +245,7 @@ mod tests {
         ];
         let order = compute_playback_order(&headers);
         let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
-        assert_eq!(indices, vec![0, 1, 1, 2, 0, 1, 1, 2, 3]);
+        assert_eq!(indices, vec![0, 1, 1, 2, 3]);
     }
 
     #[test]
@@ -304,7 +292,10 @@ mod tests {
     #[test]
     fn alternative_on_last_pass_with_close() {
         // |: M0 | M1[1.+2.] :|
-        // Plays: M0 M1 M0 M1
+        // A close inside an alternative ending always jumps back, so M0 plays
+        // once more before M1 (matching no further ending) falls through
+        // (TuxGuitar semantics).
+        // Plays: M0 M1 M0 M1 M0
         let measure_len = 3840_u32;
         let headers = vec![
             make_header(960, true, 0),
@@ -317,7 +308,7 @@ mod tests {
         ];
         let order = compute_playback_order(&headers);
         let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
-        assert_eq!(indices, vec![0, 1, 0, 1]);
+        assert_eq!(indices, vec![0, 1, 0, 1, 0]);
     }
 
     #[test]
@@ -325,5 +316,92 @@ mod tests {
         let headers: Vec<MeasureHeader> = vec![];
         let order = compute_playback_order(&headers);
         assert!(order.is_empty());
+    }
+
+    #[test]
+    fn trailing_alternative_after_close() {
+        // |: M0 | M1[1.] :| M2[2.] | M3
+        // The second ending lives after the closing measure; the repetition
+        // counter must survive the repeat completing for M2 to match.
+        // Plays: M0 M1 M0 M2 M3
+        let measure_len = 3840_u32;
+        let headers = vec![
+            make_header(960, true, 0),
+            MeasureHeader {
+                start: 960 + measure_len,
+                repeat_alternative: 1,
+                repeat_close: 1,
+                ..MeasureHeader::default()
+            },
+            MeasureHeader {
+                start: 960 + measure_len * 2,
+                repeat_alternative: 2,
+                ..MeasureHeader::default()
+            },
+            make_header(960 + measure_len * 3, false, 0),
+        ];
+        let order = compute_playback_order(&headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, vec![0, 1, 0, 2, 3]);
+    }
+
+    #[test]
+    fn completed_repeat_then_bare_close() {
+        // |: M0 :|  M1 :|
+        // A close without a new open after a completed section is ignored
+        // (TuxGuitar semantics); it must not replay the song from measure 0.
+        // Plays: M0 M0 M1
+        let measure_len = 3840_u32;
+        let headers = vec![
+            make_header(960, true, 1),
+            make_header(960 + measure_len, false, 1),
+        ];
+        let order = compute_playback_order(&headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, vec![0, 0, 1]);
+    }
+
+    #[test]
+    fn bare_close_does_not_leak_into_next_repeat() {
+        // M0 | M1 :|  |: M2 :|  M3
+        // The jump back to measure 0 (which has no repeat_open) must not
+        // corrupt the state of the later explicit repeat on M2.
+        // Plays: M0 M1 M0 M1 M2 M2 M3
+        let measure_len = 3840_u32;
+        let headers = vec![
+            make_header(960, false, 0),
+            make_header(960 + measure_len, false, 1),
+            make_header(960 + measure_len * 2, true, 1),
+            make_header(960 + measure_len * 3, false, 0),
+        ];
+        let order = compute_playback_order(&headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, vec![0, 1, 0, 1, 2, 2, 3]);
+    }
+
+    #[test]
+    fn sequential_sections_with_alternatives() {
+        // |: M0 | M1[1.] :| M2[2.]  |: M3 | M4[1.] :| M5[2.]
+        // The second section starts right after the first one; the repetition
+        // counter must reset on its repeat_open for M4's first ending to match.
+        // Plays: M0 M1 M0 M2 M3 M4 M3 M5
+        let measure_len = 3840_u32;
+        let alt = |idx: u32, repeat_alternative: u8, repeat_close: i8| MeasureHeader {
+            start: 960 + measure_len * idx,
+            repeat_alternative,
+            repeat_close,
+            ..MeasureHeader::default()
+        };
+        let headers = vec![
+            make_header(960, true, 0),
+            alt(1, 1, 1),
+            alt(2, 2, 0),
+            make_header(960 + measure_len * 3, true, 0),
+            alt(4, 1, 1),
+            alt(5, 2, 0),
+        ];
+        let order = compute_playback_order(&headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, vec![0, 1, 0, 2, 3, 4, 3, 5]);
     }
 }

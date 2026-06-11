@@ -231,6 +231,9 @@ pub struct MeasureHeader {
     pub tempo: Tempo,
     pub marker: Option<Marker>,
     pub repeat_open: bool,
+    /// Alternative ending bitmask: bit i set = ending i+1 plays on repetition i.
+    /// Always a bitmask after parsing — GP3/GP4 store a count on disk, which
+    /// the parser converts (see gp345 `convert_repeat_alternative`).
     pub repeat_alternative: u8,
     pub repeat_close: i8,
     pub triplet_feel: TripletFeel,

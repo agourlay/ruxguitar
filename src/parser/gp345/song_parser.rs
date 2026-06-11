@@ -711,6 +711,22 @@ pub fn parse_measure_header(
     }
 }
 
+/// Convert a GP3/GP4 alternate-ending number into an ending bitmask.
+///
+/// GP3/GP4 store the volta as a count ("covers endings up to N") while GP5
+/// stores a bitmask. Port of TuxGuitar's `parseRepeatAlternative`: set the
+/// bits below the count not in `existing_alternatives` (the endings already
+/// used by earlier brackets in the same repeat section).
+fn convert_repeat_alternative(existing_alternatives: u8, value: u8) -> u8 {
+    let mut repeat_alternative = 0_u8;
+    for ending in 0..8_u8 {
+        if value > ending && existing_alternatives & (1 << ending) == 0 {
+            repeat_alternative |= 1 << ending;
+        }
+    }
+    repeat_alternative
+}
+
 pub fn parse_measure_headers(
     measure_count: i32,
     song_tempo: u32,
@@ -718,17 +734,35 @@ pub fn parse_measure_headers(
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], Vec<MeasureHeader>> {
     move |i: &[u8]| {
         log::debug!("Parsing {measure_count} measure headers");
+        // GP3/GP4 store the alternate ending as a count to convert into a bitmask
+        let needs_alternative_conversion = version <= GpVersion::GP4_06;
+        // endings already used since the last repeat_open
+        let mut existing_alternatives = 0_u8;
+        let mut convert_alternative = |header: &mut MeasureHeader| {
+            if !needs_alternative_conversion {
+                return;
+            }
+            // a measure's own repeat_open does not affect its own conversion
+            header.repeat_alternative =
+                convert_repeat_alternative(existing_alternatives, header.repeat_alternative);
+            if header.repeat_open {
+                existing_alternatives = 0;
+            }
+            existing_alternatives |= header.repeat_alternative;
+        };
         // parse first header to account for the byte in between each header in GP5
-        let (mut i, first_header) =
+        let (mut i, mut first_header) =
             parse_measure_header(TimeSignature::default(), song_tempo, version)(i)?;
+        convert_alternative(&mut first_header);
         let mut previous_time_signature = first_header.time_signature.clone();
         let mut headers = vec![first_header];
         for _ in 1..measure_count {
-            let (rest, header) = preceded(
+            let (rest, mut header) = preceded(
                 cond(version >= GpVersion::GP5, parse_u8),
                 parse_measure_header(previous_time_signature, song_tempo, version),
             )
             .parse(i)?;
+            convert_alternative(&mut header);
             // propagate time signature
             previous_time_signature = header.time_signature.clone();
             i = rest;
@@ -1049,5 +1083,26 @@ mod tests {
         assert!(GpVersion::GP5 >= GpVersion::GP5);
         assert!(GpVersion::GP3 < GpVersion::GP4);
         assert!(GpVersion::GP3 < GpVersion::GP5);
+    }
+
+    #[test]
+    fn test_convert_repeat_alternative() {
+        // successive voltas 1, 2, 3 become bits 0, 1, 2
+        assert_eq!(convert_repeat_alternative(0b000, 1), 0b001);
+        assert_eq!(convert_repeat_alternative(0b001, 2), 0b010);
+        assert_eq!(convert_repeat_alternative(0b011, 3), 0b100);
+    }
+
+    #[test]
+    fn test_convert_repeat_alternative_combined_volta() {
+        // a combined "1.2." first volta is stored as 2 and covers both endings
+        assert_eq!(convert_repeat_alternative(0b000, 2), 0b011);
+    }
+
+    #[test]
+    fn test_convert_repeat_alternative_count_beyond_eight() {
+        // counts above 8 endings saturate at the 8-bit mask
+        assert_eq!(convert_repeat_alternative(0b000, 255), 0b1111_1111);
+        assert_eq!(convert_repeat_alternative(0b1111_1111, 255), 0);
     }
 }
