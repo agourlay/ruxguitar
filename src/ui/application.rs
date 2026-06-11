@@ -279,10 +279,13 @@ impl RuxApplication {
             }
             Message::FileOpened(result) => {
                 self.tab_file_is_loading = false;
-                // stop previous audio player if any
+                // stop and drop the previous audio player if any: if loading
+                // fails below, the old song must not keep playing against the
+                // new tablature state
                 if let Some(audio_player) = &mut self.audio_player {
                     audio_player.stop();
                 }
+                self.audio_player = None;
                 match result {
                     Ok((contents, parent_folder, file_name)) => {
                         if let Err(err) = self.config.set_tabs_folder(parent_folder) {
@@ -440,8 +443,14 @@ impl RuxApplication {
             }
             Message::WindowResized => {
                 // query tablature container size
-                selector::find(self.tablature_id.clone()).map(|rect| {
-                    Message::TablatureResized(rect.unwrap().visible_bounds().unwrap().size())
+                selector::find(self.tablature_id.clone()).then(|target| {
+                    // the container can be fully clipped out of the viewport
+                    // (e.g. window resized very short): skip the layout update
+                    target
+                        .and_then(|t| t.visible_bounds())
+                        .map_or_else(Task::none, |bounds| {
+                            Task::done(Message::TablatureResized(bounds.size()))
+                        })
                 })
             }
             Message::TablatureResized(tablature_container_size) => {

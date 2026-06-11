@@ -148,7 +148,10 @@ impl AudioPlayer {
         // Pause stream
         if let Some(stream) = &self.stream {
             log::debug!("Stopping audio stream");
-            stream.pause().unwrap();
+            if let Err(err) = stream.pause() {
+                // e.g. audio device disappeared; the stream is dropped below anyway
+                log::warn!("Failed to pause audio stream: {err}");
+            }
         }
         self.is_playing = false;
 
@@ -371,7 +374,8 @@ fn new_output_stream(
                             synthesizer_guard.note_off(channel, key);
                         }
                         MidiEventType::TempoChange(tempo) => {
-                            log::info!("Tempo changed to {tempo}");
+                            // debug level: runs on the real-time audio thread
+                            log::debug!("Tempo changed to {tempo}");
                             player_params.set_tempo(tempo);
                         }
                         MidiEventType::MidiMessage(channel, command, data1, data2) => {
