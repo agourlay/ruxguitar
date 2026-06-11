@@ -88,9 +88,18 @@ impl GpxFileSystem {
                 if block == 0 {
                     break;
                 }
-                // The reference advances the scan cursor to the last data block read.
-                offset = (block as usize) * SECTOR_SIZE;
-                file_bytes.extend_from_slice(slice_padded(bytes, offset, SECTOR_SIZE).as_slice());
+                let block_offset = (block as usize) * SECTOR_SIZE;
+                // valid entries never reference sectors outside the image; a
+                // zero-free block table would otherwise inflate file_bytes
+                if block_offset >= bytes.len() {
+                    break;
+                }
+                // The reference advances the scan cursor to the last data block
+                // read; keep it monotonic so a backwards block pointer cannot
+                // rescan the same file entry forever.
+                offset = offset.max(block_offset);
+                file_bytes
+                    .extend_from_slice(slice_padded(bytes, block_offset, SECTOR_SIZE).as_slice());
             }
 
             let file_size = read_u32_le(bytes, index_file_size).unwrap_or(0) as usize;
@@ -106,15 +115,27 @@ impl GpxFileSystem {
     }
 }
 
+/// Decompressed BCFS images are a few MB in practice; reject absurd declared
+/// sizes before allocating (the length field is attacker-controlled).
+const MAX_DECOMPRESSED_SIZE: usize = 64 * 1024 * 1024;
+
 /// Decompress a BCFZ bitstream into the underlying BCFS image.
 fn decompress_bcfz(data: &[u8]) -> Result<Vec<u8>, RuxError> {
     let mut reader = BitReader::new(data);
     let expected_length = read_u32_le(&reader.read_bytes(4), 0)
         .ok_or_else(|| RuxError::ParsingError("BCFZ stream too short".to_string()))?
         as usize;
+    if expected_length > MAX_DECOMPRESSED_SIZE {
+        return Err(RuxError::ParsingError(format!(
+            "BCFZ declares implausible decompressed size: {expected_length} bytes"
+        )));
+    }
 
     let mut out: Vec<u8> = Vec::with_capacity(expected_length);
-    while !reader.end() && reader.byte_offset() < expected_length {
+    // The output length bound deviates from TuxGuitar, which only bounds the
+    // input offset: a back-reference can double the output for ~35 bits of
+    // input, so a crafted stream could otherwise expand without limit.
+    while !reader.end() && reader.byte_offset() < expected_length && out.len() < expected_length {
         let flag = reader.read_bits(1);
         if flag == 1 {
             // Back-reference into the already-decompressed output.
@@ -126,7 +147,7 @@ fn decompress_bcfz(data: &[u8]) -> Result<Vec<u8>, RuxError> {
                 break;
             }
             let pos = out.len() - offs;
-            let copy = size.min(offs);
+            let copy = size.min(offs).min(expected_length - out.len());
             for i in 0..copy {
                 let byte = out[pos + i];
                 out.push(byte);
@@ -177,6 +198,84 @@ mod tests {
 
     // Only fixtures committed to the repo (test-files/ is otherwise gitignored).
     const FIXTURES: &[&str] = &["test-files/Tyr - Evening Star.gpx"];
+
+    /// MSB-first bit writer mirroring the `BitReader` layout, to craft BCFZ streams.
+    struct BitWriter {
+        bytes: Vec<u8>,
+        bit: usize,
+    }
+
+    impl BitWriter {
+        fn new() -> Self {
+            Self {
+                bytes: Vec::new(),
+                bit: 0,
+            }
+        }
+
+        fn push_bit(&mut self, bit: u32) {
+            if self.bit == 0 {
+                self.bytes.push(0);
+            }
+            *self.bytes.last_mut().unwrap() |= ((bit & 1) as u8) << (7 - self.bit);
+            self.bit = (self.bit + 1) % 8;
+        }
+
+        /// Counterpart of `BitReader::read_bits`.
+        fn push_bits(&mut self, value: u32, count: u32) {
+            for i in (0..count).rev() {
+                self.push_bit((value >> i) & 1);
+            }
+        }
+
+        /// Counterpart of `BitReader::read_bits_reversed`.
+        fn push_bits_reversed(&mut self, value: u32, count: u32) {
+            for i in 0..count {
+                self.push_bit((value >> i) & 1);
+            }
+        }
+
+        fn push_literal_run(&mut self, bytes: &[u8]) {
+            self.push_bit(0);
+            self.push_bits_reversed(bytes.len() as u32, 2);
+            for &b in bytes {
+                self.push_bits(u32::from(b), 8);
+            }
+        }
+
+        fn push_back_reference(&mut self, offs: u32, size: u32) {
+            self.push_bit(1);
+            self.push_bits(4, 4); // 4-bit wide offs/size fields
+            self.push_bits_reversed(offs, 4);
+            self.push_bits_reversed(size, 4);
+        }
+    }
+
+    #[test]
+    fn bcfz_rejects_implausible_declared_size() {
+        // u32::MAX declared size must error out instead of allocating 4 GiB
+        let data = [0xFF, 0xFF, 0xFF, 0xFF];
+        assert!(decompress_bcfz(&data).is_err());
+    }
+
+    #[test]
+    fn bcfz_output_is_bounded_by_declared_size() {
+        // declared size 14, but doubling back-references try to copy past it
+        let mut w = BitWriter::new();
+        w.push_bits(14, 8); // expected_length = 14, little-endian
+        w.push_bits(0, 8);
+        w.push_bits(0, 8);
+        w.push_bits(0, 8);
+        w.push_literal_run(b"ab");
+        w.push_literal_run(b"cd");
+        // each back-reference doubles the output (offs = whole output so far);
+        // the second one would reach 16 bytes without the output clamp
+        w.push_back_reference(4, 15);
+        w.push_back_reference(8, 15);
+
+        let out = decompress_bcfz(&w.bytes).unwrap();
+        assert_eq!(out, b"abcdabcdabcdab");
+    }
 
     #[test]
     fn extracts_score_gpif_from_all_fixtures() {
