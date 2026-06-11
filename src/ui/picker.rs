@@ -1,5 +1,9 @@
 use std::path::PathBuf;
 
+/// File extensions supported by the parser; used by both the dialog filter
+/// and the validation of files loaded directly (CLI argument, drag and drop).
+const SUPPORTED_EXTENSIONS: [&str; 5] = ["gp5", "gp4", "gp3", "gpx", "gp"];
+
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum FilePickerError {
     #[error("dialog window closed without selecting a file")]
@@ -13,7 +17,7 @@ pub async fn open_file_dialog(
     picker_folder: Option<PathBuf>,
 ) -> Result<(Vec<u8>, Option<PathBuf>, String), FilePickerError> {
     let mut picker = rfd::AsyncFileDialog::new()
-        .add_filter("Guitar Pro files", &["gp5", "gp4", "gp3", "gpx", "gp"])
+        .add_filter("Guitar Pro files", &SUPPORTED_EXTENSIONS)
         .set_title("Select a Guitar Pro file");
 
     if let Some(folder) = picker_folder {
@@ -39,12 +43,7 @@ pub async fn load_file(
         .and_then(|e| e.to_str())
         .map(str::to_lowercase)
         .unwrap_or_default();
-    if file_extension != "gp5"
-        && file_extension != "gp4"
-        && file_extension != "gp3"
-        && file_extension != "gpx"
-        && file_extension != "gp"
-    {
+    if !SUPPORTED_EXTENSIONS.contains(&file_extension.as_str()) {
         return Err(FilePickerError::IoError(format!(
             "Unsupported file extension: {file_extension}"
         )));
