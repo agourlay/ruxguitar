@@ -147,7 +147,7 @@ impl AudioPlayer {
     pub fn stop(&mut self) {
         // Pause stream
         if let Some(stream) = &self.stream {
-            log::info!("Stopping audio stream");
+            log::debug!("Stopping audio stream");
             stream.pause().unwrap();
         }
         self.is_playing = false;
@@ -173,7 +173,7 @@ impl AudioPlayer {
 
     /// Toggle play/pause. Returns an error message if playback fails.
     pub fn toggle_play(&mut self) -> Option<String> {
-        log::info!("Toggle audio stream");
+        log::debug!("Toggle audio stream");
         if let Some(ref stream) = self.stream {
             if self.is_playing {
                 self.is_playing = false;
