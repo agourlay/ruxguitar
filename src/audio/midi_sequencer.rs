@@ -67,36 +67,18 @@ impl MidiSequencer {
 
         assert!(self.last_tick <= current_tick);
 
-        // get all events between last tick and next tick using binary search
+        // all events with tick in (last_tick, current_tick]
         // TODO could be improved by saving `end_index` to the next `start_index`
-        let start_index = match self
+        let start_index = self
             .sorted_events
-            .binary_search_by_key(&self.last_tick, |event| event.tick)
-        {
-            Ok(position) => position + 1,
-            Err(position) => {
-                // exit if end reached
-                if position == self.sorted_events.len() {
-                    return None;
-                }
-                position
-            }
-        };
-
-        let end_index = match self.sorted_events[start_index..]
-            .binary_search_by_key(&current_tick, |event| event.tick)
-        {
-            Ok(next_position) => start_index + next_position,
-            Err(next_position) => {
-                if next_position == 0 {
-                    // no matching elements
-                    return Some(&[]);
-                }
-                // return slice until the last event
-                start_index + next_position - 1
-            }
-        };
-        Some(&self.sorted_events[start_index..=end_index])
+            .partition_point(|event| event.tick <= self.last_tick);
+        // exit if end reached
+        if start_index == self.sorted_events.len() {
+            return None;
+        }
+        let len =
+            self.sorted_events[start_index..].partition_point(|event| event.tick <= current_tick);
+        Some(&self.sorted_events[start_index..start_index + len])
     }
 
     pub fn advance(&mut self, tempo: u32) {
@@ -237,6 +219,42 @@ mod tests {
             }
         }
         assert_eq!(pos, events.len());
+    }
+
+    #[test]
+    fn duplicate_ticks_are_delivered_exactly_once() {
+        // chords produce several events at the same tick; batch boundaries
+        // landing exactly on such a tick must neither drop nor replay events
+        let event = |tick, key| MidiEvent {
+            tick,
+            event: MidiEventType::NoteOn(0, key, 95),
+            track: Some(0),
+        };
+        let events = vec![
+            event(5, 60),
+            // chord at tick 10
+            event(10, 60),
+            event(10, 64),
+            event(10, 67),
+            // chord at tick 20
+            event(20, 60),
+            event(20, 64),
+        ];
+        let mut sequencer = MidiSequencer::new(events.clone());
+
+        // first batch ends exactly on the chord tick: all three notes included
+        sequencer.advance_tick(10); // last:0 current:10
+        let batch = sequencer.get_next_events().unwrap();
+        assert_eq!(batch, &events[0..4]);
+
+        // next batch starts from the duplicated tick: nothing replayed
+        sequencer.advance_tick(10); // last:10 current:20
+        let batch = sequencer.get_next_events().unwrap();
+        assert_eq!(batch, &events[4..6]);
+
+        // all events consumed
+        sequencer.advance_tick(10); // last:20 current:30
+        assert!(sequencer.get_next_events().is_none());
     }
 
     #[test]
