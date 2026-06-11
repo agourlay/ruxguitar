@@ -9,6 +9,9 @@ license = "Apache-2.0"
 readme = "README.md"
 categories = ["multimedia"]
 keywords = ["guitar", "tablature", "music"]
+# test fixtures and the demo gif are not needed by crates.io users
+# (the README image resolves via the repository URL)
+exclude = ["test-files/", "*.gif"]
 
 [lints.clippy]
 cast_lossless = "warn"
