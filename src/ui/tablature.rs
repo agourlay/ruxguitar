@@ -180,6 +180,9 @@ impl Tablature {
                 self.focused_measure = next_focus_id;
                 let next_canvas = self.canvas_measures.get_mut(next_focus_id).unwrap();
                 next_canvas.toggle_focused();
+                // beat notifications coalesce, so the first tick in a measure
+                // may already be past beat 0
+                next_canvas.focus_beat(new_beat_id);
                 return self.scroll_offset_for_measure(next_focus_id);
             }
         }
