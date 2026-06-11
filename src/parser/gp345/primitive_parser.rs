@@ -27,13 +27,13 @@ pub fn parse_short(i: &[u8]) -> IResult<&[u8], i16> {
     number::complete::le_i16(i)
 }
 
-/// Skip `n` bytes.
+/// Skip `n` bytes, stopping at the end of input.
+///
+/// Lenient on truncated input: skipping past the end yields an empty input
+/// instead of a panic, so the next actual read reports a proper parse error.
 pub fn skip(i: &[u8], n: usize) -> &[u8] {
-    if i.is_empty() {
-        return i;
-    }
     log::debug!("skip: {n}");
-    &i[n..]
+    i.get(n..).unwrap_or(&[])
 }
 
 /// Materialize properly encoded String
@@ -108,7 +108,16 @@ pub fn parse_int_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::gp345::primitive_parser::parse_byte_size_string;
+    use crate::parser::gp345::primitive_parser::{parse_byte_size_string, skip};
+
+    #[test]
+    fn skip_is_lenient_on_truncated_input() {
+        let data = [1_u8, 2, 3];
+        assert_eq!(skip(&data, 2), &[3]);
+        assert_eq!(skip(&data, 3), &[] as &[u8]); // exact boundary
+        assert_eq!(skip(&data, 4), &[] as &[u8]); // truncated input: no panic
+        assert_eq!(skip(&[], 4), &[] as &[u8]);
+    }
 
     #[test]
     fn test_read_byte_size_string() {
