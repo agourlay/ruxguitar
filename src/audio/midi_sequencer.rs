@@ -98,6 +98,10 @@ impl MidiSequencer {
     }
 
     fn advance_by(&mut self, tempo: u32, elapsed_secs: f64) {
+        // cap the elapsed time so a clock jump (system suspend, stalled stream)
+        // cannot teleport playback far ahead; audio callbacks run every ~0.1s
+        const MAX_ELAPSED_SECS: f64 = 0.5;
+        let elapsed_secs = elapsed_secs.min(MAX_ELAPSED_SECS);
         self.last_tick = self.get_tick();
         self.tick_position += tick_increase(tempo, elapsed_secs);
     }
@@ -177,6 +181,17 @@ mod tests {
         assert_eq!(sequencer.get_tick(), 2);
         assert_eq!(sequencer.get_last_tick(), 1);
     }
+    #[test]
+    fn clock_jumps_are_clamped() {
+        let mut sequencer = MidiSequencer::new(vec![]);
+        sequencer.advance(120); // init: tick 1
+
+        // an hour-long clock jump (e.g. system suspend) advances playback
+        // by at most 0.5s of ticks: 120 BPM = 2 quarters/s * 960 * 0.5 = 960
+        sequencer.advance_by(120, 3600.0);
+        assert_eq!(sequencer.get_tick(), 961);
+    }
+
     #[test]
     fn test_sequence_demo_song() {
         const FILE_PATH: &str = "test-files/Demo v5.gp5";
@@ -306,17 +321,10 @@ mod tests {
             crate::audio::playback_order::compute_playback_order(&song.measure_headers);
 
         // build measure_playback_ticks (same logic as AudioPlayer::new)
-        let measure_count = song.measure_headers.len();
-        let mut measure_playback_ticks = vec![0_u32; measure_count];
-        let mut seen = vec![false; measure_count];
-        for &(measure_index, tick_offset) in &playback_order {
-            if !seen[measure_index] {
-                seen[measure_index] = true;
-                let header = &song.measure_headers[measure_index];
-                measure_playback_ticks[measure_index] =
-                    (i64::from(header.start) + tick_offset) as u32;
-            }
-        }
+        let measure_playback_ticks = crate::audio::playback_order::first_playback_ticks(
+            &song.measure_headers,
+            &playback_order,
+        );
 
         let song = Rc::new(song);
         let builder = MidiBuilder::new();

@@ -1,3 +1,4 @@
+use crate::audio::playback_order::playback_tick;
 use crate::parser::song_parser::Song;
 use crate::ui::application::Message;
 use crate::ui::canvas_measure::CanvasMeasure;
@@ -32,8 +33,8 @@ impl Tablature {
         let mut measure_per_tick = BTreeMap::new();
         for (measure_index, tick_offset) in playback_order {
             let header = &song.measure_headers[*measure_index];
-            let playback_tick = (i64::from(header.start) + tick_offset) as u32;
-            measure_per_tick.insert(playback_tick, *measure_index as u32);
+            let tick = playback_tick(header.start, *tick_offset);
+            measure_per_tick.insert(tick, *measure_index as u32);
         }
         let mut tab = Self {
             song,

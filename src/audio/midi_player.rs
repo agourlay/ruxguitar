@@ -2,6 +2,7 @@ use crate::audio::midi_builder::MidiBuilder;
 use crate::audio::midi_event::{FIRST_TICK, MidiEventType};
 use crate::audio::midi_player_params::MidiPlayerParams;
 use crate::audio::midi_sequencer::MidiSequencer;
+use crate::audio::playback_order::first_playback_ticks;
 use crate::parser::song_parser::Song;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
@@ -55,17 +56,7 @@ impl AudioPlayer {
         let events = builder.build_for_song_with_order(&song, playback_order);
 
         // build first-playback-tick lookup per measure (for seeking)
-        let measure_count = song.measure_headers.len();
-        let mut measure_playback_ticks = vec![0_u32; measure_count];
-        let mut seen = vec![false; measure_count];
-        for &(measure_index, tick_offset) in playback_order {
-            if !seen[measure_index] {
-                seen[measure_index] = true;
-                let header = &song.measure_headers[measure_index];
-                measure_playback_ticks[measure_index] =
-                    (i64::from(header.start) + tick_offset) as u32;
-            }
-        }
+        let measure_playback_ticks = first_playback_ticks(&song.measure_headers, playback_order);
 
         // sound font setup
         let sound_font = if let Some(ref sound_font_file) = sound_font_file {

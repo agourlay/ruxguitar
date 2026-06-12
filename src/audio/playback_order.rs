@@ -18,7 +18,9 @@ use crate::parser::song_parser::{MeasureHeader, QUARTER_TIME};
 ///   ends by falling through an ending without a repeat_close
 pub fn compute_playback_order(headers: &[MeasureHeader]) -> Vec<(usize, i64)> {
     let mut order: Vec<(usize, i64)> = Vec::new();
-    let mut running_tick: u32 = QUARTER_TIME; // same starting tick as parser
+    // i64: keeps the accumulator itself from overflowing on absurd repeat
+    // counts; downstream event ticks remain u32 (the practical timeline limit)
+    let mut running_tick: i64 = i64::from(QUARTER_TIME); // same starting tick as parser
 
     let mut index: usize = 0;
     let mut last_played: i64 = -1; // highest measure index played so far
@@ -60,9 +62,9 @@ pub fn compute_playback_order(headers: &[MeasureHeader]) -> Vec<(usize, i64)> {
 
         if should_play {
             last_played = last_played.max(index as i64);
-            let tick_offset = i64::from(running_tick) - i64::from(header.start);
+            let tick_offset = running_tick - i64::from(header.start);
             order.push((index, tick_offset));
-            running_tick += header.length();
+            running_tick += i64::from(header.length());
 
             if repeat_open && header.repeat_close > 0 {
                 if repeat_number < header.repeat_close || repeat_alternative > 0 {
@@ -81,6 +83,37 @@ pub fn compute_playback_order(headers: &[MeasureHeader]) -> Vec<(usize, i64)> {
     }
 
     order
+}
+
+/// Translate a tick from the original timeline into the expanded playback timeline.
+pub fn playback_tick(original_tick: u32, tick_offset: i64) -> u32 {
+    (i64::from(original_tick) + tick_offset) as u32
+}
+
+/// First playback tick of each measure, used for seeking.
+///
+/// Measures the playback never reaches (e.g. an alternative ending whose
+/// repetition never occurs) fall back to the first playback tick of the
+/// closest preceding played measure.
+pub fn first_playback_ticks(headers: &[MeasureHeader], order: &[(usize, i64)]) -> Vec<u32> {
+    let mut first_ticks: Vec<Option<u32>> = vec![None; headers.len()];
+    for &(measure_index, tick_offset) in order {
+        let slot = &mut first_ticks[measure_index];
+        if slot.is_none() {
+            *slot = Some(playback_tick(headers[measure_index].start, tick_offset));
+        }
+    }
+    // carry forward over never-played measures
+    let mut carried = 0;
+    first_ticks
+        .into_iter()
+        .map(|tick| {
+            if let Some(tick) = tick {
+                carried = tick;
+            }
+            carried
+        })
+        .collect()
 }
 
 /// Bit for the given repetition in an alternative ending bitmask.
@@ -196,6 +229,37 @@ mod tests {
         let order = compute_playback_order(&headers);
         let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
         assert_eq!(indices, vec![0, 1, 0, 2, 3]);
+    }
+
+    #[test]
+    fn first_playback_ticks_carry_over_never_played_measures() {
+        // |: M0 | M1[1.] :| M2[3.] :| M3
+        // One repeat only: ending "3." never plays.
+        // Plays: M0 M1 M0 M3
+        let measure_len = 3840_u32;
+        let headers = vec![
+            make_header(960, true, 0),
+            MeasureHeader {
+                start: 960 + measure_len,
+                repeat_alternative: 0b001,
+                repeat_close: 1,
+                ..MeasureHeader::default()
+            },
+            MeasureHeader {
+                start: 960 + measure_len * 2,
+                repeat_alternative: 0b100,
+                repeat_close: 1,
+                ..MeasureHeader::default()
+            },
+            make_header(960 + measure_len * 3, false, 0),
+        ];
+        let order = compute_playback_order(&headers);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        assert_eq!(indices, vec![0, 1, 0, 3]);
+
+        // seeking to the never-played M2 falls back to M1's first playback tick
+        let first_ticks = first_playback_ticks(&headers, &order);
+        assert_eq!(first_ticks, vec![960, 4800, 4800, 12480]);
     }
 
     #[test]

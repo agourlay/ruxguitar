@@ -1,5 +1,6 @@
 /// Thanks to `TuxGuitar` for the reference implementation in `MidiSequenceParser.java`
 use crate::audio::midi_event::{FIRST_TICK, MidiEvent};
+use crate::audio::playback_order::playback_tick;
 use crate::parser::song_parser::{
     Beat, BendEffect, BendPoint, HarmonicType, MIN_VELOCITY, Measure, MeasureHeader, MidiChannel,
     Note, NoteType, QUARTER_TIME, SEMITONE_LENGTH, Song, Track, TremoloBarEffect,
@@ -106,7 +107,7 @@ impl MidiBuilder {
                 // change tempo if necessary
                 let measure_tempo = measure_header.tempo.value;
                 if measure_tempo != prev_tempo {
-                    let tick = (i64::from(measure_header.start) + tick_offset) as u32;
+                    let tick = playback_tick(measure_header.start, *tick_offset);
                     self.add_tempo_change(tick, measure_tempo);
                     prev_tempo = measure_tempo;
                 }
@@ -125,7 +126,7 @@ impl MidiBuilder {
             // shift events generated for this measure by tick_offset
             if *tick_offset != 0 {
                 for event in &mut self.events[event_start..] {
-                    event.tick = (i64::from(event.tick) + tick_offset) as u32;
+                    event.tick = playback_tick(event.tick, *tick_offset);
                 }
             }
         }
