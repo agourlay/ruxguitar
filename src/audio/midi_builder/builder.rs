@@ -229,7 +229,11 @@ impl MidiBuilder {
                 let stroke_offset = stroke_offsets[note.string as usize - 1];
                 if stroke_offset > 0 {
                     note_start += stroke_offset;
-                    duration = duration.saturating_sub(stroke_offset);
+                    // like TuxGuitar, keep the full duration when the offset would
+                    // consume it: a zero duration emits a NoteOn without NoteOff
+                    if duration > stroke_offset {
+                        duration -= stroke_offset;
+                    }
                 }
 
                 // surrounding notes on the same string on the previous & next beat
