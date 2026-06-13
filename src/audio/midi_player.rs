@@ -272,6 +272,7 @@ fn new_output_stream(
     }
     let stream_config: cpal::StreamConfig = config.into();
     let sample_rate = stream_config.sample_rate;
+    let channel_count = usize::from(stream_config.channels).max(1);
 
     log::info!("Audio output stream config: {stream_config:?}");
 
@@ -383,23 +384,19 @@ fn new_output_stream(
                     }
                 }
             }
-            // Split buffer for this run between left and right
-            let mut output_channel_len = output.len() / 2;
-
-            if left.len() < output_channel_len || right.len() < output_channel_len {
-                log::info!(
-                    "Output buffer larger than expected channel size {} > {}",
-                    output_channel_len,
+            // frames requested by the device for its channel layout
+            let frame_count = output.len() / channel_count;
+            let render_len = frame_count.min(left.len());
+            if render_len < frame_count {
+                // debug level: runs on the real-time audio thread
+                log::debug!(
+                    "Output buffer larger than render buffer {frame_count} > {}",
                     left.len()
                 );
-                output_channel_len = left.len();
             }
 
             // Render the waveform.
-            synthesizer_guard.render(
-                &mut left[..output_channel_len],
-                &mut right[..output_channel_len],
-            );
+            synthesizer_guard.render(&mut left[..render_len], &mut right[..render_len]);
 
             let master_volume = player_params.master_volume();
 
@@ -407,11 +404,13 @@ fn new_output_stream(
             drop(sequencer_guard);
             drop(synthesizer_guard);
 
-            // Interleave the left and right channels into the output buffer.
-            for i in 0..output_channel_len {
-                output[i * 2] = left[i] * master_volume;
-                output[i * 2 + 1] = right[i] * master_volume;
-            }
+            write_frames(
+                output,
+                &left[..render_len],
+                &right[..render_len],
+                channel_count,
+                master_volume,
+            );
         },
         err_fn,
         None, // blocking stream
@@ -421,4 +420,92 @@ fn new_output_stream(
         .play()
         .map_err(|e| AudioPlayerError::StreamError(e.to_string()))?;
     Ok(stream)
+}
+
+/// Interleave rendered stereo samples into the device's frame layout.
+///
+/// Mono devices get a downmix, channels beyond stereo are zeroed.
+/// Frames past the rendered samples are silenced explicitly: the output
+/// buffer is not guaranteed to be zeroed and would replay stale samples.
+fn write_frames(
+    output: &mut [f32],
+    left: &[f32],
+    right: &[f32],
+    channel_count: usize,
+    master_volume: f32,
+) {
+    let rendered = left.len().min(right.len());
+    let mut frames = output.chunks_exact_mut(channel_count);
+    for (i, frame) in frames.by_ref().enumerate() {
+        let (l, r) = if i < rendered {
+            (left[i] * master_volume, right[i] * master_volume)
+        } else {
+            (0.0, 0.0)
+        };
+        match frame {
+            [mono] => *mono = (l + r) / 2.0,
+            [first, second, rest @ ..] => {
+                *first = l;
+                *second = r;
+                rest.fill(0.0);
+            }
+            [] => {}
+        }
+    }
+    // leftover samples when the buffer is not a whole number of frames
+    frames.into_remainder().fill(0.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_frames;
+
+    #[test]
+    fn write_frames_stereo_applies_volume() {
+        let left = [1.0, 0.5];
+        let right = [-1.0, 0.25];
+        let mut output = [9.0_f32; 4];
+        write_frames(&mut output, &left, &right, 2, 0.5);
+        assert_eq!(output, [0.5, -0.5, 0.25, 0.125]);
+    }
+
+    #[test]
+    fn write_frames_mono_downmixes() {
+        let left = [1.0, 0.5];
+        let right = [0.5, 0.25];
+        let mut output = [9.0_f32; 2];
+        write_frames(&mut output, &left, &right, 1, 1.0);
+        assert_eq!(output, [0.75, 0.375]);
+    }
+
+    #[test]
+    fn write_frames_zeroes_extra_channels() {
+        let left = [1.0];
+        let right = [0.5];
+        // 4-channel device: one frame, extra channels silenced
+        let mut output = [9.0_f32; 4];
+        write_frames(&mut output, &left, &right, 4, 1.0);
+        assert_eq!(output, [1.0, 0.5, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn write_frames_silences_unrendered_tail() {
+        let left = [1.0];
+        let right = [0.5];
+        // device asks for 3 frames but only 1 was rendered:
+        // the stale tail must be silenced, not replayed
+        let mut output = [9.0_f32; 6];
+        write_frames(&mut output, &left, &right, 2, 1.0);
+        assert_eq!(output, [1.0, 0.5, 0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn write_frames_zeroes_partial_frame_remainder() {
+        let left = [1.0];
+        let right = [0.5];
+        // 5 samples on a stereo device: the dangling half-frame is silenced
+        let mut output = [9.0_f32; 5];
+        write_frames(&mut output, &left, &right, 2, 1.0);
+        assert_eq!(output, [1.0, 0.5, 0.0, 0.0, 0.0]);
+    }
 }
