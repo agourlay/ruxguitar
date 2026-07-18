@@ -1,12 +1,12 @@
 use crate::parser::song_parser::{
-    Beat, BeatStrokeDirection, HarmonicType, Note, NoteEffect, NoteType, SlapEffect, SlideType,
-    Song, TimeSignature,
+    Beat, BeatStrokeDirection, BendEffect, HarmonicType, Note, NoteEffect, NoteType, SlapEffect,
+    SlideType, Song, TimeSignature,
 };
 use crate::ui::application::Message;
 use iced::advanced::mouse;
 use iced::advanced::text::Shaping::Auto;
 use iced::mouse::{Cursor, Interaction};
-use iced::widget::canvas::{Cache, Event, Frame, Geometry, Path, Stroke, Text};
+use iced::widget::canvas::{Cache, Event, Frame, Geometry, LineDash, Path, Stroke, Text};
 use iced::widget::text::Alignment;
 use iced::widget::{Action, Canvas, canvas};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
@@ -19,8 +19,6 @@ const HAMMER_ON: char = '\u{25E0}'; // ◠ https://unicodeplus.com/U+25E0
 const HORIZONTAL_BAR: char = '\u{2015}'; // ― https://unicodeplus.com/U+2015
 const SHIFT_SLIDE: char = '\u{27CD}'; // ⟍ https://unicodeplus.com/U+27CD
 const LEGATO_SLIDE: char = '\u{27CB}'; // ⟋ https://unicodeplus.com/U+27CB
-const ARROW_UP: char = '\u{2191}'; // ↑ https://unicodeplus.com/U+2191
-const ARROW_DOWN: char = '\u{2193}'; // ↓ https://unicodeplus.com/U+2193
 const TIE: char = '\u{2323}'; // ⌣ https://unicodeplus.com/U+2323
 
 // Drawing constants
@@ -50,6 +48,9 @@ const MEASURE_NOTES_PADDING: f32 = 20.0;
 // Length of a beat
 const BEAT_LENGTH: f32 = 24.0;
 
+// Width of one bend/release arrow
+const BEND_ARROW_WIDTH: f32 = 10.0;
+
 const HALF_BEAT_LENGTH: f32 = BEAT_LENGTH / 2.0 + 1.0;
 
 // minimum measure width
@@ -64,6 +65,10 @@ pub struct CanvasMeasure {
     focused_beat: usize,
     canvas_cache: Cache,
     measure_len: f32,
+    // natural width of each beat and their sum (immutable song data,
+    // computed once instead of on every redraw)
+    beat_widths: Vec<f32>,
+    natural_beats_len: f32,
     pub total_measure_len: f32,
     pub vertical_measure_height: f32,
     has_time_signature: bool,
@@ -81,8 +86,13 @@ impl CanvasMeasure {
         let track = &song.tracks[track_id];
         let measure = &track.measures[measure_id];
         let measure_header = &song.measure_headers[measure_id];
-        let beat_count = measure.voices[0].beats.len();
-        let measure_len = MIN_MEASURE_WIDTH.max(beat_count as f32 * BEAT_LENGTH);
+        let beat_widths: Vec<f32> = measure.voices[0]
+            .beats
+            .iter()
+            .map(beat_natural_width)
+            .collect();
+        let natural_beats_len: f32 = beat_widths.iter().sum();
+        let measure_len = MIN_MEASURE_WIDTH.max(natural_beats_len);
         // total length of measure (padding on both sides)
         let mut total_measure_len = measure_len + MEASURE_NOTES_PADDING * 2.0;
         // extra space for time signature
@@ -109,6 +119,8 @@ impl CanvasMeasure {
             focused_beat: 0,
             canvas_cache: Cache::default(),
             measure_len,
+            beat_widths,
+            natural_beats_len,
             total_measure_len,
             vertical_measure_height,
             has_time_signature,
@@ -368,6 +380,14 @@ impl canvas::Program<Message> for CanvasMeasure {
             if measure_header.repeat_open {
                 beat_start += BEAT_LENGTH;
             }
+            // beats with multi-movement bends get extra width for the arrows,
+            // like TuxGuitar's getEffectWidth
+            let width_scale = if self.natural_beats_len > 0.0 {
+                actual_measure_len / self.natural_beats_len
+            } else {
+                1.0
+            };
+            let mut beat_position_x = beat_start + MEASURE_NOTES_PADDING;
             for (b_id, beat) in beats.iter().enumerate() {
                 // pick color if beat under focus
                 let beat_color = if self.is_focused && b_id == self.focused_beat {
@@ -375,17 +395,18 @@ impl canvas::Program<Message> for CanvasMeasure {
                 } else {
                     Color::WHITE
                 };
+                let beat_width = self.beat_widths[b_id] * width_scale;
                 // draw beat
                 draw_beat(
                     frame,
-                    actual_measure_len,
-                    beat_start,
+                    beat_position_x,
+                    beat_width,
+                    width_scale,
                     measure_start_y,
-                    beats_len,
-                    b_id,
                     beat,
                     beat_color,
                 );
+                beat_position_x += beat_width;
             }
 
             // draw close measure
@@ -470,22 +491,44 @@ fn draw_measure_vertical_line(
     frame.stroke(&vertical_line, stroke);
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Natural width of a beat: base length plus room for bend arrows
+/// (like TuxGuitar's `getEffectWidth`).
+fn beat_natural_width(beat: &Beat) -> f32 {
+    let bend_extra = beat
+        .notes
+        .iter()
+        .filter_map(|n| n.effect.bend.as_ref())
+        .map(|b| b.movements().len() as f32 * BEND_ARROW_WIDTH)
+        .fold(0.0, f32::max);
+    BEAT_LENGTH + bend_extra
+}
+
+/// Like TuxGuitar's `multipleBendConflicts`: with several bent notes in a
+/// beat, only the lowest-string one keeps its amplitude label, and only
+/// when all the bends start with the same movement.
+fn multiple_bend_conflicts(beat: &Beat, note: &Note, movements: &[i32]) -> bool {
+    beat.notes.iter().any(|other| {
+        other.effect.bend.as_ref().is_some_and(|other_bend| {
+            if other.string < note.string {
+                return true;
+            }
+            let other_movements = other_bend.movements();
+            !other_movements.is_empty()
+                && !movements.is_empty()
+                && other_movements.first() != movements.first()
+        })
+    })
+}
+
 fn draw_beat(
     frame: &mut Frame<Renderer>,
-    measure_len: f32,
-    measure_start_x: f32,
+    beat_position_x: f32,
+    width_per_beat: f32,
+    width_scale: f32,
     measure_start_y: f32,
-    beats_len: usize,
-    b_id: usize,
     beat: &Beat,
     beat_color: Color,
 ) {
-    // position to draw beat
-    let width_per_beat = measure_len / beats_len as f32;
-    let beat_position_offset = b_id as f32 * width_per_beat;
-    let beat_position_x = measure_start_x + MEASURE_NOTES_PADDING + beat_position_offset;
-
     // Annotate chord effect
     if let Some(chord) = &beat.effect.chord {
         let note_effect_text = Text {
@@ -508,13 +551,20 @@ fn draw_beat(
     // draw notes for beat
     for note in &beat.notes {
         beat_annotations.extend(above_note_effect_annotation(&note.effect));
+        let bend_movements = note.effect.bend.as_ref().map(BendEffect::movements);
+        let show_bend_amplitude = bend_movements
+            .as_deref()
+            .is_some_and(|movements| !multiple_bend_conflicts(beat, note, movements));
         draw_note(
             frame,
             measure_start_y,
             beat_position_x,
             width_per_beat,
+            width_scale,
             note,
             beat_color,
+            bend_movements.as_deref(),
+            show_bend_amplitude,
         );
     }
 
@@ -549,13 +599,17 @@ fn draw_beat(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_note(
     frame: &mut Frame<Renderer>,
     measure_start_y: f32,
     beat_position_x: f32,
     width_per_beat: f32,
+    width_scale: f32,
     note: &Note,
     beat_color: Color,
+    bend_movements: Option<&[i32]>,
+    show_bend_amplitude: bool,
 ) {
     // note label (pushed down on the right string)
     let note_label = note_value(note);
@@ -574,21 +628,166 @@ fn draw_note(
     };
     frame.fill_text(note_text);
 
-    // Annotate some effects on the string after the note
-    let inlined_annotation_width = 10.0;
-    let inlined_annotation_label = inlined_note_effect_annotation(&note.effect);
-    // note_x + half of inter-beat space - half of annotation width
-    let annotation_position_x =
-        note_position_x + width_per_beat / 2.0 - inlined_annotation_width / 2.0;
-    let note_effect_text = Text {
-        shaping: Auto,
-        content: inlined_annotation_label,
-        color: Color::WHITE,
-        size: inlined_annotation_width.into(),
-        position: Point::new(annotation_position_x, note_position_y),
-        ..Text::default()
-    };
-    frame.fill_text(note_effect_text);
+    // like TuxGuitar's paintEffects, the bend arrows are exclusive with the
+    // inline slide/hammer glyphs: they would collide in the same span
+    if let Some(movements) = bend_movements {
+        draw_bend(
+            frame,
+            movements,
+            note_position_x,
+            note_position_y,
+            beat_position_x,
+            width_per_beat,
+            width_scale,
+            measure_start_y,
+            show_bend_amplitude,
+        );
+    } else {
+        // Annotate some effects on the string after the note
+        let inlined_annotation_width = 10.0;
+        let inlined_annotation_label = inlined_note_effect_annotation(&note.effect);
+        // note_x + half of inter-beat space - half of annotation width
+        let annotation_position_x =
+            note_position_x + width_per_beat / 2.0 - inlined_annotation_width / 2.0;
+        let note_effect_text = Text {
+            shaping: Auto,
+            content: inlined_annotation_label,
+            color: Color::WHITE,
+            size: inlined_annotation_width.into(),
+            position: Point::new(annotation_position_x, note_position_y),
+            ..Text::default()
+        };
+        frame.fill_text(note_effect_text);
+    }
+}
+
+// Amplitude labels in tones, indexed by bend value (half-semitone units)
+const BEND_AMPLITUDES: [&str; 13] = [
+    "", "¼", "½", "¾", "1", "1¼", "1½", "1¾", "2", "2¼", "2½", "2¾", "3",
+];
+
+/// Draw a bend like TuxGuitar's `paintBend`: one curved arrow per movement
+/// rising to (or releasing from) a band above the staff, with the reached
+/// amplitude in tones next to the arrow tip. A bend without movements is a
+/// held bend, drawn as a dashed line at band height across the beat.
+#[allow(clippy::too_many_arguments)]
+fn draw_bend(
+    frame: &mut Frame<Renderer>,
+    movements: &[i32],
+    note_position_x: f32,
+    note_position_y: f32,
+    beat_position_x: f32,
+    width_per_beat: f32,
+    width_scale: f32,
+    measure_start_y: f32,
+    show_amplitude: bool,
+) {
+    let stroke = Stroke::default().with_width(0.8).with_color(Color::WHITE);
+    let arrow_size = 2.5;
+    // shrink the arrows with the beat when the measure is compressed, so
+    // they stay within the width reserved by beat_natural_width
+    let arrow_width = BEND_ARROW_WIDTH * width_scale.min(1.0);
+    // vertical extent: from the note's fret number up to a band above the staff
+    let y_low = note_position_y + 4.0;
+    let y_high = measure_start_y - 8.0;
+    let amplitude_y = measure_start_y - 18.0;
+
+    if movements.is_empty() {
+        // held bend: dashed line at band height until the end of the beat
+        let x_start = note_position_x - 4.0;
+        let x_end = (beat_position_x + width_per_beat - 6.0).max(x_start + 5.0);
+        let dashed = Stroke {
+            line_dash: LineDash {
+                segments: &[2.5, 2.5],
+                offset: 0,
+            },
+            ..stroke
+        };
+        frame.stroke(
+            &Path::line(Point::new(x_start, y_high), Point::new(x_end, y_high)),
+            dashed,
+        );
+        return;
+    }
+
+    let mut x0 = note_position_x + 7.0;
+    let mut first_movement = true;
+    for &movement in movements {
+        let release = movement < 0;
+        let (y0, y1, direction) = if release {
+            (y_high, y_low, -1.0)
+        } else {
+            (y_low, y_high, 1.0)
+        };
+        let x1 = x0 + arrow_width;
+
+        // pre-bend: the note starts already bent, marked by a vertical
+        // line with an upward arrowhead before the release
+        if first_movement && release {
+            frame.stroke(&Path::line(Point::new(x0, y0), Point::new(x0, y1)), stroke);
+            frame.stroke(
+                &Path::line(Point::new(x0, y0), Point::new(x0 - 2.0, y0 + 2.0)),
+                stroke,
+            );
+            frame.stroke(
+                &Path::line(Point::new(x0, y0), Point::new(x0 + 2.0, y0 + 2.0)),
+                stroke,
+            );
+        }
+
+        // curved arrow body
+        let body = Path::new(|p| {
+            p.move_to(Point::new(x0, y0));
+            p.line_to(Point::new(x0 + 1.0, y0));
+            p.bezier_curve_to(
+                Point::new(x0 + 1.0, y0),
+                Point::new(x1, y0),
+                Point::new(x1, y1),
+            );
+        });
+        frame.stroke(&body, stroke);
+
+        // arrowhead
+        let tip = Point::new(x1, y1);
+        frame.stroke(
+            &Path::line(
+                tip,
+                Point::new(x1 - arrow_size, y1 + arrow_size * direction),
+            ),
+            stroke,
+        );
+        frame.stroke(
+            &Path::line(
+                tip,
+                Point::new(x1 + arrow_size, y1 + arrow_size * direction),
+            ),
+            stroke,
+        );
+
+        // amplitude reached by the movement (releases only label the pre-bend)
+        if show_amplitude && (!release || first_movement) {
+            let mut x_amplitude = if release { x0 } else { x1 };
+            let amplitude = movement.unsigned_abs() as usize;
+            if !amplitude.is_multiple_of(4) {
+                // longer label (fraction), shift left to stay near the tip
+                x_amplitude -= 4.0;
+            }
+            if let Some(label) = BEND_AMPLITUDES.get(amplitude) {
+                let amplitude_text = Text {
+                    shaping: Auto,
+                    content: (*label).to_string(),
+                    color: Color::WHITE,
+                    size: 8.0.into(),
+                    position: Point::new(x_amplitude, amplitude_y),
+                    ..Text::default()
+                };
+                frame.fill_text(amplitude_text);
+            }
+        }
+
+        first_movement = false;
+        x0 = x1;
+    }
 }
 
 fn draw_open_section(
@@ -904,15 +1103,6 @@ fn inlined_note_effect_annotation(note_effect: &NoteEffect) -> String {
             SlideType::LegatoSlideTo => annotation.push(LEGATO_SLIDE),
             SlideType::OutDownwards => annotation.push(HORIZONTAL_BAR),
             SlideType::OutUpWards => annotation.push(LEGATO_SLIDE),
-        }
-    }
-    if let Some(bend) = &note_effect.bend {
-        let direction_up = bend.direction() >= 0;
-        // TODO display bend properly
-        if direction_up {
-            annotation.push(ARROW_UP);
-        } else {
-            annotation.push(ARROW_DOWN);
         }
     }
     annotation

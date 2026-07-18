@@ -2668,7 +2668,7 @@
 91080 NoteOff(2, 46) Some(5)
 91080 NoteOn(2, 41, 95) Some(5)
 91200 NoteOn(4, 58, 95) Some(4)
-91200 MidiMessage(2, 224, 0, -2) Some(5)
+91200 MidiMessage(2, 224, 0, 0) Some(5)
 91200 MidiMessage(2, 224, 0, 64) Some(5)
 91440 NoteOff(6, 65) Some(3)
 91440 NoteOff(6, 60) Some(3)

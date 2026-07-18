@@ -341,19 +341,39 @@ pub struct BendEffect {
 }
 
 impl BendEffect {
-    pub fn direction(&self) -> isize {
+    /// Bend movements for graphical display, one entry per direction change:
+    /// positive = bend up to that value, negative = release down from that value.
+    /// An empty result means a held (flat) bend.
+    /// Port of TuxGuitar's `TGEffectBend.updateMovements`.
+    pub fn movements(&self) -> Vec<i32> {
+        let mut movements = Vec::new();
         if self.points.len() < 2 {
-            return 0;
+            return movements;
         }
-        let first = self.points[0].value;
-        for p in &self.points[1..] {
-            match first.cmp(&p.value) {
-                std::cmp::Ordering::Greater => return -1,
-                std::cmp::Ordering::Less => return 1,
-                std::cmp::Ordering::Equal => (),
+        // i32 arithmetic like the Java reference: i8 would overflow on
+        // extreme point values from corrupt files
+        let mut start = i32::from(self.points[0].value);
+        let mut current = i32::from(self.points[1].value);
+        for point in &self.points[2..] {
+            let next = i32::from(point.value);
+            if (next - current) * (current - start) < 0 {
+                // direction changed
+                if current > start {
+                    movements.push(current);
+                } else {
+                    movements.push(-start);
+                }
+                start = current;
             }
+            current = next;
         }
-        0
+        // last movement
+        if current > start {
+            movements.push(current);
+        } else if current < start {
+            movements.push(-start);
+        }
+        movements
     }
 }
 
