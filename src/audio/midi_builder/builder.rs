@@ -416,10 +416,11 @@ impl MidiBuilder {
                     let length: i32 = (tick2 - tick1) as i32;
                     let points = length / (QUARTER_TIME / 8) as i32;
                     for p_offset in 1..=points {
-                        let tone = ((length / points) * p_offset) * distance / length;
-                        let bend = DEFAULT_BEND + (tone as f32 * DEFAULT_BEND_SEMI_TONE * 2.0);
+                        let tone = ((length / points) * p_offset * distance) as f32 / length as f32;
+                        let bend =
+                            DEFAULT_BEND as i32 + (tone * DEFAULT_BEND_SEMI_TONE * 2.0) as i32;
                         let bend_tick = tick1 as i32 + (length / points) * p_offset;
-                        self.add_pitch_bend(bend_tick as u32, track_id, channel_id, bend as i32);
+                        self.add_pitch_bend(bend_tick as u32, track_id, channel_id, bend);
                     }
 
                     // normalise the bend

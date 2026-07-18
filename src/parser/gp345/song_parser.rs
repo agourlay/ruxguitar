@@ -129,7 +129,9 @@ pub fn parse_note_effects(
             if (flags & 0x01) != 0 {
                 let (inner, bend_effect) = parse_bend_effect(i)?;
                 i = inner;
-                note.effect.bend = Some(bend_effect);
+                if !bend_effect.points.is_empty() {
+                    note.effect.bend = Some(bend_effect);
+                }
             }
             if (flags & 0x10) != 0 {
                 let (inner, grace_effect) = parse_grace_effect(version)(i)?;
@@ -151,7 +153,9 @@ pub fn parse_note_effects(
         if (flags1 & 0x01) != 0 {
             let (inner, bend_effect) = parse_bend_effect(i)?;
             i = inner;
-            note.effect.bend = Some(bend_effect);
+            if !bend_effect.points.is_empty() {
+                note.effect.bend = Some(bend_effect);
+            }
         }
 
         if (flags1 & 0x10) != 0 {
@@ -414,7 +418,9 @@ pub fn parse_beat_effects<'a>(
         if flags2 & 0x04 != 0 {
             let (inner, effect) = parse_tremolo_bar(i)?;
             i = inner;
-            note_effect.tremolo_bar = Some(effect);
+            if !effect.points.is_empty() {
+                note_effect.tremolo_bar = Some(effect);
+            }
         }
 
         if flags1 & 0x40 != 0 {
@@ -498,7 +504,7 @@ pub fn parse_tremolo_bar(i: &[u8]) -> IResult<&[u8], TremoloBarEffect> {
         i = inner;
 
         let point_position = position as f32 * BEND_EFFECT_MAX_POSITION_LENGTH / GP_BEND_POSITION;
-        let point_value = value as f32 / GP_BEND_SEMITONE * 2.0f32;
+        let point_value = value as f32 / (GP_BEND_SEMITONE * 2.0);
         tremolo_bar_effect.points.push(BendPoint {
             position: point_position.round() as u8,
             value: point_value.round() as i8,
