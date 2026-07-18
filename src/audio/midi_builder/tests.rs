@@ -287,7 +287,7 @@ fn test_midi_events_for_bleed() {
     let builder = MidiBuilder::new();
     let events = builder.build_for_song(&song);
 
-    assert_eq!(events.len(), 44449);
+    assert_eq!(events.len(), 44431);
     assert_eq!(events[0].tick, 1);
 
     // assert number of tracks

@@ -224,7 +224,7 @@ impl MidiBuilder {
                     voice_id,
                     beat_id,
                     note,
-                    next_beat,
+                    measure_header.repeat_close > 0,
                     tempo,
                     beat_duration,
                 );

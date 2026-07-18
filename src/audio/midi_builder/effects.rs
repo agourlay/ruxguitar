@@ -32,6 +32,8 @@ pub(super) fn apply_velocity_effect(
     velocity.min(127)
 }
 
+/// Extend the note duration through tie chains and let-ring, walking the
+/// note's own voice like TuxGuitar's `getRealNoteDuration`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_duration_effect(
     track: &Track,
@@ -39,39 +41,63 @@ pub(super) fn apply_duration_effect(
     voice_id: usize,
     beat_id: usize,
     note: &Note,
-    first_next_beat: Option<&Beat>,
+    repeat_close: bool,
     tempo: u32,
-    mut duration: u32,
+    duration: u32,
 ) -> u32 {
-    let note_type = &note.kind;
-    // walk the note's own voice, like TuxGuitar's getRealNoteDuration
-    let next_beats_in_next_measures = track.measures[measure_id..]
-        .iter()
-        .flat_map(|m| m.voices[voice_id].beats.iter())
-        .skip(beat_id + 1); // skip current and previous beats
+    let note_beat = &track.measures[measure_id].voices[voice_id].beats[beat_id];
+    let mut let_ring = note.effect.let_ring;
+    let mut last_end = i64::from(note_beat.start) + i64::from(note_beat.duration.time());
+    let mut real_duration = i64::from(duration);
 
-    // handle chains of tie notes
-    for next_beat in next_beats_in_next_measures {
-        // filter for only next notes on matching string
-        if let Some(next_note) = next_beat.notes.iter().find(|n| n.string == note.string) {
-            if next_note.kind == NoteType::Tie {
-                duration += next_beat.duration.time();
-            } else {
-                // stop chain
-                break;
+    'walk: for (m_offset, measure) in track.measures[measure_id..].iter().enumerate() {
+        let in_next_measure = m_offset > 0;
+        let skip_beats = if in_next_measure { 0 } else { beat_id + 1 };
+        for beat in measure.voices[voice_id].beats.iter().skip(skip_beats) {
+            if beat.empty {
+                continue;
             }
-        } else {
-            // break chain of tie notes
-            break;
+            if beat.notes.is_empty() {
+                // a rest ends the chain
+                break 'walk;
+            }
+            let beat_time = i64::from(beat.duration.time());
+            let mut tied_on_string = false;
+            for next_note in &beat.notes {
+                if let_ring {
+                    // let-ring does not survive a repeat close
+                    if in_next_measure && repeat_close {
+                        break 'walk;
+                    }
+                    // end of the let-ring chain: ring through the ending beat
+                    if !next_note.effect.let_ring {
+                        real_duration += beat_time;
+                        break 'walk;
+                    }
+                }
+                if next_note.string == note.string {
+                    if next_note.kind == NoteType::Tie {
+                        // gap-aware: also cover any distance since the chain's last end
+                        real_duration += (i64::from(beat.start) - last_end) + beat_time;
+                        last_end = i64::from(beat.start) + beat_time;
+                        let_ring = next_note.effect.let_ring;
+                        tied_on_string = true;
+                    } else {
+                        // a new note on the string ends the chain
+                        break 'walk;
+                    }
+                }
+            }
+            // ring through beats without a tie continuation
+            if let_ring && !tied_on_string {
+                real_duration += beat_time;
+                last_end += beat_time;
+            }
         }
     }
-    // hande let-ring
-    if let Some(first_next_beat) = first_next_beat
-        && note.effect.let_ring
-    {
-        duration += first_next_beat.duration.time();
-    }
-    if note_type == &NoteType::Dead {
+
+    let duration = real_duration.max(0) as u32;
+    if note.kind == NoteType::Dead {
         return apply_static_duration(tempo, DEFAULT_DURATION_DEAD, duration);
     }
     if note.effect.palm_mute {
