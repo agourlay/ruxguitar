@@ -196,37 +196,37 @@ fn test_midi_events_for_demo_song() {
     let event = &solo_track_events[0];
     assert_eq!(event.tick, 12480);
     assert_eq!(event.track, Some(1));
-    assert!(matches!(event.event, MidiEventType::NoteOn(2, 72, 95)));
+    assert!(matches!(event.event, MidiEventType::NoteOn(2, 69, 95)));
 
     // trill OFF
     let event = &solo_track_events[1];
     assert_eq!(event.tick, 12720);
     assert_eq!(event.track, Some(1));
-    assert!(matches!(event.event, MidiEventType::NoteOff(2, 72)));
+    assert!(matches!(event.event, MidiEventType::NoteOff(2, 69)));
 
     // trill ON
     let event = &solo_track_events[2];
     assert_eq!(event.tick, 12720);
     assert_eq!(event.track, Some(1));
-    assert!(matches!(event.event, MidiEventType::NoteOn(2, 69, 95)));
+    assert!(matches!(event.event, MidiEventType::NoteOn(2, 72, 95)));
 
     // trill OFF
     let event = &solo_track_events[3];
     assert_eq!(event.tick, 12960);
     assert_eq!(event.track, Some(1));
-    assert!(matches!(event.event, MidiEventType::NoteOff(2, 69)));
+    assert!(matches!(event.event, MidiEventType::NoteOff(2, 72)));
 
     // trill ON
     let event = &solo_track_events[4];
     assert_eq!(event.tick, 12960);
     assert_eq!(event.track, Some(1));
-    assert!(matches!(event.event, MidiEventType::NoteOn(2, 72, 95)));
+    assert!(matches!(event.event, MidiEventType::NoteOn(2, 69, 95)));
 
     // trill OFF
     let event = &solo_track_events[5];
     assert_eq!(event.tick, 13200);
     assert_eq!(event.track, Some(1));
-    assert!(matches!(event.event, MidiEventType::NoteOff(2, 72)));
+    assert!(matches!(event.event, MidiEventType::NoteOff(2, 69)));
 
     // pass some trill notes...
 
@@ -234,13 +234,13 @@ fn test_midi_events_for_demo_song() {
     let event = &solo_track_events[30];
     assert_eq!(event.tick, 16080);
     assert_eq!(event.track, Some(1));
-    assert!(matches!(event.event, MidiEventType::NoteOn(2, 69, 95)));
+    assert!(matches!(event.event, MidiEventType::NoteOn(2, 72, 95)));
 
     // trill OFF
     let event = &solo_track_events[31];
     assert_eq!(event.tick, 16319);
     assert_eq!(event.track, Some(1));
-    assert!(matches!(event.event, MidiEventType::NoteOff(2, 69)));
+    assert!(matches!(event.event, MidiEventType::NoteOff(2, 72)));
 
     // tremolo ON (repeated section)
     let event = &solo_track_events[32];

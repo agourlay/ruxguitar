@@ -32,9 +32,11 @@ pub(super) fn apply_velocity_effect(
     velocity.min(127)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn apply_duration_effect(
     track: &Track,
     measure_id: usize,
+    voice_id: usize,
     beat_id: usize,
     note: &Note,
     first_next_beat: Option<&Beat>,
@@ -42,9 +44,10 @@ pub(super) fn apply_duration_effect(
     mut duration: u32,
 ) -> u32 {
     let note_type = &note.kind;
+    // walk the note's own voice, like TuxGuitar's getRealNoteDuration
     let next_beats_in_next_measures = track.measures[measure_id..]
         .iter()
-        .flat_map(|m| m.voices[0].beats.iter())
+        .flat_map(|m| m.voices[voice_id].beats.iter())
         .skip(beat_id + 1); // skip current and previous beats
 
     // handle chains of tie notes

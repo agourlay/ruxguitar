@@ -142,7 +142,7 @@ impl MidiBuilder {
         strings: &[(i32, i32)],
     ) {
         let measure_id = measure.voices[0].measure_index as usize;
-        for voice in &measure.voices {
+        for (voice_id, voice) in measure.voices.iter().enumerate() {
             let beats = &voice.beats;
             for (beat_id, beat) in beats.iter().enumerate() {
                 if beat.empty || beat.notes.is_empty() {
@@ -155,11 +155,12 @@ impl MidiBuilder {
                     beats.get(beat_id - 1)
                 };
                 let next_beat = beats.get(beat_id + 1).or_else(|| {
-                    // check next measure if it was the last beat
+                    // check the same voice in the next measure if it was the last beat
                     track
                         .measures
                         .get(voice.measure_index as usize + 1)
-                        .and_then(|next_measure| next_measure.voices[0].beats.first())
+                        .and_then(|next_measure| next_measure.voices.get(voice_id))
+                        .and_then(|next_voice| next_voice.beats.first())
                 });
                 // apply triplet feel adjustment to beat timing
                 let triplet_adj =
@@ -168,6 +169,7 @@ impl MidiBuilder {
                     track_id,
                     track,
                     measure_id,
+                    voice_id,
                     measure_header,
                     midi_channel,
                     previous_beat,
@@ -187,6 +189,7 @@ impl MidiBuilder {
         track_id: usize,
         track: &Track,
         measure_id: usize,
+        voice_id: usize,
         measure_header: &MeasureHeader,
         midi_channel: &MidiChannel,
         previous_beat: Option<&Beat>,
@@ -218,6 +221,7 @@ impl MidiBuilder {
                 let mut duration = apply_duration_effect(
                     track,
                     measure_id,
+                    voice_id,
                     beat_id,
                     note,
                     next_beat,
@@ -346,7 +350,8 @@ impl MidiBuilder {
             let mut trill_length = trill.duration.time();
 
             let trill_tick_limit = *note_start + *duration;
-            let mut real_key = false;
+            // the real fretted note sounds first, then alternates with the trill fret
+            let mut real_key = true;
             let mut tick = *note_start;
 
             let mut counter = 0;
