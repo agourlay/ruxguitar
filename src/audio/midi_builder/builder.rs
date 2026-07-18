@@ -391,49 +391,45 @@ impl MidiBuilder {
             return None;
         }
 
-        // bend
-        if let Some(bend_effect) = &note.effect.bend
-            && !is_percussion
-        {
-            self.add_bend(track_id, *note_start, *duration, channel_id, bend_effect);
-        }
-
-        // tremolo bar
-        if let Some(tremolo_bar) = &note.effect.tremolo_bar
-            && !is_percussion
-        {
-            self.add_tremolo_bar(track_id, *note_start, *duration, channel_id, tremolo_bar);
-        }
-
-        // slide
-        if let Some(_slide) = &note.effect.slide
-            && !is_percussion
-            && let Some((next_beat, next_note)) = next_note_beat
-        {
-            let value_1 = i32::from(note.value);
-            let value_2 = i32::from(next_note.value);
-
-            let tick1 = *note_start;
-            let tick2 = next_beat.start;
-
-            // make slide
-            let distance: i32 = value_2 - value_1;
-            let length: i32 = (tick2 - tick1) as i32;
-            let points = length / (QUARTER_TIME / 8) as i32;
-            for p_offset in 1..=points {
-                let tone = ((length / points) * p_offset) * distance / length;
-                let bend = DEFAULT_BEND + (tone as f32 * DEFAULT_BEND_SEMI_TONE * 2.0);
-                let bend_tick = tick1 as i32 + (length / points) * p_offset;
-                self.add_pitch_bend(bend_tick as u32, track_id, channel_id, bend as i32);
+        // pitch-modulating effects share the channel pitch wheel and are
+        // mutually exclusive: bend > tremolo bar > slide > vibrato
+        if !is_percussion {
+            // bend
+            if let Some(bend_effect) = &note.effect.bend {
+                self.add_bend(track_id, *note_start, *duration, channel_id, bend_effect);
             }
+            // tremolo bar
+            else if let Some(tremolo_bar) = &note.effect.tremolo_bar {
+                self.add_tremolo_bar(track_id, *note_start, *duration, channel_id, tremolo_bar);
+            }
+            // slide
+            else if note.effect.slide.is_some() {
+                if let Some((next_beat, next_note)) = next_note_beat {
+                    let value_1 = i32::from(note.value);
+                    let value_2 = i32::from(next_note.value);
 
-            // normalise the bend
-            self.add_pitch_bend(tick2, track_id, channel_id, DEFAULT_BEND as i32);
-        }
+                    let tick1 = *note_start;
+                    let tick2 = next_beat.start;
 
-        // vibrato
-        if note.effect.vibrato && !is_percussion {
-            self.add_vibrato(track_id, *note_start, *duration, channel_id);
+                    // make slide
+                    let distance: i32 = value_2 - value_1;
+                    let length: i32 = (tick2 - tick1) as i32;
+                    let points = length / (QUARTER_TIME / 8) as i32;
+                    for p_offset in 1..=points {
+                        let tone = ((length / points) * p_offset) * distance / length;
+                        let bend = DEFAULT_BEND + (tone as f32 * DEFAULT_BEND_SEMI_TONE * 2.0);
+                        let bend_tick = tick1 as i32 + (length / points) * p_offset;
+                        self.add_pitch_bend(bend_tick as u32, track_id, channel_id, bend as i32);
+                    }
+
+                    // normalise the bend
+                    self.add_pitch_bend(tick2, track_id, channel_id, DEFAULT_BEND as i32);
+                }
+            }
+            // vibrato
+            else if note.effect.vibrato {
+                self.add_vibrato(track_id, *note_start, *duration, channel_id);
+            }
         }
 
         // harmonic
