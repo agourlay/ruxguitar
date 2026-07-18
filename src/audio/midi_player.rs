@@ -155,6 +155,9 @@ impl AudioPlayer {
         // stop all sound in synthesizer
         let mut synthesizer_guard = self.synthesizer.lock().unwrap();
         synthesizer_guard.note_off_all(false);
+        // recenter the pitch wheel: leaving mid-bend would keep later notes
+        // out of tune (the bend range RPN is preserved)
+        synthesizer_guard.reset_all_controllers();
         drop(synthesizer_guard);
 
         // reset the UI cursor to the first playable tick so the measure lookup resolves cleanly
@@ -223,6 +226,9 @@ impl AudioPlayer {
         // stop current sound
         let mut synthesizer_guard = self.synthesizer.lock().unwrap();
         synthesizer_guard.note_off_all(false);
+        // recenter the pitch wheel: leaving mid-bend would keep later notes
+        // out of tune (the bend range RPN is preserved)
+        synthesizer_guard.reset_all_controllers();
         drop(synthesizer_guard);
 
         // set tempo for focuses measure

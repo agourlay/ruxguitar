@@ -664,7 +664,9 @@ impl MidiBuilder {
         channel: i32,
         expression: i32,
     ) {
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x2B, expression);
+        // Expression coarse (CC 0x0B); the prior 0x2B (LSB) left the coarse
+        // byte at its default, so the initial expression was effectively ignored.
+        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x0B, expression);
         self.add_event(event);
     }
 
