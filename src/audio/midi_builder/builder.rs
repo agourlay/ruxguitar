@@ -686,6 +686,9 @@ impl MidiBuilder {
     }
 
     fn add_pitch_bend(&mut self, tick: u32, track_id: usize, channel: i32, value: i32) {
+        // clamp to a valid MIDI data byte, like TuxGuitar's fix():
+        // steep slides can otherwise overshoot the wheel range
+        let value = value.clamp(0, 127);
         // GP uses a value between 0 and 128
         // MIDI uses a value between 0 and 16383 (128 * 128)
         let midi_value = value * 128;
