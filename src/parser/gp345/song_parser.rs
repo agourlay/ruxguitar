@@ -171,7 +171,7 @@ pub fn parse_note_effects(
         }
 
         if (flags2 & 0x08) != 0 {
-            let (inner, slide_type) = parse_slide_type(i)?;
+            let (inner, slide_type) = parse_slide_type(version)(i)?;
             i = inner;
             note.effect.slide = slide_type;
         }
@@ -259,26 +259,44 @@ pub fn parse_harmonic_effect(
     }
 }
 
-pub fn parse_slide_type(i: &[u8]) -> IResult<&[u8], Option<SlideType>> {
-    map(parse_i8, |t| {
-        log::debug!("Parsing slide type {t}");
-        if (t & 0x01) == 0x01 {
-            Some(SlideType::ShiftSlideTo)
-        } else if (t & 0x02) == 0x02 {
-            Some(SlideType::LegatoSlideTo)
-        } else if (t & 0x04) == 0x04 {
-            Some(SlideType::OutDownwards)
-        } else if (t & 0x08) == 0x08 {
-            Some(SlideType::OutUpWards)
-        } else if (t & 0x10) == 0x10 {
-            Some(SlideType::IntoFromBelow)
-        } else if (t & 0x20) == 0x20 {
-            Some(SlideType::IntoFromAbove)
-        } else {
-            None
-        }
-    })
-    .parse(i)
+pub fn parse_slide_type(
+    version: GpVersion,
+) -> impl FnMut(&[u8]) -> IResult<&[u8], Option<SlideType>> {
+    move |i| {
+        map(parse_i8, |t| {
+            log::debug!("Parsing slide type {t}");
+            if version >= GpVersion::GP5 {
+                // GP5 stores a bitmask
+                if (t & 0x01) == 0x01 {
+                    Some(SlideType::ShiftSlideTo)
+                } else if (t & 0x02) == 0x02 {
+                    Some(SlideType::LegatoSlideTo)
+                } else if (t & 0x04) == 0x04 {
+                    Some(SlideType::OutDownwards)
+                } else if (t & 0x08) == 0x08 {
+                    Some(SlideType::OutUpWards)
+                } else if (t & 0x10) == 0x10 {
+                    Some(SlideType::IntoFromBelow)
+                } else if (t & 0x20) == 0x20 {
+                    Some(SlideType::IntoFromAbove)
+                } else {
+                    None
+                }
+            } else {
+                // GP4 stores an ordinal
+                match t {
+                    -2 => Some(SlideType::IntoFromAbove),
+                    -1 => Some(SlideType::IntoFromBelow),
+                    1 => Some(SlideType::ShiftSlideTo),
+                    2 => Some(SlideType::LegatoSlideTo),
+                    3 => Some(SlideType::OutDownwards),
+                    4 => Some(SlideType::OutUpWards),
+                    _ => None,
+                }
+            }
+        })
+        .parse(i)
+    }
 }
 
 pub fn parse_tremolo_picking(i: &[u8]) -> IResult<&[u8], TremoloPickingEffect> {
