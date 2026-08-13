@@ -799,7 +799,7 @@ fn grace_of(
         .find(|n| n.string == current_note.string)?;
 
     let duration = match previous_duration.value {
-        v if v == u16::from(DURATION_SIXTEENTH) => 4,
+        v if v == u16::from(DURATION_SIXTEENTH) => 3,
         v if v == u16::from(DURATION_THIRTY_SECOND) => 2,
         v if v == u16::from(DURATION_SIXTY_FOURTH) => 1,
         _ => 1,

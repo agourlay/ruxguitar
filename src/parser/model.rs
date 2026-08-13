@@ -394,7 +394,12 @@ pub struct GraceEffect {
 
 impl GraceEffect {
     pub fn duration_time(&self) -> f32 {
-        (QUARTER_TIME as f32 / 16.00) * f32::from(self.duration)
+        // like TuxGuitar: 3 = sixteenth, 2 = thirty-second, default = sixty-fourth
+        match self.duration {
+            3 => QUARTER_TIME as f32 / 4.0,
+            2 => QUARTER_TIME as f32 / 8.0,
+            _ => QUARTER_TIME as f32 / 16.0,
+        }
     }
 }
 
