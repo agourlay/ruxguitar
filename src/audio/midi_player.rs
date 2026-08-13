@@ -112,16 +112,14 @@ impl AudioPlayer {
         self.player_params.solo_track_id()
     }
 
-    pub fn metronome_enabled(&self) -> bool {
-        self.player_params.metronome_enabled()
+    pub fn set_metronome(&self, enabled: bool) {
+        log::info!("Metronome enabled: {enabled}");
+        self.player_params.set_metronome(enabled);
     }
 
-    pub fn count_in_enabled(&self) -> bool {
-        self.player_params.count_in_enabled()
-    }
-
-    pub fn toggle_count_in(&self) {
-        self.player_params.toggle_count_in();
+    pub fn set_count_in(&self, enabled: bool) {
+        log::info!("Count-in enabled: {enabled}");
+        self.player_params.set_count_in(enabled);
     }
 
     /// Ask for a count-in over the measure currently under the cursor.
@@ -138,10 +136,6 @@ impl AudioPlayer {
         let beat_ticks = header.time_signature.denominator.time();
         let total_ticks = u32::from(header.time_signature.numerator) * beat_ticks;
         self.player_params.request_count_in(total_ticks, beat_ticks);
-    }
-
-    pub fn toggle_metronome(&self) {
-        self.player_params.toggle_metronome();
     }
 
     pub fn is_track_muted(&self, track_id: usize) -> bool {
@@ -544,6 +538,7 @@ fn write_frames(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use super::write_frames;
 
     #[test]
@@ -593,5 +588,71 @@ mod tests {
         let mut output = [9.0_f32; 5];
         write_frames(&mut output, &left, &right, 2, 1.0);
         assert_eq!(output, [1.0, 0.5, 0.0, 0.0, 0.0]);
+    }
+    #[test]
+    fn metronome_click_produces_sound() {
+        let mut sf2: &[u8] = TIMIDITY_SOUND_FONT;
+        let sound_font = Arc::new(SoundFont::new(&mut sf2).unwrap());
+        let settings = SynthesizerSettings::new(44100);
+        let mut synth = Synthesizer::new(&sound_font, &Arc::new(settings)).unwrap();
+
+        // fresh channel 9: default percussion
+        synth.note_on(9, 37, 95);
+        let mut l = vec![0f32; 4410];
+        let mut r = vec![0f32; 4410];
+        synth.render(&mut l, &mut r);
+        let energy: f32 = l.iter().map(|s| s.abs()).sum();
+        eprintln!("fresh channel 9 key 37 energy: {energy}");
+        assert!(energy > 0.01, "no sound on fresh percussion channel");
+
+        // after the app's channel 9 setup (bank 128 + program 0 like a drum track)
+        let mut synth = Synthesizer::new(&sound_font, &Arc::new(SynthesizerSettings::new(44100))).unwrap();
+        synth.process_midi_message(9, 0xB0, 0x00, 128); // bank select 128
+        synth.process_midi_message(9, 0xC0, 0, 0); // program 0
+        synth.note_on(9, 37, 95);
+        let mut l = vec![0f32; 4410];
+        let mut r = vec![0f32; 4410];
+        synth.render(&mut l, &mut r);
+        let energy: f32 = l.iter().map(|s| s.abs()).sum();
+        eprintln!("post-setup channel 9 key 37 energy: {energy}");
+        assert!(energy > 0.01, "no sound after channel 9 setup");
+    }
+
+    #[test]
+    fn metronome_events_flow_through_the_sequencer() {
+        use crate::audio::midi_builder::MidiBuilder;
+        use crate::audio::midi_sequencer::MidiSequencer;
+        use crate::parser::song_parser_tests::parse_gp_file;
+        use std::rc::Rc;
+
+        let song = parse_gp_file("test-files/Demo v5.gp5").unwrap();
+        let tempo = song.tempo.value;
+        let song = Rc::new(song);
+        let events = MidiBuilder::new().build_for_song(&song);
+        let params = MidiPlayerParams::new(tempo, 100, None);
+        params.set_metronome(true);
+
+        let mut sequencer = MidiSequencer::new(events);
+        sequencer.advance(tempo, 0.0); // init
+        let mut clicks = 0;
+        for _ in 0..2000 {
+            sequencer.advance(params.adjusted_tempo(), 0.1);
+            let Some(events) = sequencer.get_next_events() else {
+                break;
+            };
+            for midi_event in events {
+                // same gating as the audio callback
+                let audible = if midi_event.track == Some(METRONOME_TRACK) {
+                    params.metronome_enabled()
+                } else {
+                    true
+                };
+                if audible && matches!(midi_event.event, MidiEventType::NoteOn(9, 37, _)) {
+                    clicks += 1;
+                }
+            }
+        }
+        eprintln!("metronome clicks delivered: {clicks}");
+        assert!(clicks > 50, "expected metronome clicks, got {clicks}");
     }
 }

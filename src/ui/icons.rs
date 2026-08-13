@@ -1,5 +1,6 @@
 //! Icons coming from <https://fontello.com/>
 
+use iced::advanced::text::Shaping;
 use iced::widget::text;
 use iced::{Element, Font};
 
@@ -16,7 +17,8 @@ pub fn mute_icon<'a, Message>() -> Element<'a, Message> {
 }
 
 pub fn metronome_icon<'a, Message>() -> Element<'a, Message> {
-    text('\u{1D15F}').into()
+    // musical symbols live outside the basic plane: needs advanced shaping
+    text('\u{1D15F}').shaping(Shaping::Advanced).into()
 }
 
 pub fn count_in_icon<'a, Message>() -> Element<'a, Message> {

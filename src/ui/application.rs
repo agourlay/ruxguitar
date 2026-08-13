@@ -37,6 +37,8 @@ pub struct RuxApplication {
     tablature_id: Id,                   // tablature container id
     tempo_selection: TempoSelection,    // tempo percentage for playback
     audio_player: Option<AudioPlayer>,  // audio player
+    metronome_enabled: bool,            // metronome user preference
+    count_in_enabled: bool,             // count-in user preference
     tab_file_is_loading: bool,          // file loading flag in progress
     sound_font_file: Option<PathBuf>,   // sound font file
     current_tick: Arc<AtomicU32>,       // latest tick published by audio callback
@@ -196,6 +198,8 @@ impl RuxApplication {
             tablature_id: Id::new("tablature-outer-container"),
             tempo_selection: TempoSelection::default(),
             audio_player: None,
+            metronome_enabled: false,
+            count_in_enabled: false,
             tab_file_is_loading: false,
             sound_font_file,
             current_tick: Arc::new(AtomicU32::new(0)),
@@ -345,6 +349,9 @@ impl RuxApplication {
                                 &playback_order,
                             ) {
                                 Ok(audio_player) => {
+                                    // apply persistent playback preferences
+                                    audio_player.set_metronome(self.metronome_enabled);
+                                    audio_player.set_count_in(self.count_in_enabled);
                                     self.audio_player = Some(audio_player);
                                     // reset tablature scroll and trigger layout computation
                                     Task::batch([
@@ -453,14 +460,16 @@ impl RuxApplication {
                 Task::none()
             }
             Message::ToggleMetronome => {
+                self.metronome_enabled = !self.metronome_enabled;
                 if let Some(audio_player) = &self.audio_player {
-                    audio_player.toggle_metronome();
+                    audio_player.set_metronome(self.metronome_enabled);
                 }
                 Task::none()
             }
             Message::ToggleCountIn => {
+                self.count_in_enabled = !self.count_in_enabled;
                 if let Some(audio_player) = &self.audio_player {
-                    audio_player.toggle_count_in();
+                    audio_player.set_count_in(self.count_in_enabled);
                 }
                 Task::none()
             }
@@ -618,18 +627,14 @@ impl RuxApplication {
                 metronome_icon(),
                 "Metronome",
                 Message::ToggleMetronome,
-                self.audio_player
-                    .as_ref()
-                    .is_some_and(AudioPlayer::metronome_enabled),
+                self.metronome_enabled,
             );
 
             let count_in_mode = action_toggle(
                 count_in_icon(),
                 "Count-in",
                 Message::ToggleCountIn,
-                self.audio_player
-                    .as_ref()
-                    .is_some_and(AudioPlayer::count_in_enabled),
+                self.count_in_enabled,
             );
 
             let track_pick_list = pick_list(

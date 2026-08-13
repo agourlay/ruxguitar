@@ -33,16 +33,16 @@ impl MidiPlayerParams {
         self.metronome.load(Ordering::Relaxed)
     }
 
-    pub fn toggle_metronome(&self) {
-        self.metronome.fetch_xor(true, Ordering::Relaxed);
+    pub fn set_metronome(&self, enabled: bool) {
+        self.metronome.store(enabled, Ordering::Relaxed);
     }
 
     pub fn count_in_enabled(&self) -> bool {
         self.count_in.load(Ordering::Relaxed)
     }
 
-    pub fn toggle_count_in(&self) {
-        self.count_in.fetch_xor(true, Ordering::Relaxed);
+    pub fn set_count_in(&self, enabled: bool) {
+        self.count_in.store(enabled, Ordering::Relaxed);
     }
 
     /// Ask the audio callback to click through a measure before playing.
