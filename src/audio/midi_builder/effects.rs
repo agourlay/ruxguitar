@@ -33,11 +33,13 @@ pub(super) fn apply_velocity_effect(
 }
 
 /// Extend the note duration through tie chains and let-ring, walking the
-/// note's own voice like TuxGuitar's `getRealNoteDuration`.
+/// note's own voice over the expanded playback order (repeats included)
+/// like TuxGuitar's `getRealNoteDuration`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_duration_effect(
     track: &Track,
-    measure_id: usize,
+    playback_order: &[(usize, i64)],
+    playback_index: usize,
     voice_id: usize,
     beat_id: usize,
     note: &Note,
@@ -45,15 +47,21 @@ pub(super) fn apply_duration_effect(
     tempo: u32,
     duration: u32,
 ) -> u32 {
+    let (measure_id, current_move) = playback_order[playback_index];
     let note_beat = &track.measures[measure_id].voices[voice_id].beats[beat_id];
     let mut let_ring = note.effect.let_ring;
-    let mut last_end = i64::from(note_beat.start) + i64::from(note_beat.duration.time());
+    let mut last_end =
+        current_move + i64::from(note_beat.start) + i64::from(note_beat.duration.time());
     let mut real_duration = i64::from(duration);
 
-    'walk: for (m_offset, measure) in track.measures[measure_id..].iter().enumerate() {
-        let in_next_measure = m_offset > 0;
+    'walk: for (entry_id, (m_id, m_move)) in playback_order[playback_index..].iter().enumerate() {
+        let in_next_measure = entry_id > 0;
         let skip_beats = if in_next_measure { 0 } else { beat_id + 1 };
-        for beat in measure.voices[voice_id].beats.iter().skip(skip_beats) {
+        for beat in track.measures[*m_id].voices[voice_id]
+            .beats
+            .iter()
+            .skip(skip_beats)
+        {
             if beat.empty {
                 continue;
             }
@@ -78,8 +86,8 @@ pub(super) fn apply_duration_effect(
                 if next_note.string == note.string {
                     if next_note.kind == NoteType::Tie {
                         // gap-aware: also cover any distance since the chain's last end
-                        real_duration += (i64::from(beat.start) - last_end) + beat_time;
-                        last_end = i64::from(beat.start) + beat_time;
+                        real_duration += (m_move + i64::from(beat.start) - last_end) + beat_time;
+                        last_end = m_move + i64::from(beat.start) + beat_time;
                         let_ring = next_note.effect.let_ring;
                         tied_on_string = true;
                     } else {

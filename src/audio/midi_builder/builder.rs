@@ -98,7 +98,7 @@ impl MidiBuilder {
         let strings = &track.strings;
         let mut prev_tempo = song_tempo;
         assert_eq!(track.measures.len(), measure_headers.len());
-        for (measure_index, tick_offset) in playback_order {
+        for (playback_index, (measure_index, tick_offset)) in playback_order.iter().enumerate() {
             let measure = &track.measures[*measure_index];
             let measure_header = &measure_headers[*measure_index];
 
@@ -122,6 +122,8 @@ impl MidiBuilder {
                 measure_header,
                 midi_channel,
                 strings,
+                playback_order,
+                playback_index,
             );
             // shift events generated for this measure by tick_offset
             if *tick_offset != 0 {
@@ -132,6 +134,7 @@ impl MidiBuilder {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_beat_events(
         &mut self,
         track_id: usize,
@@ -140,8 +143,9 @@ impl MidiBuilder {
         measure_header: &MeasureHeader,
         midi_channel: &MidiChannel,
         strings: &[(i32, i32)],
+        playback_order: &[(usize, i64)],
+        playback_index: usize,
     ) {
-        let measure_id = measure.voices[0].measure_index as usize;
         for (voice_id, voice) in measure.voices.iter().enumerate() {
             let beats = &voice.beats;
             for (beat_id, beat) in beats.iter().enumerate() {
@@ -168,7 +172,8 @@ impl MidiBuilder {
                 self.add_notes(
                     track_id,
                     track,
-                    measure_id,
+                    playback_order,
+                    playback_index,
                     voice_id,
                     measure_header,
                     midi_channel,
@@ -188,7 +193,8 @@ impl MidiBuilder {
         &mut self,
         track_id: usize,
         track: &Track,
-        measure_id: usize,
+        playback_order: &[(usize, i64)],
+        playback_index: usize,
         voice_id: usize,
         measure_header: &MeasureHeader,
         midi_channel: &MidiChannel,
@@ -220,7 +226,8 @@ impl MidiBuilder {
                 // apply effects on duration
                 let mut duration = apply_duration_effect(
                     track,
-                    measure_id,
+                    playback_order,
+                    playback_index,
                     voice_id,
                     beat_id,
                     note,
