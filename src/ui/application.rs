@@ -13,7 +13,7 @@ use crate::audio::playback_order::compute_playback_order;
 use crate::config::Config;
 use crate::parser::parse_gp_data;
 use crate::parser::song_parser::{GpVersion, MeasureHeader, QUARTER_TIME, Song};
-use crate::ui::icons::{mute_icon, open_icon, pause_icon, play_icon, solo_icon, stop_icon};
+use crate::ui::icons::{metronome_icon, mute_icon, open_icon, pause_icon, play_icon, solo_icon, stop_icon};
 use crate::ui::picker::{FilePickerError, load_file, open_file_dialog};
 use crate::ui::tablature::Tablature;
 use crate::ui::tuning::tuning_label;
@@ -173,6 +173,7 @@ pub enum Message {
     StopPlayer,                    // stop playback
     ToggleSolo,                    // toggle solo mode
     ToggleMute,                    // toggle mute of the current track
+    ToggleMetronome,               // toggle metronome clicks
     WindowResized,                 // window resized
     TablatureResized(Size),        // tablature resized
     TempoSelected(TempoSelection), // tempo selected
@@ -449,6 +450,12 @@ impl RuxApplication {
                 }
                 Task::none()
             }
+            Message::ToggleMetronome => {
+                if let Some(audio_player) = &self.audio_player {
+                    audio_player.toggle_metronome();
+                }
+                Task::none()
+            }
             Message::WindowResized => {
                 // query tablature container size
                 selector::find(self.tablature_id.clone()).then(|target| {
@@ -599,6 +606,15 @@ impl RuxApplication {
                     .is_some_and(|p| p.is_track_muted(self.track_selection.index)),
             );
 
+            let metronome_mode = action_toggle(
+                metronome_icon(),
+                "Metronome",
+                Message::ToggleMetronome,
+                self.audio_player
+                    .as_ref()
+                    .is_some_and(AudioPlayer::metronome_enabled),
+            );
+
             let track_pick_list = pick_list(
                 self.all_tracks.as_slice(),
                 Some(&self.track_selection),
@@ -621,6 +637,7 @@ impl RuxApplication {
                 tempo_percentage,
                 volume_label,
                 volume_slider,
+                metronome_mode,
                 solo_mode,
                 mute_mode,
                 track_pick_list,

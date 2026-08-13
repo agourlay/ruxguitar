@@ -88,13 +88,13 @@ fn test_midi_events_for_demo_song() {
     let builder = MidiBuilder::new();
     let events = builder.build_for_song(&song);
 
-    assert_eq!(events.len(), 4428);
+    assert_eq!(events.len(), 4844);
     assert_eq!(events[0].tick, 1);
 
     // assert number of tracks
     let track_count = song.tracks.len();
     let unique_tracks: HashSet<_> = events.iter().map(|event| event.track).collect();
-    assert_eq!(unique_tracks.len(), track_count + 1); // plus None for info events
+    assert_eq!(unique_tracks.len(), track_count + 2); // plus None for info events and the metronome
 
     // skip MIDI program messages
     let rhythm_track_events: Vec<_> = events
@@ -287,13 +287,13 @@ fn test_midi_events_for_bleed() {
     let builder = MidiBuilder::new();
     let events = builder.build_for_song(&song);
 
-    assert_eq!(events.len(), 44445);
+    assert_eq!(events.len(), 46133);
     assert_eq!(events[0].tick, 1);
 
     // assert number of tracks
     let track_count = song.tracks.len();
     let unique_tracks: HashSet<_> = events.iter().map(|event| event.track).collect();
-    assert_eq!(unique_tracks.len(), track_count);
+    assert_eq!(unique_tracks.len(), track_count + 1); // plus the metronome
 
     // skip MIDI program messages
     let rhythm_track_events: Vec<_> = events

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 const SOLO_NONE: i32 = -1;
 
@@ -8,6 +8,7 @@ pub struct MidiPlayerParams {
     tempo_percentage: AtomicU32,
     solo_track_id: AtomicI32, // -1 == None
     mute_mask: AtomicU64,     // bit per muted track id
+    metronome: AtomicBool,    // metronome clicks enabled
     master_volume: AtomicU32, // f32 bits
 }
 
@@ -18,8 +19,17 @@ impl MidiPlayerParams {
             tempo_percentage: AtomicU32::new(tempo_percentage),
             solo_track_id: AtomicI32::new(solo_track_id.map_or(SOLO_NONE, |id| id as i32)),
             mute_mask: AtomicU64::new(0),
+            metronome: AtomicBool::new(false),
             master_volume: AtomicU32::new(1.0_f32.to_bits()),
         }
+    }
+
+    pub fn metronome_enabled(&self) -> bool {
+        self.metronome.load(Ordering::Relaxed)
+    }
+
+    pub fn toggle_metronome(&self) {
+        self.metronome.fetch_xor(true, Ordering::Relaxed);
     }
 
     pub fn toggle_track_mute(&self, track_id: usize) {

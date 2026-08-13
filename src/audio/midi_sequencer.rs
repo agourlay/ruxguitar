@@ -185,7 +185,7 @@ mod tests {
         let song = Rc::new(song);
         let builder = MidiBuilder::new();
         let events = builder.build_for_song(&song);
-        let events_len = 4428;
+        let events_len = 4844;
         assert_eq!(events.len(), events_len);
         assert_eq!(events[0].tick, 1);
         let mut sequencer = MidiSequencer::new(events.clone());

@@ -1,4 +1,4 @@
-use crate::audio::midi_builder::MidiBuilder;
+use crate::audio::midi_builder::{METRONOME_TRACK, MidiBuilder};
 use crate::audio::midi_event::{FIRST_TICK, MidiEventType};
 use crate::audio::midi_player_params::MidiPlayerParams;
 use crate::audio::midi_sequencer::MidiSequencer;
@@ -110,6 +110,14 @@ impl AudioPlayer {
 
     pub fn solo_track_id(&self) -> Option<usize> {
         self.player_params.solo_track_id()
+    }
+
+    pub fn metronome_enabled(&self) -> bool {
+        self.player_params.metronome_enabled()
+    }
+
+    pub fn toggle_metronome(&self) {
+        self.player_params.toggle_metronome();
     }
 
     pub fn is_track_muted(&self, track_id: usize) -> bool {
@@ -357,11 +365,16 @@ fn new_output_stream(
                     // mute/solo filtering, like TuxGuitar's shouldSend: new
                     // notes and channel messages of inaudible tracks are
                     // skipped, note-offs always pass so nothing gets stuck,
-                    // and the setup events at FIRST_TICK are never filtered
-                    let audible = midi_event.tick == FIRST_TICK
-                        || midi_event
-                            .track
-                            .is_none_or(|t| player_params.is_track_audible(usize::from(t)));
+                    // and the setup events at FIRST_TICK are never filtered;
+                    // metronome clicks are gated solely on their toggle
+                    let audible = if midi_event.track == Some(METRONOME_TRACK) {
+                        player_params.metronome_enabled()
+                    } else {
+                        midi_event.tick == FIRST_TICK
+                            || midi_event
+                                .track
+                                .is_none_or(|t| player_params.is_track_audible(usize::from(t)))
+                    };
                     match midi_event.event {
                         MidiEventType::NoteOn(channel, key, velocity) => {
                             if !audible {

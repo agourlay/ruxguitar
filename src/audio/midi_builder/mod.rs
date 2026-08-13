@@ -3,4 +3,4 @@ mod effects;
 #[cfg(test)]
 mod tests;
 
-pub use builder::MidiBuilder;
+pub use builder::{METRONOME_TRACK, MidiBuilder};

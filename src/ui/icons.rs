@@ -15,6 +15,10 @@ pub fn mute_icon<'a, Message>() -> Element<'a, Message> {
     text('M').into()
 }
 
+pub fn metronome_icon<'a, Message>() -> Element<'a, Message> {
+    text('\u{1D15F}').into()
+}
+
 pub fn pause_icon<'a, Message>() -> Element<'a, Message> {
     icon('\u{0e802}')
 }
