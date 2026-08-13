@@ -259,6 +259,11 @@ impl AudioPlayer {
         sequencer_guard.set_tick(measure_start_tick);
         drop(sequencer_guard);
 
+        // keep the cursor tick in sync: the count-in looks up the measure
+        // (and its time signature) through it
+        self.current_tick
+            .store(measure_start_tick, Ordering::Relaxed);
+
         // stop current sound
         let mut synthesizer_guard = self.synthesizer.lock().unwrap();
         synthesizer_guard.note_off_all(false);
@@ -664,4 +669,44 @@ mod tests {
     }
 
 
+
+    #[test]
+    fn seeking_updates_the_cursor_tick() {
+        use crate::audio::playback_order::compute_playback_order;
+        use crate::parser::song_parser_tests::parse_gp_file;
+        use std::rc::Rc;
+        use tokio::sync::Notify;
+
+        let song = parse_gp_file("test-files/Demo v5.gp5").unwrap();
+        let tempo = song.tempo.value;
+        let song = Rc::new(song);
+        let order = compute_playback_order(&song.measure_headers);
+        let current_tick = Arc::new(AtomicU32::new(FIRST_TICK));
+        let notify = Arc::new(Notify::new());
+        let player = AudioPlayer::new(
+            song,
+            tempo,
+            100,
+            None,
+            current_tick.clone(),
+            notify,
+            &order,
+        )
+        .unwrap();
+
+        // the count-in resolves the measure signature through the cursor
+        // tick: seeking must move it
+        player.focus_measure_at(10, 0);
+        assert_eq!(
+            current_tick.load(Ordering::Relaxed),
+            player.measure_playback_ticks[10]
+        );
+
+        // beat-level seek lands inside the same measure
+        player.focus_measure_at(10, 480);
+        assert_eq!(
+            current_tick.load(Ordering::Relaxed),
+            player.measure_playback_ticks[10] + 480
+        );
+    }
 }
