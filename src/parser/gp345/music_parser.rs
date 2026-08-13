@@ -50,8 +50,9 @@ impl MusicParser {
         }
 
         let song_tempo = self.song.tempo.value;
+        let song_key = self.song.key_signature;
         let (i, measure_headers) =
-            parse_measure_headers(measure_count, song_tempo, song_version)(i)?;
+            parse_measure_headers(measure_count, song_tempo, song_version, song_key)(i)?;
         self.song.measure_headers = measure_headers;
 
         let (i, tracks) = self.parse_tracks(track_count as usize)(i)?;

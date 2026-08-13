@@ -173,7 +173,7 @@ pub const KEY_SIGNATURES: [&str; 34] = [
     "E# minor",
 ];
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeySignature {
     pub key: i8,
     pub is_minor: bool,

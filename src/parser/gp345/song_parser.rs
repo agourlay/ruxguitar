@@ -604,9 +604,10 @@ pub fn parse_triplet_feel(i: &[u8]) -> IResult<&[u8], TripletFeel> {
 }
 
 /// Parse measure header.
-/// the time signature is propagated to the next measure
+/// the time and key signatures are propagated to the next measure
 pub fn parse_measure_header(
     previous_time_signature: TimeSignature,
+    previous_key_signature: KeySignature,
     song_tempo: u32,
     song_version: GpVersion,
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], MeasureHeader> {
@@ -617,6 +618,8 @@ pub fn parse_measure_header(
         let mut mh = MeasureHeader::default();
         mh.tempo.value = song_tempo; // value updated later when parsing beats
         mh.repeat_open = (flags & 0x04) != 0;
+        // propagate key signature, overridden by a 0x40 tonality change below
+        mh.key_signature = previous_key_signature;
         // propagate time signature
         mh.time_signature = previous_time_signature.clone();
 
@@ -751,6 +754,7 @@ pub fn parse_measure_headers(
     measure_count: i32,
     song_tempo: u32,
     version: GpVersion,
+    song_key: i8,
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], Vec<MeasureHeader>> {
     move |i: &[u8]| {
         log::debug!("Parsing {measure_count} measure headers");
@@ -770,21 +774,34 @@ pub fn parse_measure_headers(
             }
             existing_alternatives |= header.repeat_alternative;
         };
+        // the first measure inherits the song-level key signature
+        let song_key_signature = KeySignature::new(song_key, false);
         // parse first header to account for the byte in between each header in GP5
-        let (mut i, mut first_header) =
-            parse_measure_header(TimeSignature::default(), song_tempo, version)(i)?;
+        let (mut i, mut first_header) = parse_measure_header(
+            TimeSignature::default(),
+            song_key_signature,
+            song_tempo,
+            version,
+        )(i)?;
         convert_alternative(&mut first_header);
         let mut previous_time_signature = first_header.time_signature.clone();
+        let mut previous_key_signature = first_header.key_signature;
         let mut headers = vec![first_header];
         for _ in 1..measure_count {
             let (rest, mut header) = preceded(
                 cond(version >= GpVersion::GP5, parse_u8),
-                parse_measure_header(previous_time_signature, song_tempo, version),
+                parse_measure_header(
+                    previous_time_signature,
+                    previous_key_signature,
+                    song_tempo,
+                    version,
+                ),
             )
             .parse(i)?;
             convert_alternative(&mut header);
-            // propagate time signature
+            // propagate time and key signatures
             previous_time_signature = header.time_signature.clone();
+            previous_key_signature = header.key_signature;
             i = rest;
             headers.push(header);
         }
