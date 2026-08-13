@@ -961,7 +961,8 @@ pub fn parse_gp_version(i: &[u8]) -> IResult<&[u8], GpVersion> {
     let version = match version_string.as_str() {
         "FICHIER GUITAR PRO v3.00" => GpVersion::GP3,
         "FICHIER GUITAR PRO v4.00" => GpVersion::GP4,
-        "FICHIER GUITAR PRO v4.06" => GpVersion::GP4_06,
+        // "L4.06" is written by a common GP4 clone
+        "FICHIER GUITAR PRO v4.06" | "FICHIER GUITAR PRO L4.06" => GpVersion::GP4_06,
         "FICHIER GUITAR PRO v5.00" => GpVersion::GP5,
         "FICHIER GUITAR PRO v5.10" => GpVersion::GP5_10,
         _ => {
