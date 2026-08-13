@@ -331,7 +331,12 @@ impl MusicParser {
             if (flags & 0x40) != 0 {
                 let (inner, beat_type) = parse_u8(i)?;
                 i = inner;
-                beat.empty = beat_type & 0x02 == 0;
+                // GP3/GP4 write this byte but the beat still advances time;
+                // only GP5 empty beats freeze the cursor (TuxGuitar discards
+                // the byte for older versions)
+                if self.song.version >= GpVersion::GP5 {
+                    beat.empty = beat_type & 0x02 == 0;
+                }
             }
 
             // beat duration is an eighth note
