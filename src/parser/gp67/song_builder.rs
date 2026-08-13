@@ -475,16 +475,20 @@ fn stroke_of(gp_beat: &GpxBeat) -> BeatStroke {
 
 fn chord_of(doc: &GpxDocument, gp_beat: &GpxBeat) -> Option<Chord> {
     let gp_chord = doc.chord(gp_beat.chord_id?)?;
+    let string_count = gp_chord.frets.len();
+    let base_fret = gp_chord.base_fret.unwrap_or(0);
     let mut chord = Chord {
-        length: gp_chord.frets.len() as u8,
+        length: string_count as u8,
         name: gp_chord.name.clone().unwrap_or_default(),
         first_fret: gp_chord.base_fret.map(|f| f as u32),
-        strings: vec![-1; gp_chord.frets.len()],
+        strings: vec![-1; string_count],
         ..Default::default()
     };
     for (i, fret) in gp_chord.frets.iter().enumerate() {
         if let Some(value) = fret {
-            chord.strings[i] = *value as i8;
+            // gpx frets are relative to the base fret and stored in reverse
+            // string order compared to the engine model, like TuxGuitar
+            chord.strings[string_count - i - 1] = (*value + base_fret) as i8;
         }
     }
     Some(chord)

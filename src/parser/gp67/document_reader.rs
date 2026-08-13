@@ -240,23 +240,24 @@ fn read_chords(properties: Node, gpx: &mut GpxDocument) {
             let Some(diagram) = child(item, "Diagram") else {
                 continue;
             };
-            let Some(fret_count) = attr_int_opt(diagram, "fretCount") else {
+            let Some(string_count) = attr_int_opt(diagram, "stringCount") else {
                 continue;
             };
+            // one entry per string, like TuxGuitar
             let mut chord = GpxChord {
                 id: attr_int(item, "id"),
                 name: attr(item, "name").map(str::to_string),
-                string_count: attr_int_opt(diagram, "stringCount"),
-                fret_count: Some(fret_count),
+                string_count: Some(string_count),
+                fret_count: attr_int_opt(diagram, "fretCount"),
                 base_fret: attr_int_opt(diagram, "baseFret"),
-                frets: vec![None; fret_count.max(0) as usize],
+                frets: vec![None; string_count.max(0) as usize],
             };
             for fret in element_children(diagram, "Fret") {
+                // the string attribute is zero-based
                 if let Some(string) = attr_int_opt(fret, "string")
-                    && string > 0
-                    && string <= fret_count
+                    && (0..string_count).contains(&string)
                 {
-                    chord.frets[(string - 1) as usize] = attr_int_opt(fret, "fret");
+                    chord.frets[string as usize] = attr_int_opt(fret, "fret");
                 }
             }
             gpx.chords.push(chord);
