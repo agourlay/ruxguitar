@@ -9,6 +9,9 @@ pub struct MidiPlayerParams {
     solo_track_id: AtomicI32, // -1 == None
     mute_mask: AtomicU64,     // bit per muted track id
     metronome: AtomicBool,    // metronome clicks enabled
+    count_in: AtomicBool,     // count-in measure enabled
+    // pending count-in request: total ticks (high) | beat ticks (low), 0 = none
+    count_in_request: AtomicU64,
     master_volume: AtomicU32, // f32 bits
 }
 
@@ -20,6 +23,8 @@ impl MidiPlayerParams {
             solo_track_id: AtomicI32::new(solo_track_id.map_or(SOLO_NONE, |id| id as i32)),
             mute_mask: AtomicU64::new(0),
             metronome: AtomicBool::new(false),
+            count_in: AtomicBool::new(false),
+            count_in_request: AtomicU64::new(0),
             master_volume: AtomicU32::new(1.0_f32.to_bits()),
         }
     }
@@ -30,6 +35,28 @@ impl MidiPlayerParams {
 
     pub fn toggle_metronome(&self) {
         self.metronome.fetch_xor(true, Ordering::Relaxed);
+    }
+
+    pub fn count_in_enabled(&self) -> bool {
+        self.count_in.load(Ordering::Relaxed)
+    }
+
+    pub fn toggle_count_in(&self) {
+        self.count_in.fetch_xor(true, Ordering::Relaxed);
+    }
+
+    /// Ask the audio callback to click through a measure before playing.
+    pub fn request_count_in(&self, total_ticks: u32, beat_ticks: u32) {
+        let packed = (u64::from(total_ticks) << 32) | u64::from(beat_ticks);
+        self.count_in_request.store(packed, Ordering::Relaxed);
+    }
+
+    /// Take the pending count-in request, if any: `(total ticks, beat ticks)`.
+    pub fn take_count_in_request(&self) -> Option<(u32, u32)> {
+        match self.count_in_request.swap(0, Ordering::Relaxed) {
+            0 => None,
+            packed => Some(((packed >> 32) as u32, packed as u32)),
+        }
     }
 
     pub fn toggle_track_mute(&self, track_id: usize) {

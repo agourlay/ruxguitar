@@ -100,7 +100,7 @@ impl MidiSequencer {
     }
 }
 
-fn tick_increase(tempo_bpm: u32, elapsed_seconds: f64) -> f64 {
+pub fn tick_increase(tempo_bpm: u32, elapsed_seconds: f64) -> f64 {
     let tempo_bps = f64::from(tempo_bpm) / 60.0;
     f64::from(QUARTER_TIME) * tempo_bps * elapsed_seconds
 }

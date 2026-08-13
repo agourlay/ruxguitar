@@ -19,6 +19,10 @@ pub fn metronome_icon<'a, Message>() -> Element<'a, Message> {
     text('\u{1D15F}').into()
 }
 
+pub fn count_in_icon<'a, Message>() -> Element<'a, Message> {
+    text("1·2").into()
+}
+
 pub fn pause_icon<'a, Message>() -> Element<'a, Message> {
     icon('\u{0e802}')
 }

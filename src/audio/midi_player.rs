@@ -1,7 +1,7 @@
 use crate::audio::midi_builder::{METRONOME_TRACK, MidiBuilder};
 use crate::audio::midi_event::{FIRST_TICK, MidiEventType};
 use crate::audio::midi_player_params::MidiPlayerParams;
-use crate::audio::midi_sequencer::MidiSequencer;
+use crate::audio::midi_sequencer::{MidiSequencer, tick_increase};
 use crate::audio::playback_order::first_playback_ticks;
 use crate::parser::song_parser::Song;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -116,6 +116,30 @@ impl AudioPlayer {
         self.player_params.metronome_enabled()
     }
 
+    pub fn count_in_enabled(&self) -> bool {
+        self.player_params.count_in_enabled()
+    }
+
+    pub fn toggle_count_in(&self) {
+        self.player_params.toggle_count_in();
+    }
+
+    /// Ask for a count-in over the measure currently under the cursor.
+    fn request_count_in(&self) {
+        let current_tick = self.current_tick.load(Ordering::Relaxed);
+        // the measure whose first playback tick the cursor has reached
+        let measure_id = self
+            .measure_playback_ticks
+            .partition_point(|&t| t <= current_tick)
+            .saturating_sub(1);
+        let Some(header) = self.song.measure_headers.get(measure_id) else {
+            return;
+        };
+        let beat_ticks = header.time_signature.denominator.time();
+        let total_ticks = u32::from(header.time_signature.numerator) * beat_ticks;
+        self.player_params.request_count_in(total_ticks, beat_ticks);
+    }
+
     pub fn toggle_metronome(&self) {
         self.player_params.toggle_metronome();
     }
@@ -192,12 +216,18 @@ impl AudioPlayer {
                 }
             } else {
                 self.is_playing = true;
+                if self.player_params.count_in_enabled() {
+                    self.request_count_in();
+                }
                 if let Err(err) = stream.play() {
                     return Some(format!("Failed to resume audio stream: {err}"));
                 }
             }
         } else {
             self.is_playing = true;
+            if self.player_params.count_in_enabled() {
+                self.request_count_in();
+            }
 
             // Initialize audio output stream
             let stream = new_output_stream(
@@ -329,6 +359,10 @@ fn new_output_stream(
     let err_fn = |err| log::error!("an error occurred on stream: {err}");
 
     let seconds_per_frame = 1.0 / f64::from(sample_rate);
+    // count-in state: remaining ticks and ticks until the next click
+    let mut count_in_left: f64 = 0.0;
+    let mut count_in_beat: f64 = 0.0;
+    let mut count_in_next_click: f64 = 0.0;
     let stream = device.build_output_stream(
         stream_config,
         move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
@@ -339,10 +373,28 @@ fn new_output_stream(
             // stays locked to the output instead of a wall clock
             let elapsed_secs = render_len as f64 * seconds_per_frame;
             let mut sequencer_guard = sequencer.lock().unwrap();
-            sequencer_guard.advance(player_params.adjusted_tempo(), elapsed_secs);
             let mut synthesizer_guard = synthesizer.lock().unwrap();
+
+            // a pending count-in clicks through one measure before playback
+            if let Some((total_ticks, beat_ticks)) = player_params.take_count_in_request() {
+                count_in_left = f64::from(total_ticks);
+                count_in_beat = f64::from(beat_ticks);
+                count_in_next_click = 0.0;
+            }
+            let counting_in = count_in_left > 0.0;
+            if counting_in {
+                if count_in_next_click <= 0.0 {
+                    synthesizer_guard.note_on(9, 37, 95);
+                    count_in_next_click += count_in_beat;
+                }
+                let ticks = tick_increase(player_params.adjusted_tempo(), elapsed_secs);
+                count_in_left -= ticks;
+                count_in_next_click -= ticks;
+            } else {
+                sequencer_guard.advance(player_params.adjusted_tempo(), elapsed_secs);
+            }
             // process midi events for current tick
-            if let Some(events) = sequencer_guard.get_next_events() {
+            if let Some(events) = sequencer_guard.get_next_events().filter(|_| !counting_in) {
                 let tick = sequencer_guard.get_tick();
                 let last_tick = sequencer_guard.get_last_tick();
                 if !events.is_empty() {
