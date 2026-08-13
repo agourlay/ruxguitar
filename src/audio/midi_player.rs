@@ -147,10 +147,7 @@ impl AudioPlayer {
         self.is_playing = false;
 
         // reset ticks
-        let mut sequencer_guard = self.sequencer.lock().unwrap();
-        sequencer_guard.reset_last_time();
-        sequencer_guard.reset_ticks();
-        drop(sequencer_guard);
+        self.sequencer.lock().unwrap().reset_ticks();
 
         // stop all sound in synthesizer
         let mut synthesizer_guard = self.synthesizer.lock().unwrap();
@@ -179,8 +176,6 @@ impl AudioPlayer {
                 }
             } else {
                 self.is_playing = true;
-                // reset last time to not advance time too fast on resume
-                self.sequencer.lock().unwrap().reset_last_time();
                 if let Err(err) = stream.play() {
                     return Some(format!("Failed to resume audio stream: {err}"));
                 }
@@ -317,11 +312,18 @@ fn new_output_stream(
 
     let err_fn = |err| log::error!("an error occurred on stream: {err}");
 
+    let seconds_per_frame = 1.0 / f64::from(sample_rate);
     let stream = device.build_output_stream(
         stream_config,
         move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
+            // frames requested by the device for its channel layout
+            let frame_count = output.len() / channel_count;
+            let render_len = frame_count.min(left.len());
+            // advance by the audio about to be rendered so event scheduling
+            // stays locked to the output instead of a wall clock
+            let elapsed_secs = render_len as f64 * seconds_per_frame;
             let mut sequencer_guard = sequencer.lock().unwrap();
-            sequencer_guard.advance(player_params.adjusted_tempo());
+            sequencer_guard.advance(player_params.adjusted_tempo(), elapsed_secs);
             let mut synthesizer_guard = synthesizer.lock().unwrap();
             // process midi events for current tick
             if let Some(events) = sequencer_guard.get_next_events() {
@@ -390,9 +392,6 @@ fn new_output_stream(
                     }
                 }
             }
-            // frames requested by the device for its channel layout
-            let frame_count = output.len() / channel_count;
-            let render_len = frame_count.min(left.len());
             if render_len < frame_count {
                 // debug level: runs on the real-time audio thread
                 log::debug!(
