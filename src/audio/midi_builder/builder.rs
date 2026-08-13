@@ -13,7 +13,8 @@ use crate::audio::playback_order::compute_playback_order;
 
 use super::effects::{
     DEFAULT_DURATION_DEAD, TripletAdjustment, apply_duration_effect, apply_static_duration,
-    apply_triplet_feel, apply_velocity_effect, compute_stroke_offsets,
+    apply_triplet_feel, apply_velocity_effect, compute_stroke_offsets, next_note_on_string,
+    previous_note_on_string,
 };
 
 const DEFAULT_BEND: f32 = 64.0;
@@ -192,10 +193,8 @@ impl MidiBuilder {
                     voice_id,
                     measure_header,
                     midi_channel,
-                    previous_beat,
                     beat_id,
                     beat,
-                    next_beat,
                     strings,
                     triplet_adj,
                 );
@@ -213,10 +212,8 @@ impl MidiBuilder {
         voice_id: usize,
         measure_header: &MeasureHeader,
         midi_channel: &MidiChannel,
-        previous_beat: Option<&Beat>,
         beat_id: usize,
         beat: &Beat,
-        next_beat: Option<&Beat>,
         strings: &[(i32, i32)],
         triplet_adj: TripletAdjustment,
     ) {
@@ -271,14 +268,41 @@ impl MidiBuilder {
                     }
                 }
 
-                // surrounding notes on the same string on the previous & next beat
-                let previous_note =
-                    previous_beat.and_then(|b| b.notes.iter().find(|n| n.string == note.string));
-                let next_note =
-                    next_beat.and_then(|b| b.notes.iter().find(|n| n.string == note.string));
+                // previous note played on the same string (crossing barlines
+                // and repeats), for the hammer-on velocity attenuation
+                let previous_note = if midi_channel.is_percussion() {
+                    None
+                } else {
+                    previous_note_on_string(
+                        track,
+                        playback_order,
+                        playback_index,
+                        voice_id,
+                        beat_id,
+                        note.string,
+                    )
+                };
 
-                // pack with beat to propagate duration
-                let next_note = next_beat.zip(next_note);
+                // slide target: next note played on the same string, with its
+                // tick expressed relative to the current playback entry since
+                // this measure's events are shifted by its own offset later
+                let slide_target = if note.effect.slide.is_some() {
+                    next_note_on_string(
+                        track,
+                        playback_order,
+                        playback_index,
+                        voice_id,
+                        beat_id,
+                        note.string,
+                    )
+                    .map(|(m_move, next_beat, next_note)| {
+                        let current_move = playback_order[playback_index].1;
+                        let tick2 = i64::from(next_beat.start) + m_move - current_move;
+                        (tick2.max(0) as u32, next_note.value)
+                    })
+                } else {
+                    None
+                };
 
                 // apply effects on velocity
                 let velocity = apply_velocity_effect(note, previous_note, midi_channel);
@@ -292,7 +316,7 @@ impl MidiBuilder {
                     &mut duration,
                     tempo,
                     note,
-                    next_note,
+                    slide_target,
                     velocity,
                     midi_channel,
                 ) {
@@ -319,7 +343,7 @@ impl MidiBuilder {
         duration: &mut u32,
         tempo: u32,
         note: &Note,
-        next_note_beat: Option<(&Beat, &Note)>,
+        slide_target: Option<(u32, i16)>,
         velocity: i16,
         midi_channel: &MidiChannel,
     ) -> Option<i32> {
@@ -429,12 +453,15 @@ impl MidiBuilder {
             }
             // slide
             else if note.effect.slide.is_some() {
-                if let Some((next_beat, next_note)) = next_note_beat {
+                // the target must lie after the (triplet-adjusted) note start
+                if let Some((slide_tick, slide_value)) =
+                    slide_target.filter(|(tick2, _)| *tick2 > *note_start)
+                {
                     let value_1 = i32::from(note.value);
-                    let value_2 = i32::from(next_note.value);
+                    let value_2 = i32::from(slide_value);
 
                     let tick1 = *note_start;
-                    let tick2 = next_beat.start;
+                    let tick2 = slide_tick;
 
                     // make slide
                     let distance: i32 = value_2 - value_1;

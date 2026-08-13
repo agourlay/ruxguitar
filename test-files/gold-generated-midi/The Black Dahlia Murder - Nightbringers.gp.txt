@@ -14541,7 +14541,7 @@
 480960 NoteOn(1, 46, 95) Some(1)
 480960 NoteOn(1, 41, 95) Some(1)
 480960 NoteOff(2, 68) Some(2)
-480960 NoteOn(2, 70, 95) Some(2)
+480960 NoteOn(2, 70, 70) Some(2)
 480960 NoteOff(4, 34) Some(4)
 480960 NoteOn(4, 34, 95) Some(4)
 480960 NoteOff(9, 36) Some(5)

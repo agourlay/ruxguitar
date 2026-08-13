@@ -4657,7 +4657,7 @@
 749520 NoteOff(0, 59) Some(0)
 749520 NoteOn(0, 61, 70) Some(0)
 749760 NoteOff(0, 61) Some(0)
-749760 NoteOn(0, 62, 95) Some(0)
+749760 NoteOn(0, 62, 70) Some(0)
 750000 NoteOff(0, 62) Some(0)
 750000 NoteOn(0, 61, 70) Some(0)
 750240 NoteOff(0, 61) Some(0)

@@ -122,6 +122,67 @@ pub(super) fn apply_static_duration(tempo: u32, duration: u32, maximum: u32) -> 
     value.min(maximum)
 }
 
+/// Find the next note on the same string, walking the note's voice over the
+/// expanded playback order like TuxGuitar's `getNextNote` with `breakAtRest`:
+/// the first beat where the voice plays either provides the note or ends the
+/// search. Returns the playback move of the target's measure with the note.
+pub(super) fn next_note_on_string<'a>(
+    track: &'a Track,
+    playback_order: &[(usize, i64)],
+    playback_index: usize,
+    voice_id: usize,
+    beat_id: usize,
+    string: i8,
+) -> Option<(i64, &'a Beat, &'a Note)> {
+    let mut skip_beats = beat_id + 1;
+    for (m_id, m_move) in &playback_order[playback_index..] {
+        for beat in track.measures[*m_id].voices[voice_id]
+            .beats
+            .iter()
+            .skip(skip_beats)
+        {
+            if beat.empty {
+                continue;
+            }
+            return beat
+                .notes
+                .iter()
+                .find(|n| n.string == string)
+                .map(|n| (*m_move, beat, n));
+        }
+        skip_beats = 0;
+    }
+    None
+}
+
+/// Find the previous note played on the same string, walking the note's voice
+/// backwards over the expanded playback order like TuxGuitar's
+/// `getPreviousNote` without `breakAtRest`: beats without a note on the
+/// string are skipped.
+pub(super) fn previous_note_on_string<'a>(
+    track: &'a Track,
+    playback_order: &[(usize, i64)],
+    playback_index: usize,
+    voice_id: usize,
+    beat_id: usize,
+    string: i8,
+) -> Option<&'a Note> {
+    let mut end_beats = Some(beat_id);
+    for (m_id, _) in playback_order[..=playback_index].iter().rev() {
+        let beats = &track.measures[*m_id].voices[voice_id].beats;
+        let end = end_beats.take().unwrap_or(beats.len());
+        for beat in beats[..end].iter().rev() {
+            if beat.empty {
+                continue;
+            }
+            if let Some(n) = beat.notes.iter().find(|n| n.string == string) {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
 /// Triplet feel adjustment for a beat's start and duration.
 pub(super) struct TripletAdjustment {
     pub(super) start: u32,
