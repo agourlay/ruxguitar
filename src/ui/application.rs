@@ -165,7 +165,7 @@ pub enum Message {
     OpenFile(PathBuf), // open file path
     FileOpened(Result<(Vec<u8>, Option<PathBuf>, String), FilePickerError>), // file content, parent folder & file name
     TrackSelected(TrackSelection),                                           // track selection
-    FocusMeasure(usize),           // used when clicking on measure in tablature
+    FocusMeasure(usize, usize),    // measure and beat clicked in the tablature
     FocusTick(u32),                // focus on a specific tick in the tablature
     NextMeasure,                   // focus next measure
     PreviousMeasure,               // focus previous measure
@@ -245,7 +245,7 @@ impl RuxApplication {
         let scroll_offset = tablature.scroll_offset_for_measure(measure_id);
         let scroll_id = tablature.scroll_id.clone();
         if let Some(audio_player) = &self.audio_player {
-            audio_player.focus_measure(measure_id);
+            audio_player.focus_measure_at(measure_id, 0);
         }
         scroll_offset.map_or_else(Task::none, |y| {
             scroll_to(scroll_id, AbsoluteOffset { x: 0.0, y })
@@ -368,14 +368,15 @@ impl RuxApplication {
                     }
                 }
             }
-            Message::FocusMeasure(measure_id) => {
-                // focus measure in tablature
+            Message::FocusMeasure(measure_id, beat_id) => {
                 if let Some(tablature) = &mut self.tablature {
-                    tablature.focus_on_measure(measure_id);
-                }
-                // focus measure in player
-                if let Some(audio_player) = &self.audio_player {
-                    audio_player.focus_measure(measure_id);
+                    // focus measure and beat in tablature
+                    tablature.focus_on_measure_beat(measure_id, beat_id);
+                    // seek the player to the clicked beat
+                    if let Some(audio_player) = &self.audio_player {
+                        let beat_offset = tablature.beat_tick_offset(measure_id, beat_id);
+                        audio_player.focus_measure_at(measure_id, beat_offset);
+                    }
                 }
                 Task::none()
             }

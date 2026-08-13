@@ -176,6 +176,34 @@ impl CanvasMeasure {
     pub fn clear_canvas_cache(&self) {
         self.canvas_cache.clear();
     }
+
+    /// The beat under the given x position, mirroring the layout used by
+    /// `draw` (clicks in the leading padding select the first beat, clicks
+    /// past the last beat the last one).
+    fn beat_at_x(&self, x: f32, actual_width: f32) -> usize {
+        let measure_header = &self.song.measure_headers[self.measure_id];
+        let actual_measure_len = actual_width - self.overhead_width();
+        let width_scale = if self.natural_beats_len > 0.0 {
+            actual_measure_len / self.natural_beats_len
+        } else {
+            1.0
+        };
+        let mut beat_x = 0.0;
+        if self.has_time_signature {
+            beat_x += BEAT_LENGTH;
+        }
+        if measure_header.repeat_open {
+            beat_x += BEAT_LENGTH;
+        }
+        beat_x += MEASURE_NOTES_PADDING;
+        for (beat_id, width) in self.beat_widths.iter().enumerate() {
+            beat_x += width * width_scale;
+            if x < beat_x {
+                return beat_id;
+            }
+        }
+        self.beat_widths.len().saturating_sub(1)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -196,11 +224,12 @@ impl canvas::Program<Message> for CanvasMeasure {
         cursor: Cursor,
     ) -> Option<Action<Message>> {
         if let Event::Mouse(mouse::Event::ButtonPressed(_)) = event
-            && let Some(_cursor_position) = cursor.position_in(bounds)
+            && let Some(cursor_position) = cursor.position_in(bounds)
         {
-            log::info!("Clicked on measure {:?}", self.measure_id);
+            let beat_id = self.beat_at_x(cursor_position.x, bounds.width);
+            log::info!("Clicked on measure {} beat {beat_id}", self.measure_id);
             *state = MeasureInteraction::Clicked;
-            return Some(Action::publish(Message::FocusMeasure(self.measure_id)));
+            return Some(Action::publish(Message::FocusMeasure(self.measure_id, beat_id)));
         }
         None
     }

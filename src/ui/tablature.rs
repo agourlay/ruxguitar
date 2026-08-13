@@ -191,6 +191,10 @@ impl Tablature {
     }
 
     pub fn focus_on_measure(&mut self, new_measure_id: usize) {
+        self.focus_on_measure_beat(new_measure_id, 0);
+    }
+
+    pub fn focus_on_measure_beat(&mut self, new_measure_id: usize, beat_id: usize) {
         let current_focus_id = self.focused_measure;
         if current_focus_id != new_measure_id {
             let current_canvas = self.canvas_measures.get_mut(current_focus_id).unwrap();
@@ -199,6 +203,17 @@ impl Tablature {
             let next_canvas = self.canvas_measures.get_mut(new_measure_id).unwrap();
             next_canvas.toggle_focused();
         }
+        let canvas = self.canvas_measures.get_mut(new_measure_id).unwrap();
+        canvas.focus_beat(beat_id);
+    }
+
+    /// Tick offset of a beat from the start of its measure.
+    pub fn beat_tick_offset(&self, measure_id: usize, beat_id: usize) -> u32 {
+        let measure_start = self.song.measure_headers[measure_id].start;
+        self.song.tracks[self.track_id].measures[measure_id].voices[0]
+            .beats
+            .get(beat_id)
+            .map_or(0, |beat| beat.start.saturating_sub(measure_start))
     }
 
     pub const fn focused_measure(&self) -> usize {

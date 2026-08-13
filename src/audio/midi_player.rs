@@ -253,10 +253,11 @@ impl AudioPlayer {
         None
     }
 
-    pub fn focus_measure(&self, measure_id: usize) {
-        log::debug!("Focus audio player on measure:{measure_id}");
+    /// Seek to a measure, offset by `beat_tick_offset` ticks into it.
+    pub fn focus_measure_at(&self, measure_id: usize, beat_tick_offset: u32) {
+        log::debug!("Focus audio player on measure:{measure_id} (+{beat_tick_offset} ticks)");
         let measure = &self.song.measure_headers[measure_id];
-        let measure_start_tick = self.measure_playback_ticks[measure_id];
+        let measure_start_tick = self.measure_playback_ticks[measure_id] + beat_tick_offset;
         let tempo = measure.tempo.value;
 
         // move sequencer to measure start tick
