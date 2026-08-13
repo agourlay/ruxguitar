@@ -61,7 +61,7 @@ pub struct Song {
     pub tracks: Vec<Track>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MidiChannel {
     pub channel_id: u8,
     pub effect_channel_id: u8,
@@ -429,13 +429,13 @@ pub enum GraceEffectTransition {
 }
 
 impl GraceEffectTransition {
-    pub fn get_grace_effect_transition(value: i8) -> Self {
+    pub const fn get_grace_effect_transition(value: i8) -> Self {
         match value {
-            0 => Self::None,
             1 => Self::Slide,
             2 => Self::Bend,
             3 => Self::Hammer,
-            _ => panic!("Cannot get transition for the grace effect"),
+            // like TuxGuitar, unknown values fall back to no transition
+            _ => Self::None,
         }
     }
 }
@@ -510,14 +510,14 @@ pub enum Octave {
 }
 
 impl Octave {
-    pub fn get_octave(value: u8) -> Self {
+    pub const fn get_octave(value: u8) -> Self {
         match value {
-            0 => Self::None,
             1 => Self::Ottava,
             2 => Self::Quindicesima,
             3 => Self::OttavaBassa,
             4 => Self::QuindicesimaBassa,
-            _ => panic!("Cannot get octave value"),
+            // like TuxGuitar, unknown values fall back to no octave
+            _ => Self::None,
         }
     }
 }
@@ -560,12 +560,13 @@ pub struct TrillEffect {
 }
 
 impl TrillEffect {
-    pub fn from_trill_period(period: i8) -> u16 {
+    /// `None` for unknown periods: TuxGuitar drops the trill entirely.
+    pub fn from_trill_period(period: i8) -> Option<u16> {
         match period {
-            1 => u16::from(DURATION_SIXTEENTH),
-            2 => u16::from(DURATION_THIRTY_SECOND),
-            3 => u16::from(DURATION_SIXTY_FOURTH),
-            other => panic!("Cannot get trill period - got {other}"),
+            1 => Some(u16::from(DURATION_SIXTEENTH)),
+            2 => Some(u16::from(DURATION_THIRTY_SECOND)),
+            3 => Some(u16::from(DURATION_SIXTY_FOURTH)),
+            _ => None,
         }
     }
 }
@@ -576,12 +577,13 @@ pub struct TremoloPickingEffect {
 }
 
 impl TremoloPickingEffect {
-    pub fn from_tremolo_value(value: i8) -> u16 {
+    /// `None` for unknown values: TuxGuitar drops the tremolo entirely.
+    pub fn from_tremolo_value(value: i8) -> Option<u16> {
         match value {
-            1 => u16::from(DURATION_EIGHTH),
-            2 => u16::from(DURATION_SIXTEENTH),
-            3 => u16::from(DURATION_THIRTY_SECOND),
-            other => panic!("Cannot get tremolo value - got {other}"),
+            1 => Some(u16::from(DURATION_EIGHTH)),
+            2 => Some(u16::from(DURATION_SIXTEENTH)),
+            3 => Some(u16::from(DURATION_THIRTY_SECOND)),
+            _ => None,
         }
     }
 }

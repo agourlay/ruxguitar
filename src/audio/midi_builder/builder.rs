@@ -59,23 +59,38 @@ impl MidiBuilder {
     ) -> Vec<MidiEvent> {
         for (track_id, track) in song.tracks.iter().enumerate() {
             log::debug!("building events for track {track_id}");
-            let midi_channel = song
+            // like TuxGuitar, skip tracks with an unresolvable channel
+            let Some(midi_channel) = song
                 .midi_channels
                 .iter()
                 .find(|c| c.channel_id == track.channel_id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "midi channel {} not found for track {}",
-                        track.channel_id, track_id
-                    )
-                });
+            else {
+                log::warn!(
+                    "midi channel {} not found for track {track_id} - skipping track",
+                    track.channel_id
+                );
+                continue;
+            };
+            // the synthesizer only has 16 channels: clamp out-of-range channels
+            // (GP files can reference more) instead of crashing
+            let midi_channel = if midi_channel.channel_id < 16 {
+                midi_channel.clone()
+            } else {
+                log::warn!(
+                    "clamping out-of-range midi channel {} for track {track_id}",
+                    midi_channel.channel_id
+                );
+                let mut clamped = midi_channel.clone();
+                clamped.channel_id = 15;
+                clamped
+            };
             self.add_track_events(
                 song.tempo.value,
                 track_id,
                 track,
                 &song.measure_headers,
                 playback_order,
-                midi_channel,
+                &midi_channel,
             );
         }
         // Sort events by tick
@@ -205,10 +220,9 @@ impl MidiBuilder {
         strings: &[(i32, i32)],
         triplet_adj: TripletAdjustment,
     ) {
+        // GP files define an effect channel per track, but TuxGuitar doesn't use it for playback.
         let channel_id = midi_channel.channel_id;
         let tempo = measure_header.tempo.value;
-        // GP files define an effect channel per track, but TuxGuitar doesn't use it for playback.
-        assert!(channel_id < 16);
         let track_offset = track.offset;
         let beat_duration = triplet_adj.duration;
         let stroke = &beat.effect.stroke;
@@ -217,14 +231,21 @@ impl MidiBuilder {
         let stroke_offsets = compute_stroke_offsets(beat, stroke_increment, strings.len());
         for note in &beat.notes {
             if note.kind != NoteType::Tie {
-                let (string_id, string_tuning) = strings[note.string as usize - 1];
-                assert_eq!(string_id, i32::from(note.string));
+                // skip notes referencing a string the track does not have
+                let Some(&(_, string_tuning)) = usize::try_from(note.string)
+                    .ok()
+                    .and_then(|s| s.checked_sub(1))
+                    .and_then(|s| strings.get(s))
+                else {
+                    log::warn!("invalid string {} for track {track_id}", note.string);
+                    continue;
+                };
 
                 // note starts on beat (adjusted for triplet feel)
                 let mut note_start = triplet_adj.start;
 
                 // apply effects on duration
-                let mut duration = apply_duration_effect(
+                let duration = apply_duration_effect(
                     track,
                     playback_order,
                     playback_index,
@@ -235,7 +256,9 @@ impl MidiBuilder {
                     tempo,
                     beat_duration,
                 );
-                assert_ne!(duration, 0);
+                // degenerate durations (e.g. corrupt tuplet ratios) would emit
+                // a NoteOn without NoteOff
+                let mut duration = duration.max(1);
 
                 // apply stroke effect: stagger note start times across strings
                 let stroke_offset = stroke_offsets[note.string as usize - 1];
@@ -361,7 +384,6 @@ impl MidiBuilder {
             let mut real_key = true;
             let mut tick = *note_start;
 
-            let mut counter = 0;
             while tick + 10 < trill_tick_limit {
                 if tick + trill_length >= trill_tick_limit {
                     trill_length = trill_tick_limit - tick - 1;
@@ -370,14 +392,10 @@ impl MidiBuilder {
                 self.add_note(track_id, iter_key, tick, trill_length, velocity, channel_id);
                 real_key = !real_key;
                 tick += trill_length;
-                counter += 1;
             }
-            assert!(
-                counter > 0,
-                "No trill notes published! trill_length: {trill_length}, tick: {tick}, trill_tick_limit: {trill_tick_limit}"
-            );
 
-            // all notes published - the caller does not need to publish the note
+            // all notes published (like TuxGuitar, possibly none for degenerate
+            // durations) - the caller does not need to publish the note
             return None;
         }
 
@@ -386,20 +404,15 @@ impl MidiBuilder {
             let mut tp_length = tremolo_picking.duration.time();
             let mut tick = *note_start;
             let tp_tick_limit = *note_start + *duration;
-            let mut counter = 0;
             while tick + 10 < tp_tick_limit {
                 if tick + tp_length >= tp_tick_limit {
                     tp_length = tp_tick_limit - tick - 1;
                 }
                 self.add_note(track_id, initial_key, tick, tp_length, velocity, channel_id);
                 tick += tp_length;
-                counter += 1;
             }
-            assert!(
-                counter > 0,
-                "No tremolo notes published! tp_length: {tp_length}, tick: {tick}, tp_tick_limit: {tp_tick_limit}"
-            );
-            // all notes published - the caller does not need to publish the note
+            // all notes published (like TuxGuitar, possibly none for degenerate
+            // durations) - the caller does not need to publish the note
             return None;
         }
 

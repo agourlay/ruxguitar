@@ -40,6 +40,15 @@ impl MusicParser {
             "Parsing music data -> track_count: {track_count} measure_count {measure_count}"
         );
 
+        // bound the counts to avoid huge allocations on corrupt files
+        if !(1..=65536).contains(&measure_count) || !(1..=256).contains(&track_count) {
+            log::error!("Invalid measure count {measure_count} or track count {track_count}");
+            return Err(nom::Err::Failure(nom::error::Error::new(
+                i,
+                nom::error::ErrorKind::Verify,
+            )));
+        }
+
         let song_tempo = self.song.tempo.value;
         let (i, measure_headers) =
             parse_measure_headers(measure_count, song_tempo, song_version)(i)?;
@@ -104,7 +113,13 @@ impl MusicParser {
             let (inner, string_count) = parse_int(i)?;
             i = inner;
             log::debug!("String count: {string_count}");
-            assert!(string_count > 0);
+            if string_count <= 0 {
+                log::error!("Invalid string count {string_count} for track {number}");
+                return Err(nom::Err::Failure(nom::error::Error::new(
+                    i,
+                    nom::error::ErrorKind::Verify,
+                )));
+            }
 
             // tunings
             let (inner, tunings) = count(parse_int, 7).parse(i)?;
@@ -182,8 +197,8 @@ impl MusicParser {
                     channel.effect_channel_id = gm_channel_2 as u8;
                 }
             } else {
-                log::debug!("channel {gm_channel_1} not found");
-                debug_assert!(false, "channel {gm_channel_1} not found");
+                // the MIDI builder skips tracks with an unresolvable channel
+                log::warn!("channel {gm_channel_1} not found");
             }
             Ok((i, gm_channel_1))
         }
@@ -233,7 +248,13 @@ impl MusicParser {
                 }
                 // update start with measure length
                 let measure_length = self.song.measure_headers[measure_index].length();
-                assert!(measure_length > 0, "Measure length is 0");
+                if measure_length == 0 {
+                    log::error!("Measure {measure_index} has a length of 0");
+                    return Err(nom::Err::Failure(nom::error::Error::new(
+                        i,
+                        nom::error::ErrorKind::Verify,
+                    )));
+                }
                 start += measure_length;
             }
             Ok((i, ()))
@@ -382,7 +403,6 @@ impl MusicParser {
                 "Parsing notes for beat strings:{}, flags:{string_flags:08b}",
                 track.strings.len()
             );
-            assert!(!track.strings.is_empty());
             for (string_id, string_value) in track.strings.iter().enumerate() {
                 if string_flags & (1 << (7 - string_value.0)) > 0 {
                     log::debug!("Parsing note for string {}", string_id + 1);

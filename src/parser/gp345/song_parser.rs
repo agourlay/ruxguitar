@@ -167,7 +167,7 @@ pub fn parse_note_effects(
         if (flags2 & 0x04) != 0 {
             let (inner, tremolo_picking) = parse_tremolo_picking(i)?;
             i = inner;
-            note.effect.tremolo_picking = Some(tremolo_picking);
+            note.effect.tremolo_picking = tremolo_picking;
         }
 
         if (flags2 & 0x08) != 0 {
@@ -179,31 +179,37 @@ pub fn parse_note_effects(
         if (flags2 & 0x10) != 0 {
             let (inner, harmonic_effect) = parse_harmonic_effect(version)(i)?;
             i = inner;
-            note.effect.harmonic = Some(harmonic_effect);
+            note.effect.harmonic = harmonic_effect;
         }
 
         if (flags2 & 0x20) != 0 {
             let (inner, trill_effect) = parse_trill_effect(i)?;
             i = inner;
-            note.effect.trill = Some(trill_effect);
+            note.effect.trill = trill_effect;
         }
 
         Ok((i, ()))
     }
 }
 
-pub fn parse_trill_effect(i: &[u8]) -> IResult<&[u8], TrillEffect> {
+pub fn parse_trill_effect(i: &[u8]) -> IResult<&[u8], Option<TrillEffect>> {
     log::debug!("Parsing trill effect");
-    let mut trill_effect = TrillEffect::default();
     let (inner, (fret, period)) = (parse_i8, parse_i8).parse(i)?;
-    trill_effect.fret = fret;
-    trill_effect.duration.value = TrillEffect::from_trill_period(period);
+    // like TuxGuitar, an unknown period drops the trill
+    let trill_effect = TrillEffect::from_trill_period(period).map(|value| {
+        let mut trill_effect = TrillEffect {
+            fret,
+            ..Default::default()
+        };
+        trill_effect.duration.value = value;
+        trill_effect
+    });
     Ok((inner, trill_effect))
 }
 
 pub fn parse_harmonic_effect(
     version: GpVersion,
-) -> impl FnMut(&[u8]) -> IResult<&[u8], HarmonicEffect> {
+) -> impl FnMut(&[u8]) -> IResult<&[u8], Option<HarmonicEffect>> {
     move |i| {
         let mut i = i;
         let mut he = HarmonicEffect::default();
@@ -232,30 +238,15 @@ pub fn parse_harmonic_effect(
             }
             4 => he.kind = HarmonicType::Pinch,
             5 => he.kind = HarmonicType::Semi,
-            15 => {
-                assert!(
-                    version < GpVersion::GP5,
-                    "Cannot read artificial harmonic type for GP4"
-                );
-                he.kind = HarmonicType::Artificial;
+            // pre-GP5 artificial harmonic variants
+            15 | 17 | 22 => he.kind = HarmonicType::Artificial,
+            // like TuxGuitar, unknown types drop the harmonic
+            x => {
+                log::warn!("Unknown harmonic type {x}");
+                return Ok((i, None));
             }
-            17 => {
-                assert!(
-                    version < GpVersion::GP5,
-                    "Cannot read artificial harmonic type for GP4"
-                );
-                he.kind = HarmonicType::Artificial;
-            }
-            22 => {
-                assert!(
-                    version < GpVersion::GP5,
-                    "Cannot read artificial harmonic type for GP4"
-                );
-                he.kind = HarmonicType::Artificial;
-            }
-            x => panic!("Cannot read harmonic type {x}"),
         };
-        Ok((i, he))
+        Ok((i, Some(he)))
     }
 }
 
@@ -299,13 +290,15 @@ pub fn parse_slide_type(
     }
 }
 
-pub fn parse_tremolo_picking(i: &[u8]) -> IResult<&[u8], TremoloPickingEffect> {
+pub fn parse_tremolo_picking(i: &[u8]) -> IResult<&[u8], Option<TremoloPickingEffect>> {
     log::debug!("Parsing tremolo picking");
     map(parse_u8, |tp| {
-        let value = TremoloPickingEffect::from_tremolo_value(tp as i8);
-        let mut tremolo_picking_effect = TremoloPickingEffect::default();
-        tremolo_picking_effect.duration.value = value;
-        tremolo_picking_effect
+        // like TuxGuitar, an unknown value drops the tremolo picking
+        TremoloPickingEffect::from_tremolo_value(tp as i8).map(|value| {
+            let mut tremolo_picking_effect = TremoloPickingEffect::default();
+            tremolo_picking_effect.duration.value = value;
+            tremolo_picking_effect
+        })
     })
     .parse(i)
 }
@@ -549,7 +542,10 @@ pub fn parse_duration(flags: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], Duration
         let mut d = Duration::default();
         let (inner, value) = parse_i8(i)?;
         i = inner;
-        d.value = (2_u32.saturating_pow((value + 4) as u32) / 4) as u16;
+        // clamp the exponent so corrupt values can neither overflow nor
+        // produce a zero duration value
+        let exponent = (i32::from(value) + 4).clamp(2, 16) as u32;
+        d.value = (2_u32.pow(exponent) / 4) as u16;
         log::debug!("Duration value: {}", d.value);
         d.dotted = flags & 0x01 != 0;
 
@@ -599,10 +595,10 @@ pub fn parse_marker(i: &[u8]) -> IResult<&[u8], Marker> {
 pub fn parse_triplet_feel(i: &[u8]) -> IResult<&[u8], TripletFeel> {
     log::debug!("Parsing triplet feel");
     map(parse_i8, |triplet_feel| match triplet_feel {
-        0 => TripletFeel::None,
         1 => TripletFeel::Eighth,
         2 => TripletFeel::Sixteenth,
-        x => panic!("Unknown triplet feel: {x}"),
+        // like TuxGuitar, unknown values fall back to no triplet feel
+        _ => TripletFeel::None,
     })
     .parse(i)
 }

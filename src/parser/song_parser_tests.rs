@@ -792,4 +792,49 @@ mod tests {
         assert!(GpVersion::GP4_06 < GpVersion::GP5);
         assert!(GpVersion::GP5 < GpVersion::GP5_10);
     }
+
+    #[test]
+    fn unknown_effect_values_fall_back() {
+        use crate::parser::song_parser::{
+            GraceEffectTransition, Octave, TremoloPickingEffect, TrillEffect,
+        };
+        assert_eq!(
+            GraceEffectTransition::get_grace_effect_transition(9),
+            GraceEffectTransition::None
+        );
+        assert_eq!(Octave::get_octave(9), Octave::None);
+        assert_eq!(TrillEffect::from_trill_period(0), None);
+        assert_eq!(TrillEffect::from_trill_period(4), None);
+        assert_eq!(TremoloPickingEffect::from_tremolo_value(0), None);
+        assert_eq!(TremoloPickingEffect::from_tremolo_value(4), None);
+    }
+
+    /// Corrupted input must yield a parse error at worst, never a panic.
+    #[test]
+    fn parse_corrupted_files_no_panic() {
+        init_logger();
+        let files = [
+            "test-files/Testament - Farewell Ballad.gp3",
+            "test-files/canon_rock.gp4",
+            "test-files/Eddie Vedder - Guaranted.gp5",
+            "test-files/Wretched - Dreams of Chaos.gpx",
+            "test-files/Patrick Rondat - Vivaldi Tribute (ver 5 by loicthion).gp",
+        ];
+        for file_path in files {
+            let mut data = std::fs::read(file_path).unwrap();
+            // truncations
+            for len in (0..data.len()).step_by(509) {
+                let _ = parse_gp_data(&data[..len]);
+            }
+            // byte flips
+            for offset in (0..data.len()).step_by(251) {
+                let original = data[offset];
+                for value in [0x00, 0x02, 0x7F, 0xFF] {
+                    data[offset] = value;
+                    let _ = parse_gp_data(&data);
+                }
+                data[offset] = original;
+            }
+        }
+    }
 }

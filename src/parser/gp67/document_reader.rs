@@ -19,8 +19,60 @@ pub enum GpifVersion {
     Gp7,
 }
 
+/// roxmltree parses nested elements recursively (two stack frames per level);
+/// corrupt files with deep nesting would overflow the stack. Real GPIF
+/// documents nest ~15 levels.
+const MAX_XML_NESTING: i64 = 128;
+
+/// Whether a byte can start an XML element name (conservative superset).
+const fn is_name_start(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || byte == b'_' || byte == b':' || byte >= 0x80
+}
+
+/// Iterative element-nesting depth check (over-counting is fine: the limit is
+/// far above anything a real GPIF document produces). Close tags only count
+/// with a valid name: a corrupt `</>` never closes anything in roxmltree.
+fn xml_nesting_too_deep(xml: &str) -> bool {
+    let bytes = xml.as_bytes();
+    let mut depth: i64 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'<' {
+            match bytes.get(i + 1) {
+                Some(b'/') => {
+                    if bytes.get(i + 2).copied().is_some_and(is_name_start) {
+                        depth -= 1;
+                    }
+                }
+                Some(&c) if is_name_start(c) => {
+                    // find the end of the tag to detect self-closing elements
+                    let mut j = i + 1;
+                    while j < bytes.len() && bytes[j] != b'>' {
+                        j += 1;
+                    }
+                    if bytes[j - 1] != b'/' {
+                        depth += 1;
+                        if depth > MAX_XML_NESTING {
+                            return true;
+                        }
+                    }
+                    i = j;
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 /// Parse a `score.gpif` XML document into the intermediate model.
 pub fn read_document(xml: &str, version: GpifVersion) -> Result<GpxDocument, RuxError> {
+    if xml_nesting_too_deep(xml) {
+        return Err(RuxError::ParsingError(
+            "invalid GPIF XML: nesting too deep".to_string(),
+        ));
+    }
     let doc = Document::parse(xml)
         .map_err(|e| RuxError::ParsingError(format!("invalid GPIF XML: {e}")))?;
     let root = doc.root_element();
