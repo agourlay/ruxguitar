@@ -3,6 +3,8 @@
 1 MidiMessage(0, 176, 11, 127) Some(0)
 1 MidiMessage(0, 176, 93, 0) Some(0)
 1 MidiMessage(0, 176, 91, 0) Some(0)
+1 MidiMessage(0, 176, 95, 0) Some(0)
+1 MidiMessage(0, 176, 92, 0) Some(0)
 1 MidiMessage(0, 176, 0, 0) Some(0)
 1 MidiMessage(0, 192, 30, 0) Some(0)
 1 MidiMessage(0, 176, 101, 0) Some(0)

@@ -88,7 +88,7 @@ fn test_midi_events_for_demo_song() {
     let builder = MidiBuilder::new();
     let events = builder.build_for_song(&song);
 
-    assert_eq!(events.len(), 4418);
+    assert_eq!(events.len(), 4428);
     assert_eq!(events[0].tick, 1);
 
     // assert number of tracks
@@ -100,7 +100,7 @@ fn test_midi_events_for_demo_song() {
     let rhythm_track_events: Vec<_> = events
         .iter()
         .filter(|e| e.track == Some(0))
-        .skip(11)
+        .skip(13)
         .collect();
 
     // print 20 first for debugging
@@ -184,7 +184,7 @@ fn test_midi_events_for_demo_song() {
     let solo_track_events: Vec<_> = events
         .iter()
         .filter(|e| e.track == Some(1))
-        .skip(11)
+        .skip(13)
         .collect();
 
     //print 100 first for debugging
@@ -287,7 +287,7 @@ fn test_midi_events_for_bleed() {
     let builder = MidiBuilder::new();
     let events = builder.build_for_song(&song);
 
-    assert_eq!(events.len(), 44431);
+    assert_eq!(events.len(), 44445);
     assert_eq!(events[0].tick, 1);
 
     // assert number of tracks
@@ -299,7 +299,7 @@ fn test_midi_events_for_bleed() {
     let rhythm_track_events: Vec<_> = events
         .iter()
         .filter(|e| e.track == Some(0))
-        .skip(11)
+        .skip(13)
         .collect();
 
     // print 60 first for debugging

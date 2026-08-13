@@ -639,20 +639,22 @@ impl MidiBuilder {
         tremolo_bar: &TremoloBarEffect,
     ) {
         for (point_id, point) in tremolo_bar.points.iter().enumerate() {
-            let value = DEFAULT_BEND + (f32::from(point.value) * DEFAULT_BEND_SEMI_TONE * 2.0);
-            let value = value.clamp(0.0, 127.0) as i32;
+            // truncate the offset before adding, like TuxGuitar: adding first
+            // rounds negative dips one unit lower
+            let value =
+                DEFAULT_BEND as i32 + (f32::from(point.value) * DEFAULT_BEND_SEMI_TONE * 2.0) as i32;
             let bend_start = start + point.get_time(duration);
             self.add_pitch_bend(bend_start, track_id, channel_id, value);
 
             // look ahead to next bend point
             if let Some(next_point) = tremolo_bar.points.get(point_id + 1) {
-                let next_value =
-                    DEFAULT_BEND + (f32::from(next_point.value) * DEFAULT_BEND_SEMI_TONE * 2.0);
+                let next_value = DEFAULT_BEND as i32
+                    + (f32::from(next_point.value) * DEFAULT_BEND_SEMI_TONE * 2.0) as i32;
                 self.process_next_bend_values(
                     track_id,
                     channel_id,
                     value,
-                    next_value as i32,
+                    next_value,
                     bend_start,
                     start,
                     next_point,
@@ -730,6 +732,16 @@ impl MidiBuilder {
         self.add_event(event);
     }
 
+    fn add_phaser_selection(&mut self, tick: u32, track_id: usize, channel: i32, phaser: i32) {
+        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x5F, phaser);
+        self.add_event(event);
+    }
+
+    fn add_tremolo_selection(&mut self, tick: u32, track_id: usize, channel: i32, tremolo: i32) {
+        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x5C, tremolo);
+        self.add_event(event);
+    }
+
     fn add_pitch_bend(&mut self, tick: u32, track_id: usize, channel: i32, value: i32) {
         // clamp to a valid MIDI data byte, like TuxGuitar's fix():
         // steep slides can otherwise overshoot the wheel range
@@ -802,6 +814,18 @@ impl MidiBuilder {
             track_id,
             i32::from(channel_id),
             to_channel_short(midi_channel.reverb),
+        );
+        self.add_phaser_selection(
+            info_tick,
+            track_id,
+            i32::from(channel_id),
+            to_channel_short(midi_channel.phaser),
+        );
+        self.add_tremolo_selection(
+            info_tick,
+            track_id,
+            i32::from(channel_id),
+            to_channel_short(midi_channel.tremolo),
         );
         self.add_bank_selection(
             info_tick,
