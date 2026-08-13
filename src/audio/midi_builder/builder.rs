@@ -3,8 +3,8 @@ use crate::audio::midi_event::{FIRST_TICK, MidiEvent};
 use crate::audio::playback_order::playback_tick;
 use crate::parser::song_parser::{
     Beat, BendEffect, BendPoint, HarmonicType, MIN_VELOCITY, Measure, MeasureHeader, MidiChannel,
-    Note, NoteType, QUARTER_TIME, SEMITONE_LENGTH, Song, Track, TremoloBarEffect,
-    VELOCITY_INCREMENT,
+    NATURAL_FREQUENCIES, Note, NoteType, QUARTER_TIME, SEMITONE_LENGTH, Song, Track,
+    TremoloBarEffect, VELOCITY_INCREMENT,
 };
 use std::rc::Rc;
 
@@ -26,15 +26,6 @@ const DEFAULT_BEND_SEMI_TONE: f32 = 2.75;
 fn to_channel_short(value: i8) -> i32 {
     (i32::from(value) * 8 - 1).clamp(0, 127)
 }
-
-const NATURAL_FREQUENCIES: [(i32, i32); 6] = [
-    (12, 12), //AH12 (+12 frets)
-    (9, 28),  //AH9 (+28 frets)
-    (5, 24),  //AH5 (+24 frets)
-    (7, 19),  //AH7 (+19 frets)
-    (4, 28),  //AH4 (+28 frets)
-    (3, 31),  //AH3 (+31 frets)
-];
 
 pub struct MidiBuilder {
     events: Vec<MidiEvent>, // events accumulated during build
@@ -511,7 +502,8 @@ impl MidiBuilder {
                     key = initial_key + NATURAL_FREQUENCIES[0].1;
                 }
                 HarmonicType::Artificial | HarmonicType::Pinch => {
-                    key = initial_key + NATURAL_FREQUENCIES[0].1;
+                    let data = harmonic.data.min(NATURAL_FREQUENCIES.len() - 1);
+                    key = initial_key + NATURAL_FREQUENCIES[data].1;
                 }
                 HarmonicType::Tapped => {
                     if let Some(right_hand_fret) = harmonic.right_hand_fret {

@@ -16,8 +16,9 @@ use crate::parser::song_parser::{
     BendEffect, BendPoint, Chord, DEFAULT_BANK, DEFAULT_PERCUSSION_BANK, DEFAULT_VELOCITY,
     DURATION_SIXTEENTH, DURATION_SIXTY_FOURTH, DURATION_THIRTY_SECOND, Duration, GP_BEND_SEMITONE,
     GpVersion, GraceEffect, GraceEffectTransition, HarmonicEffect, HarmonicType, KeySignature,
-    MAX_VOICES, Marker, Measure, MeasureHeader, MidiChannel, Note, NoteEffect, NoteType, QUARTER,
-    QUARTER_TIME, SEMITONE_LENGTH, SlapEffect, SlideType, Song, SongInfo, Tempo, TimeSignature,
+    MAX_VOICES, Marker, Measure, MeasureHeader, MidiChannel, NATURAL_FREQUENCIES, Note, NoteEffect,
+    NoteType, QUARTER, QUARTER_TIME, SEMITONE_LENGTH, SlapEffect, SlideType, Song, SongInfo, Tempo,
+    TimeSignature,
     Track, TremoloBarEffect, TremoloPickingEffect, TrillEffect, TripletFeel, Voice,
     convert_velocity,
 };
@@ -667,8 +668,14 @@ fn harmonic_of(gp_note: &GpxNote) -> Option<HarmonicEffect> {
         "Pinch" => HarmonicType::Pinch,
         _ => HarmonicType::Natural,
     };
+    // map the harmonic fret onto the frequency table, like TuxGuitar
+    let data = NATURAL_FREQUENCIES
+        .iter()
+        .position(|(fret, _)| *fret == gp_note.harmonic_fret)
+        .unwrap_or(0);
     Some(HarmonicEffect {
         kind,
+        data,
         ..Default::default()
     })
 }

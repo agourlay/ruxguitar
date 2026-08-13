@@ -238,8 +238,17 @@ pub fn parse_harmonic_effect(
             }
             4 => he.kind = HarmonicType::Pinch,
             5 => he.kind = HarmonicType::Semi,
-            // pre-GP5 artificial harmonic variants
-            15 | 17 | 22 => he.kind = HarmonicType::Artificial,
+            // pre-GP5 artificial harmonic variants, with the key offset
+            // TuxGuitar assigns them (+24, +19 and +12 respectively)
+            15 => {
+                he.kind = HarmonicType::Artificial;
+                he.data = 2;
+            }
+            17 => {
+                he.kind = HarmonicType::Artificial;
+                he.data = 3;
+            }
+            22 => he.kind = HarmonicType::Artificial,
             // like TuxGuitar, unknown types drop the harmonic
             x => {
                 log::warn!("Unknown harmonic type {x}");

@@ -522,9 +522,23 @@ impl Octave {
     }
 }
 
+/// `(harmonic fret, key offset)` pairs, from TuxGuitar's
+/// `TGEffectHarmonic.NATURAL_FREQUENCIES`.
+pub const NATURAL_FREQUENCIES: [(i32, i32); 6] = [
+    (12, 12), //AH12 (+12 frets)
+    (9, 28),  //AH9 (+28 frets)
+    (5, 24),  //AH5 (+24 frets)
+    (7, 19),  //AH7 (+19 frets)
+    (4, 28),  //AH4 (+28 frets)
+    (3, 31),  //AH3 (+31 frets)
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HarmonicEffect {
     pub kind: HarmonicType,
+    /// Index into [`NATURAL_FREQUENCIES`] selecting the key offset for
+    /// non-natural harmonics, like TuxGuitar's `TGEffectHarmonic.data`.
+    pub data: usize,
     // artificial harmonic
     pub pitch: Option<PitchClass>,
     pub octave: Option<Octave>,
@@ -536,6 +550,7 @@ impl Default for HarmonicEffect {
     fn default() -> Self {
         HarmonicEffect {
             kind: HarmonicType::Natural,
+            data: 0,
             pitch: None,
             octave: None,
             right_hand_fret: None,
