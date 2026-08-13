@@ -506,6 +506,9 @@ impl MidiBuilder {
                     key = initial_key + NATURAL_FREQUENCIES[data].1;
                 }
                 HarmonicType::Tapped => {
+                    // like TuxGuitar, an unmatched tap interval still plays
+                    // an octave harmonic
+                    key = initial_key + NATURAL_FREQUENCIES[0].1;
                     if let Some(right_hand_fret) = harmonic.right_hand_fret {
                         for (harmonic_value, harmonic_frequency) in NATURAL_FREQUENCIES {
                             if i16::from(right_hand_fret) - note.value == harmonic_value as i16 {
@@ -669,6 +672,9 @@ impl MidiBuilder {
         velocity: i16,
         channel: i32,
     ) {
+        // clamp like TuxGuitar: harmonics can push the key past the MIDI
+        // range, and the synthesizer silently drops out-of-range keys
+        let key = key.clamp(0, 127);
         let note_on = MidiEvent::new_note_on(start, track_id, key, velocity, channel);
         self.add_event(note_on);
         if duration > 0 {
