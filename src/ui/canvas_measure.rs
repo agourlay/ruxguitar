@@ -1,6 +1,6 @@
 use crate::parser::song_parser::{
     Beat, BeatStrokeDirection, BendEffect, HarmonicType, Note, NoteEffect, NoteType, SlapEffect,
-    SlideType, Song, TimeSignature,
+    SlideType, Song, TimeSignature, TremoloPickingEffect,
 };
 use crate::ui::application::Message;
 use iced::advanced::mouse;
@@ -28,12 +28,15 @@ const TIE: char = '\u{2323}'; // ⌣ https://unicodeplus.com/U+2323
 //   y=15  CHORD_ANNOTATION_Y     chord name
 //   y=27  NOTE_EFFECT_ANNOTATION_Y  vibrato / hammer / slide labels
 //   y=38  BEAT_TEXT_ANNOTATION_Y beat.text ("Verse", "fill", ...)
+//   y=47  PICK_STROKE_Y          pick stroke direction symbols
 //   y=60  FIRST_STRING_Y         first tab line (leaves room for the
 //                                focus box to not sit on the first string)
+// Tremolo picking slashes are drawn below the last string.
 const MEASURE_ANNOTATION_Y: f32 = 3.0;
 const CHORD_ANNOTATION_Y: f32 = 15.0;
 const NOTE_EFFECT_ANNOTATION_Y: f32 = 27.0;
 const BEAT_TEXT_ANNOTATION_Y: f32 = 38.0;
+const PICK_STROKE_Y: f32 = 47.0;
 const FIRST_STRING_Y: f32 = 60.0;
 
 // Space below the last string (just enough for focus box clearance).
@@ -403,6 +406,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                     beat_width,
                     width_scale,
                     measure_start_y,
+                    vertical_measure_height,
                     beat,
                     beat_color,
                 );
@@ -520,12 +524,14 @@ fn multiple_bend_conflicts(beat: &Beat, note: &Note, movements: &[i32]) -> bool 
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_beat(
     frame: &mut Frame<Renderer>,
     beat_position_x: f32,
     width_per_beat: f32,
     width_scale: f32,
     measure_start_y: f32,
+    vertical_measure_height: f32,
     beat: &Beat,
     beat_color: Color,
 ) {
@@ -543,6 +549,24 @@ fn draw_beat(
     }
     if !beat.effect.stroke.is_empty() && !beat.notes.is_empty() {
         draw_stroke_arrow(frame, beat, beat_position_x, measure_start_y);
+    }
+    if beat.effect.pick_stroke != BeatStrokeDirection::None {
+        draw_pick_stroke(frame, &beat.effect.pick_stroke, beat_position_x);
+    }
+    if beat.notes.iter().any(|n| n.effect.staccato) {
+        draw_staccato_dot(frame, beat, beat_position_x, measure_start_y);
+    }
+    if let Some(tremolo_picking) = beat
+        .notes
+        .iter()
+        .find_map(|n| n.effect.tremolo_picking.as_ref())
+    {
+        draw_tremolo_picking(
+            frame,
+            tremolo_picking,
+            beat_position_x,
+            measure_start_y + vertical_measure_height,
+        );
     }
 
     // Annotate note effect above (same position for all notes)
@@ -627,6 +651,25 @@ fn draw_note(
         ..Text::default()
     };
     frame.fill_text(note_text);
+
+    // small grace fret before the note, like TuxGuitar's paintEffects
+    if let Some(grace) = &note.effect.grace {
+        let grace_label = if grace.is_dead {
+            "x".to_string()
+        } else {
+            grace.fret.to_string()
+        };
+        let grace_text = Text {
+            shaping: Auto,
+            content: grace_label,
+            color: Color::WHITE,
+            size: 7.0.into(),
+            position: Point::new(note_position_x - 6.0, note_position_y + 2.0),
+            align_x: Alignment::Center,
+            ..Text::default()
+        };
+        frame.fill_text(grace_text);
+    }
 
     // like TuxGuitar's paintEffects, the bend arrows are exclusive with the
     // inline slide/hammer glyphs: they would collide in the same span
@@ -867,6 +910,77 @@ fn draw_close_repeat(
     frame.fill_text(repeat_count_text);
 }
 
+/// Picking direction above the staff, like TuxGuitar's `paintPickStroke`:
+/// an up stroke is a `∨`, a down stroke the bracket-shaped `∏`.
+fn draw_pick_stroke(
+    frame: &mut Frame<Renderer>,
+    direction: &BeatStrokeDirection,
+    beat_position_x: f32,
+) {
+    let stroke = Stroke::default().with_width(0.8).with_color(Color::WHITE);
+    let x = beat_position_x + 3.5;
+    let y = PICK_STROKE_Y;
+    match direction {
+        BeatStrokeDirection::Up => {
+            let tip = Point::new(x, y + 8.0);
+            frame.stroke(&Path::line(Point::new(x - 3.0, y), tip), stroke);
+            frame.stroke(&Path::line(Point::new(x + 3.0, y), tip), stroke);
+        }
+        BeatStrokeDirection::Down => {
+            frame.stroke(
+                &Path::line(Point::new(x - 3.0, y), Point::new(x - 3.0, y + 6.0)),
+                stroke,
+            );
+            frame.stroke(
+                &Path::line(Point::new(x + 3.0, y), Point::new(x + 3.0, y + 6.0)),
+                stroke,
+            );
+            let top_bar = Path::line(Point::new(x - 3.0, y), Point::new(x + 3.0, y));
+            frame.stroke(&top_bar, Stroke::default().with_width(2.0).with_color(Color::WHITE));
+        }
+        BeatStrokeDirection::None => {}
+    }
+}
+
+/// Staccato dot above the top note of the beat (TuxGuitar only draws it in
+/// score mode; the dot above the fret number is the tab equivalent).
+fn draw_staccato_dot(
+    frame: &mut Frame<Renderer>,
+    beat: &Beat,
+    beat_position_x: f32,
+    measure_start_y: f32,
+) {
+    let min_string = beat.notes.iter().map(|n| n.string).min().unwrap_or(1);
+    let top_note_y = measure_start_y + (f32::from(min_string) - 1.0) * STRING_LINE_HEIGHT - 5.0;
+    let center = Point::new(beat_position_x + 3.5, top_note_y - 3.0);
+    frame.fill(&Path::circle(center, 1.3), Color::WHITE);
+}
+
+/// Tremolo picking slashes below the tab, one per duration halving from an
+/// eighth note, like TuxGuitar's tablature-only rendering.
+fn draw_tremolo_picking(
+    frame: &mut Frame<Renderer>,
+    tremolo_picking: &TremoloPickingEffect,
+    beat_position_x: f32,
+    tab_bottom_y: f32,
+) {
+    let slashes = match tremolo_picking.duration.value {
+        v if v >= 32 => 3,
+        v if v >= 16 => 2,
+        _ => 1,
+    };
+    let stroke = Stroke::default().with_width(1.2).with_color(Color::WHITE);
+    let x = beat_position_x + 3.5;
+    let mut y = tab_bottom_y + 5.0;
+    for _ in 0..slashes {
+        frame.stroke(
+            &Path::line(Point::new(x - 3.5, y + 1.5), Point::new(x + 3.5, y - 1.5)),
+            stroke,
+        );
+        y += 4.0;
+    }
+}
+
 fn draw_stroke_arrow(
     frame: &mut Frame<Renderer>,
     beat: &Beat,
@@ -1077,14 +1191,14 @@ fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<&'static str> {
     if note_effect.trill.is_some() {
         annotations.push("Tr");
     }
-    if note_effect.tremolo_picking.is_some() {
-        annotations.push("T.P");
-    }
     if note_effect.tremolo_bar.is_some() {
         annotations.push("T.B");
     }
-    if note_effect.slap == SlapEffect::Tapping {
-        annotations.push("T");
+    match note_effect.slap {
+        SlapEffect::Tapping => annotations.push("T"),
+        SlapEffect::Slapping => annotations.push("S"),
+        SlapEffect::Popping => annotations.push("P"),
+        SlapEffect::None => {}
     }
     annotations
 }

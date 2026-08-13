@@ -462,8 +462,15 @@ pub fn parse_beat_effects<'a>(
             }
         }
 
+        // pick stroke direction
         if flags2 & 0x02 != 0 {
-            i = skip(i, 1);
+            let (inner, direction) = parse_u8(i)?;
+            i = inner;
+            if direction & 0x01 != 0 {
+                beat.effect.pick_stroke = BeatStrokeDirection::Up;
+            } else if direction & 0x02 != 0 {
+                beat.effect.pick_stroke = BeatStrokeDirection::Down;
+            }
         }
 
         Ok((i, ()))

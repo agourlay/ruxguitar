@@ -404,6 +404,11 @@ fn build_voice(
             text: gp_beat.text.trim().to_string(),
             effect: BeatEffects {
                 stroke: stroke_of(gp_beat),
+                pick_stroke: match gp_beat.pick_stroke.as_str() {
+                    "Up" => BeatStrokeDirection::Up,
+                    "Down" => BeatStrokeDirection::Down,
+                    _ => BeatStrokeDirection::None,
+                },
                 chord: chord_of(doc, gp_beat),
             },
             notes: Vec::new(),

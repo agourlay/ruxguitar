@@ -684,8 +684,9 @@ pub struct Chord {
     pub new_format: Option<bool>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub enum BeatStrokeDirection {
+    #[default]
     None,
     Up,
     Down,
@@ -733,6 +734,8 @@ pub enum SlapEffect {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct BeatEffects {
     pub stroke: BeatStroke,
+    /// Picking direction indication (up/down), unrelated to the brush stroke.
+    pub pick_stroke: BeatStrokeDirection,
     pub chord: Option<Chord>,
 }
 
