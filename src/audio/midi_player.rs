@@ -1,4 +1,4 @@
-use crate::audio::midi_builder::{METRONOME_TRACK, MidiBuilder};
+use crate::audio::midi_builder::{METRONOME_KEYS, METRONOME_TRACK, METRONOME_VELOCITY, MidiBuilder};
 use crate::audio::midi_event::{FIRST_TICK, MidiEventType};
 use crate::audio::midi_player_params::MidiPlayerParams;
 use crate::audio::midi_sequencer::{MidiSequencer, tick_increase};
@@ -379,7 +379,10 @@ fn new_output_stream(
             let counting_in = count_in_left > 0.0;
             if counting_in {
                 if count_in_next_click <= 0.0 {
-                    synthesizer_guard.note_on(9, 37, 95);
+                    // same layered click as the metronome
+                    for key in METRONOME_KEYS {
+                        synthesizer_guard.note_on(9, key, i32::from(METRONOME_VELOCITY));
+                    }
                     count_in_next_click += count_in_beat;
                 }
                 let ticks = tick_increase(player_params.adjusted_tempo(), elapsed_secs);
@@ -597,7 +600,9 @@ mod tests {
         let mut synth = Synthesizer::new(&sound_font, &Arc::new(settings)).unwrap();
 
         // fresh channel 9: default percussion
-        synth.note_on(9, 37, 95);
+        for key in METRONOME_KEYS {
+            synth.note_on(9, key, i32::from(METRONOME_VELOCITY));
+        }
         let mut l = vec![0f32; 4410];
         let mut r = vec![0f32; 4410];
         synth.render(&mut l, &mut r);
@@ -609,7 +614,9 @@ mod tests {
         let mut synth = Synthesizer::new(&sound_font, &Arc::new(SynthesizerSettings::new(44100))).unwrap();
         synth.process_midi_message(9, 0xB0, 0x00, 128); // bank select 128
         synth.process_midi_message(9, 0xC0, 0, 0); // program 0
-        synth.note_on(9, 37, 95);
+        for key in METRONOME_KEYS {
+            synth.note_on(9, key, i32::from(METRONOME_VELOCITY));
+        }
         let mut l = vec![0f32; 4410];
         let mut r = vec![0f32; 4410];
         synth.render(&mut l, &mut r);
@@ -647,7 +654,7 @@ mod tests {
                 } else {
                     true
                 };
-                if audible && matches!(midi_event.event, MidiEventType::NoteOn(9, 37, _)) {
+                if audible && matches!(midi_event.event, MidiEventType::NoteOn(9, 75, _)) {
                     clicks += 1;
                 }
             }
@@ -655,4 +662,6 @@ mod tests {
         eprintln!("metronome clicks delivered: {clicks}");
         assert!(clicks > 50, "expected metronome clicks, got {clicks}");
     }
+
+
 }

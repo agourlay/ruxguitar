@@ -88,7 +88,7 @@ fn test_midi_events_for_demo_song() {
     let builder = MidiBuilder::new();
     let events = builder.build_for_song(&song);
 
-    assert_eq!(events.len(), 4844);
+    assert_eq!(events.len(), 5676);
     assert_eq!(events[0].tick, 1);
 
     // assert number of tracks
@@ -287,7 +287,7 @@ fn test_midi_events_for_bleed() {
     let builder = MidiBuilder::new();
     let events = builder.build_for_song(&song);
 
-    assert_eq!(events.len(), 46133);
+    assert_eq!(events.len(), 49509);
     assert_eq!(events[0].tick, 1);
 
     // assert number of tracks

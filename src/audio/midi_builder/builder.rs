@@ -2,9 +2,9 @@
 use crate::audio::midi_event::{FIRST_TICK, MidiEvent};
 use crate::audio::playback_order::playback_tick;
 use crate::parser::song_parser::{
-    Beat, BendEffect, BendPoint, DEFAULT_VELOCITY, HarmonicType, MIN_VELOCITY, Measure,
-    MeasureHeader, MidiChannel, NATURAL_FREQUENCIES, Note, NoteType, QUARTER_TIME, SEMITONE_LENGTH,
-    Song, Track, TremoloBarEffect, VELOCITY_INCREMENT,
+    Beat, BendEffect, BendPoint, HarmonicType, MIN_VELOCITY, Measure, MeasureHeader, MidiChannel,
+    NATURAL_FREQUENCIES, Note, NoteType, QUARTER_TIME, SEMITONE_LENGTH, Song, Track,
+    TremoloBarEffect, VELOCITY_INCREMENT,
 };
 use std::rc::Rc;
 
@@ -23,8 +23,12 @@ const DEFAULT_BEND_SEMI_TONE: f32 = 2.75;
 /// Pseudo track id carried by metronome events, so playback can gate them
 /// on the metronome toggle instead of the regular mute/solo filtering.
 pub const METRONOME_TRACK: u8 = u8::MAX;
-const METRONOME_KEY: i32 = 37;
+/// Claves layered with both woodblocks: a woody metronome tock. A single
+/// key is too quiet in TimGM6mb to cut through the mix, and the side
+/// stick (TuxGuitar's choice) sounds like a drum hit.
+pub const METRONOME_KEYS: [i32; 3] = [75, 76, 77];
 const METRONOME_CHANNEL: i32 = 9;
+pub const METRONOME_VELOCITY: i16 = 127;
 
 /// Scale a raw Guitar Pro channel byte (0-16) to a MIDI value (0-127),
 /// matching TuxGuitar's `toChannelShort`. Used for channel volume, pan,
@@ -110,14 +114,16 @@ impl MidiBuilder {
             let mut start = header.start;
             for _ in 1..=header.time_signature.numerator {
                 let tick = playback_tick(start, *tick_offset);
-                self.add_note(
-                    usize::from(METRONOME_TRACK),
-                    METRONOME_KEY,
-                    tick,
-                    length,
-                    DEFAULT_VELOCITY,
-                    METRONOME_CHANNEL,
-                );
+                for key in METRONOME_KEYS {
+                    self.add_note(
+                        usize::from(METRONOME_TRACK),
+                        key,
+                        tick,
+                        length,
+                        METRONOME_VELOCITY,
+                        METRONOME_CHANNEL,
+                    );
+                }
                 start += length;
             }
         }
