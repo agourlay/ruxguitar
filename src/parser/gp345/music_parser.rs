@@ -217,11 +217,16 @@ impl MusicParser {
                 // set header start
                 self.song.measure_headers[measure_index].start = start;
                 for track_index in 0..track_count as usize {
-                    let (inner, measure) =
-                        self.parse_measure(start, measure_index, track_index)(i)?;
+                    // push the measure on the track before parsing its beats, like
+                    // TuxGuitar, so tied notes can resolve against earlier beats of
+                    // the same measure
+                    self.song.tracks[track_index].measures.push(Measure {
+                        header_index: measure_index,
+                        track_index,
+                        ..Default::default()
+                    });
+                    let (inner, ()) = self.parse_measure(start, measure_index, track_index)(i)?;
                     i = inner;
-                    // push measure on track
-                    self.song.tracks[track_index].measures.push(measure);
                     if self.song.version >= GpVersion::GP5 {
                         i = skip(i, 1);
                     }
@@ -240,16 +245,11 @@ impl MusicParser {
         measure_start: u32,
         measure_index: usize,
         track_index: usize,
-    ) -> impl FnMut(&[u8]) -> IResult<&[u8], Measure> + '_ {
+    ) -> impl FnMut(&[u8]) -> IResult<&[u8], ()> + '_ {
         move |i: &[u8]| {
             log::debug!("--------");
             log::debug!("Parsing measure {measure_index} for track {track_index}");
             let mut i = i;
-            let mut measure = Measure {
-                header_index: measure_index,
-                track_index,
-                ..Default::default()
-            };
             let voice_count = if self.song.version >= GpVersion::GP5 {
                 MAX_VOICES
             } else {
@@ -260,12 +260,23 @@ impl MusicParser {
                 let beat_start = measure_start;
                 log::debug!("--------");
                 log::debug!("Parsing voice {voice_index}");
-                let (inner, voice) = self.parse_voice(beat_start, track_index, measure_index)(i)?;
+                self.current_measure_mut(track_index).voices.push(Voice {
+                    measure_index: measure_index as i16,
+                    ..Default::default()
+                });
+                let (inner, ()) = self.parse_voice(beat_start, track_index, measure_index)(i)?;
                 i = inner;
-                measure.voices.push(voice);
             }
-            Ok((i, measure))
+            Ok((i, ()))
         }
+    }
+
+    /// The measure currently being parsed (last pushed on the track).
+    fn current_measure_mut(&mut self, track_index: usize) -> &mut Measure {
+        self.song.tracks[track_index]
+            .measures
+            .last_mut()
+            .expect("no measure being parsed")
     }
 
     fn parse_voice(
@@ -273,15 +284,11 @@ impl MusicParser {
         mut beat_start: u32,
         track_index: usize,
         measure_index: usize,
-    ) -> impl FnMut(&[u8]) -> IResult<&[u8], Voice> + '_ {
+    ) -> impl FnMut(&[u8]) -> IResult<&[u8], ()> + '_ {
         move |i: &[u8]| {
             let mut i = i;
             let (inner, beats) = parse_int(i)?;
             i = inner;
-            let mut voice = Voice {
-                measure_index: measure_index as i16,
-                ..Default::default()
-            };
             log::debug!("--------");
             log::debug!("...with {beats} beats");
             for b in 1..=beats {
@@ -292,9 +299,14 @@ impl MusicParser {
                     beat_start += beat.duration.time();
                 }
                 i = inner;
-                voice.beats.push(beat);
+                self.current_measure_mut(track_index)
+                    .voices
+                    .last_mut()
+                    .expect("no voice being parsed")
+                    .beats
+                    .push(beat);
             }
-            Ok((i, voice))
+            Ok((i, ()))
         }
     }
 
