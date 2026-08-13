@@ -584,8 +584,11 @@ fn midi_value_of(gp_note: &GpxNote) -> Option<i32> {
     } else if gp_note.tone >= 0 && gp_note.octave >= 0 {
         Some(gp_note.tone + (12 * gp_note.octave - 12))
     } else if gp_note.element >= 0 {
+        // the table has duplicate element/variation keys and TuxGuitar's
+        // break-less loop keeps the last match
         DRUMKITS
             .iter()
+            .rev()
             .find(|(_, element, variation)| {
                 *element == gp_note.element && *variation == gp_note.variation
             })
