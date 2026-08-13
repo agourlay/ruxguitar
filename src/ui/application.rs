@@ -13,7 +13,7 @@ use crate::audio::playback_order::compute_playback_order;
 use crate::config::Config;
 use crate::parser::parse_gp_data;
 use crate::parser::song_parser::{GpVersion, MeasureHeader, QUARTER_TIME, Song};
-use crate::ui::icons::{open_icon, pause_icon, play_icon, solo_icon, stop_icon};
+use crate::ui::icons::{mute_icon, open_icon, pause_icon, play_icon, solo_icon, stop_icon};
 use crate::ui::picker::{FilePickerError, load_file, open_file_dialog};
 use crate::ui::tablature::Tablature;
 use crate::ui::tuning::tuning_label;
@@ -172,6 +172,7 @@ pub enum Message {
     PlayPause,                     // toggle play/pause
     StopPlayer,                    // stop playback
     ToggleSolo,                    // toggle solo mode
+    ToggleMute,                    // toggle mute of the current track
     WindowResized,                 // window resized
     TablatureResized(Size),        // tablature resized
     TempoSelected(TempoSelection), // tempo selected
@@ -441,6 +442,13 @@ impl RuxApplication {
                 }
                 Task::none()
             }
+            Message::ToggleMute => {
+                if let Some(audio_player) = &self.audio_player {
+                    let track = self.track_selection.index;
+                    audio_player.toggle_track_mute(track);
+                }
+                Task::none()
+            }
             Message::WindowResized => {
                 // query tablature container size
                 selector::find(self.tablature_id.clone()).then(|target| {
@@ -582,6 +590,15 @@ impl RuxApplication {
                     .is_some_and(|p| p.solo_track_id().is_some()),
             );
 
+            let mute_mode = action_toggle(
+                mute_icon(),
+                "Mute",
+                Message::ToggleMute,
+                self.audio_player
+                    .as_ref()
+                    .is_some_and(|p| p.is_track_muted(self.track_selection.index)),
+            );
+
             let track_pick_list = pick_list(
                 self.all_tracks.as_slice(),
                 Some(&self.track_selection),
@@ -605,6 +622,7 @@ impl RuxApplication {
                 volume_label,
                 volume_slider,
                 solo_mode,
+                mute_mode,
                 track_pick_list,
             ]
             .spacing(10)
@@ -736,6 +754,9 @@ impl RuxApplication {
                 keyboard::Key::Named(ArrowRight) => Some(Message::NextMeasure),
                 keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s") => {
                     Some(Message::ToggleSolo)
+                }
+                keyboard::Key::Character(c) if c.eq_ignore_ascii_case("m") => {
+                    Some(Message::ToggleMute)
                 }
                 keyboard::Key::Named(F11) => Some(Message::ToggleFullscreen),
                 _ => None,

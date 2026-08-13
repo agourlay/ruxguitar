@@ -112,6 +112,14 @@ impl AudioPlayer {
         self.player_params.solo_track_id()
     }
 
+    pub fn is_track_muted(&self, track_id: usize) -> bool {
+        self.player_params.is_track_muted(track_id)
+    }
+
+    pub fn toggle_track_mute(&self, track_id: usize) {
+        self.player_params.toggle_track_mute(track_id);
+    }
+
     pub fn toggle_solo_mode(&self, new_track_id: usize) {
         if self.player_params.solo_track_id() == Some(new_track_id) {
             log::info!("Disable solo mode on track {new_track_id}");
@@ -338,7 +346,6 @@ fn new_output_stream(
                         events.len()
                     );
                 }
-                let solo_track_id = player_params.solo_track_id();
                 if events
                     .iter()
                     .any(super::midi_event::MidiEvent::is_note_event)
@@ -347,13 +354,18 @@ fn new_output_stream(
                     beat_notify.notify_one();
                 }
                 for midi_event in events {
+                    // mute/solo filtering, like TuxGuitar's shouldSend: new
+                    // notes and channel messages of inaudible tracks are
+                    // skipped, note-offs always pass so nothing gets stuck,
+                    // and the setup events at FIRST_TICK are never filtered
+                    let audible = midi_event.tick == FIRST_TICK
+                        || midi_event
+                            .track
+                            .is_none_or(|t| player_params.is_track_audible(usize::from(t)));
                     match midi_event.event {
                         MidiEventType::NoteOn(channel, key, velocity) => {
-                            if let Some(track_id) = solo_track_id {
-                                // skip note on events for other tracks in solo mode
-                                if midi_event.track != Some(track_id as u8) {
-                                    continue;
-                                }
+                            if !audible {
+                                continue;
                             }
                             log::debug!(
                                 "[{}] Note on: channel={}, key={}, velocity={}",
@@ -379,6 +391,9 @@ fn new_output_stream(
                             player_params.set_tempo(tempo);
                         }
                         MidiEventType::MidiMessage(channel, command, data1, data2) => {
+                            if !audible {
+                                continue;
+                            }
                             log::debug!(
                                 "[{}] Midi message: channel={}, command={}, data1={}, data2={}",
                                 midi_event.tick,

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 const SOLO_NONE: i32 = -1;
 
@@ -7,6 +7,7 @@ pub struct MidiPlayerParams {
     tempo: AtomicU32,
     tempo_percentage: AtomicU32,
     solo_track_id: AtomicI32, // -1 == None
+    mute_mask: AtomicU64,     // bit per muted track id
     master_volume: AtomicU32, // f32 bits
 }
 
@@ -16,7 +17,29 @@ impl MidiPlayerParams {
             tempo: AtomicU32::new(tempo),
             tempo_percentage: AtomicU32::new(tempo_percentage),
             solo_track_id: AtomicI32::new(solo_track_id.map_or(SOLO_NONE, |id| id as i32)),
+            mute_mask: AtomicU64::new(0),
             master_volume: AtomicU32::new(1.0_f32.to_bits()),
+        }
+    }
+
+    pub fn toggle_track_mute(&self, track_id: usize) {
+        if track_id < 64 {
+            self.mute_mask.fetch_xor(1 << track_id, Ordering::Relaxed);
+        }
+    }
+
+    pub fn is_track_muted(&self, track_id: usize) -> bool {
+        track_id < 64 && self.mute_mask.load(Ordering::Relaxed) & (1 << track_id) != 0
+    }
+
+    /// Like TuxGuitar's `shouldSend`: mute wins, then solo excludes the rest.
+    pub fn is_track_audible(&self, track_id: usize) -> bool {
+        if self.is_track_muted(track_id) {
+            return false;
+        }
+        match self.solo_track_id() {
+            Some(solo_track_id) => solo_track_id == track_id,
+            None => true,
         }
     }
 

@@ -11,6 +11,10 @@ pub fn solo_icon<'a, Message>() -> Element<'a, Message> {
     text('S').into()
 }
 
+pub fn mute_icon<'a, Message>() -> Element<'a, Message> {
+    text('M').into()
+}
+
 pub fn pause_icon<'a, Message>() -> Element<'a, Message> {
     icon('\u{0e802}')
 }
