@@ -1,6 +1,7 @@
 use crate::parser::song_parser::{
-    Beat, BeatStrokeDirection, BendEffect, Duration, HarmonicType, Measure, MeasureHeader, Note,
-    NoteEffect, NoteType, SlapEffect, SlideType, Song, TimeSignature, TremoloPickingEffect,
+    Beat, BeatStrokeDirection, BendEffect, Duration, GraceEffect, HarmonicType, Measure,
+    MeasureHeader, Note, NoteEffect, NoteType, SlapEffect, SlideType, Song, TimeSignature,
+    TremoloPickingEffect,
 };
 use crate::ui::application::Message;
 use crate::ui::utils::{COLOR_DARK_RED, COLOR_GRAY};
@@ -39,6 +40,10 @@ const ROW_PICK_STROKE: f32 = 10.0;
 const STAFF_HEADER: f32 = 16.0;
 // Bends reach higher above the staff for their amplitude labels.
 const STAFF_HEADER_WITH_BEND: f32 = 20.0;
+// Gap below the last string, holding the focus box edge.
+const STAFF_FOOTER: f32 = 10.0;
+// Tremolo picking slashes hang further below the staff.
+const STAFF_FOOTER_WITH_TREMOLO: f32 = 19.0;
 
 /// Height of each annotation row above the staff, zero when unused.
 ///
@@ -54,6 +59,7 @@ pub struct RowSpacing {
     text: f32,
     pick_stroke: f32,
     staff_header: f32,
+    staff_footer: f32,
 }
 
 impl Default for RowSpacing {
@@ -67,6 +73,7 @@ impl Default for RowSpacing {
             text: 0.0,
             pick_stroke: 0.0,
             staff_header: STAFF_HEADER,
+            staff_footer: STAFF_FOOTER,
         }
     }
 }
@@ -107,6 +114,13 @@ impl RowSpacing {
         {
             spacing.staff_header = STAFF_HEADER_WITH_BEND;
         }
+        if beats
+            .iter()
+            .flat_map(|beat| &beat.notes)
+            .any(|note| note.effect.tremolo_picking.is_some())
+        {
+            spacing.staff_footer = STAFF_FOOTER_WITH_TREMOLO;
+        }
         // the effect row grows with the tallest annotation stack of the measure
         let effect_lines = beats
             .iter()
@@ -127,6 +141,7 @@ impl RowSpacing {
         self.text = self.text.max(other.text);
         self.pick_stroke = self.pick_stroke.max(other.pick_stroke);
         self.staff_header = self.staff_header.max(other.staff_header);
+        self.staff_footer = self.staff_footer.max(other.staff_footer);
     }
 
     const fn marker_y(self) -> f32 {
@@ -159,9 +174,6 @@ impl RowSpacing {
     }
 }
 
-// Space below the last string (just enough for focus box clearance).
-const BOTTOM_PADDING: f32 = 16.0;
-
 // Distance between strings
 const STRING_LINE_HEIGHT: f32 = 13.0;
 
@@ -173,6 +185,13 @@ const BEAT_LENGTH: f32 = 24.0;
 
 // Width of one bend/release arrow
 const BEND_ARROW_WIDTH: f32 = 10.0;
+
+// Approximate digit advance of the fret and grace fonts, used to keep the
+// grace note clear of the note it precedes.
+const NOTE_DIGIT_WIDTH: f32 = 5.5;
+const GRACE_DIGIT_WIDTH: f32 = 4.0;
+// Gap kept on both sides of a grace note.
+const GRACE_GAP: f32 = 1.5;
 
 const HALF_BEAT_LENGTH: f32 = BEAT_LENGTH / 2.0 + 1.0;
 
@@ -213,10 +232,11 @@ impl CanvasMeasure {
         let track = &song.tracks[track_id];
         let measure = &track.measures[measure_id];
         let measure_header = &song.measure_headers[measure_id];
-        let beat_widths: Vec<f32> = measure.voices[0]
-            .beats
+        let beats = &measure.voices[0].beats;
+        let beat_widths: Vec<f32> = beats
             .iter()
-            .map(beat_natural_width)
+            .enumerate()
+            .map(|(i, beat)| beat_natural_width(beat, beats.get(i + 1)))
             .collect();
         let natural_beats_len: f32 = beat_widths.iter().sum();
         let measure_len = MIN_MEASURE_WIDTH.max(natural_beats_len);
@@ -240,8 +260,7 @@ impl CanvasMeasure {
             measure_header.tempo != song.measure_headers[previous].tempo
         });
         let row_needs = RowSpacing::for_measure(measure, measure_header, has_tempo_label);
-        let vertical_measure_height =
-            measure_height(row_needs.first_string_y(), string_count);
+        let vertical_measure_height = measure_height(row_needs, string_count);
         Self {
             measure_id,
             track_id,
@@ -272,8 +291,7 @@ impl CanvasMeasure {
         if self.row_spacing != row_spacing {
             self.row_spacing = row_spacing;
             let string_count = self.song.tracks[self.track_id].strings.len();
-            self.vertical_measure_height =
-                measure_height(row_spacing.first_string_y(), string_count);
+            self.vertical_measure_height = measure_height(row_spacing, string_count);
             self.canvas_cache.clear();
         }
     }
@@ -416,6 +434,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                     vertical_measure_height,
                     measure_start_x,
                     measure_start_y,
+                    rows,
                 );
             }
 
@@ -564,11 +583,14 @@ impl canvas::Program<Message> for CanvasMeasure {
                     Color::WHITE
                 };
                 let beat_width = self.beat_widths[b_id] * width_scale;
+                // the inline effect glyphs may not reach into the space the
+                // next beat's grace note occupies
+                let next_grace = beats.get(b_id + 1).map_or(0.0, grace_gap_width);
                 // draw beat
                 draw_beat(
                     frame,
                     beat_position_x,
-                    beat_width,
+                    beat_width - next_grace,
                     width_scale,
                     measure_start_y,
                     vertical_measure_height,
@@ -624,14 +646,22 @@ fn draw_focused_box(
     vertical_measure_height: f32,
     measure_start_x: f32,
     measure_start_y: f32,
+    rows: RowSpacing,
 ) {
-    let padding = 8.0;
+    const BOX_SIDE: f32 = 8.0;
+    // keep the line off the canvas edge
+    const CANVAS_MARGIN: f32 = 2.0;
 
+    // ride the header and footer boundaries so the box encloses everything
+    // drawn around the staff - measure number, bend labels, staccato dots
+    // above, tremolo picking slashes below - without crossing any of it
+    let top = rows.staff_header;
+    let bottom = rows.staff_footer - CANVAS_MARGIN;
     let focused_box = Rectangle {
-        x: measure_start_x + padding,
-        y: measure_start_y - padding,
-        width: total_measure_len - padding * 2.0,
-        height: vertical_measure_height + padding * 2.0,
+        x: measure_start_x + BOX_SIDE,
+        y: measure_start_y - top,
+        width: total_measure_len - BOX_SIDE * 2.0,
+        height: vertical_measure_height + top + bottom,
     };
 
     let Rectangle {
@@ -660,9 +690,9 @@ fn draw_measure_vertical_line(
     frame.stroke(&vertical_line, stroke);
 }
 
-/// Total canvas height: annotation rows, the staff, and bottom padding.
-fn measure_height(first_string_y: f32, string_count: usize) -> f32 {
-    first_string_y + STRING_LINE_HEIGHT * (string_count - 1) as f32 + BOTTOM_PADDING
+/// Total canvas height: annotation rows, the staff, and the footer.
+fn measure_height(rows: RowSpacing, string_count: usize) -> f32 {
+    rows.first_string_y() + STRING_LINE_HEIGHT * (string_count - 1) as f32 + rows.staff_footer
 }
 
 /// Effect annotations stacked above a beat, deduplicated across its notes.
@@ -678,16 +708,38 @@ fn beat_annotations(beat: &Beat) -> Vec<&'static str> {
     annotations
 }
 
-/// Natural width of a beat: base length plus room for bend arrows
-/// (like TuxGuitar's `getEffectWidth`).
-fn beat_natural_width(beat: &Beat) -> f32 {
+/// Natural width of a beat: base length, room for bend arrows (like
+/// TuxGuitar's `getEffectWidth`), and room for the grace note that the
+/// next beat draws in the gap before it.
+fn beat_natural_width(beat: &Beat, next_beat: Option<&Beat>) -> f32 {
     let bend_extra = beat
         .notes
         .iter()
         .filter_map(|n| n.effect.bend.as_ref())
         .map(|b| b.movements().len() as f32 * BEND_ARROW_WIDTH)
         .fold(0.0, f32::max);
-    BEAT_LENGTH + bend_extra
+    let grace_extra = next_beat.map_or(0.0, grace_gap_width);
+    BEAT_LENGTH + bend_extra + grace_extra
+}
+
+/// Label of a grace note: its fret, or a cross when it is dead.
+fn grace_label(grace: &GraceEffect) -> String {
+    if grace.is_dead {
+        "x".to_string()
+    } else {
+        grace.fret.to_string()
+    }
+}
+
+/// Room the grace notes of a beat need in the gap before it.
+fn grace_gap_width(beat: &Beat) -> f32 {
+    beat.notes
+        .iter()
+        .filter_map(|note| note.effect.grace.as_ref())
+        .map(|grace| {
+            grace_label(grace).chars().count() as f32 * GRACE_DIGIT_WIDTH + GRACE_GAP * 2.0
+        })
+        .fold(0.0, f32::max)
 }
 
 /// Like TuxGuitar's `multipleBendConflicts`: with several bent notes in a
@@ -711,7 +763,8 @@ fn multiple_bend_conflicts(beat: &Beat, note: &Note, movements: &[i32]) -> bool 
 fn draw_beat(
     frame: &mut Frame<Renderer>,
     beat_position_x: f32,
-    width_per_beat: f32,
+    // span usable for glyphs drawn after the note, up to the next beat's grace
+    beat_span: f32,
     width_scale: f32,
     measure_start_y: f32,
     vertical_measure_height: f32,
@@ -768,7 +821,7 @@ fn draw_beat(
             frame,
             measure_start_y,
             beat_position_x,
-            width_per_beat,
+            beat_span,
             width_scale,
             note,
             beat_color,
@@ -821,9 +874,10 @@ fn draw_note(
 ) {
     // note label (pushed down on the right string)
     let note_label = note_value(note);
+    let note_label_len = note_label.chars().count();
     let local_beat_position_y = (f32::from(note.string) - 1.0) * STRING_LINE_HEIGHT;
     // center the notes with more than one char
-    let note_position_x = beat_position_x + 3.0 - note_label.chars().count() as f32 / 2.0;
+    let note_position_x = beat_position_x + 3.0 - note_label_len as f32 / 2.0;
     let note_position_y = measure_start_y + local_beat_position_y - 5.0;
     let note_text = Text {
         shaping: Auto,
@@ -836,19 +890,22 @@ fn draw_note(
     };
     frame.fill_text(note_text);
 
-    // small grace fret before the note, like TuxGuitar's paintEffects
+    // small grace fret before the note, like TuxGuitar's paintEffects.
+    // both glyphs are centred, so offset by their half widths to keep the
+    // grace clear of the note whatever their digit counts
     if let Some(grace) = &note.effect.grace {
-        let grace_label = if grace.is_dead {
-            "x".to_string()
-        } else {
-            grace.fret.to_string()
-        };
+        let label = grace_label(grace);
+        let note_half = note_label_len as f32 * NOTE_DIGIT_WIDTH / 2.0;
+        let grace_half = label.chars().count() as f32 * GRACE_DIGIT_WIDTH / 2.0;
         let grace_text = Text {
             shaping: Auto,
-            content: grace_label,
+            content: label,
             color: Color::WHITE,
             size: 7.0.into(),
-            position: Point::new(note_position_x - 6.0, note_position_y + 2.0),
+            position: Point::new(
+                note_position_x - note_half - grace_half - GRACE_GAP,
+                note_position_y + 2.0,
+            ),
             align_x: Alignment::Center,
             ..Text::default()
         };
@@ -1288,43 +1345,45 @@ impl<'a> TupletRun<'a> {
 }
 
 /// A tuplet bracket: a horizontal line broken by the group size, with a
-/// tick at each end pointing down towards the notes.
+/// tick at each end pointing down towards the notes. A run covering a
+/// single beat has no span to bracket, so only its label is drawn.
 fn draw_tuplet_bracket(frame: &mut Frame<Renderer>, enters: u8, x1: f32, x2: f32, y: f32) {
     const TICK: f32 = 4.0;
     const LABEL_SIZE: f32 = 8.0;
+    let has_span = x2 > x1;
     // the notes are centred a few pixels right of their beat position
-    let x1 = x1 + 1.0;
-    let x2 = x2 + 6.0;
-    let center = x1 + (x2 - x1) / 2.0;
+    let left = x1 + 1.0;
+    let right = x2 + 6.0;
+    let center = left + (right - left) / 2.0;
     let label = enters.to_string();
     let label_half = label.chars().count() as f32 * LABEL_SIZE / 4.0;
 
-    let stroke = Stroke::default().with_width(0.8).with_color(Color::WHITE);
-    if x2 > x1 {
-        // left arm with its end tick
+    if has_span {
+        let stroke = Stroke::default().with_width(0.8).with_color(Color::WHITE);
         frame.stroke(
-            &Path::line(Point::new(x1, y + TICK), Point::new(x1, y)),
+            &Path::line(Point::new(left, y + TICK), Point::new(left, y)),
             stroke,
         );
         frame.stroke(
-            &Path::line(
-                Point::new(x1, y),
-                Point::new(center - label_half - 1.0, y),
-            ),
+            &Path::line(Point::new(right, y + TICK), Point::new(right, y)),
             stroke,
         );
-        // right arm with its end tick
-        frame.stroke(
-            &Path::line(Point::new(x2, y + TICK), Point::new(x2, y)),
-            stroke,
-        );
-        frame.stroke(
-            &Path::line(
-                Point::new(center + label_half + 1.0, y),
-                Point::new(x2, y),
-            ),
-            stroke,
-        );
+        // the arms stop short of the label, and are skipped when the label
+        // already fills the span
+        let arm_left_end = center - label_half - 1.0;
+        let arm_right_start = center + label_half + 1.0;
+        if arm_left_end > left {
+            frame.stroke(
+                &Path::line(Point::new(left, y), Point::new(arm_left_end, y)),
+                stroke,
+            );
+        }
+        if right > arm_right_start {
+            frame.stroke(
+                &Path::line(Point::new(arm_right_start, y), Point::new(right, y)),
+                stroke,
+            );
+        }
     }
 
     let label_text = Text {
@@ -1618,5 +1677,4 @@ mod tests {
         let positions: Vec<f32> = (0..5).map(|i| i as f32 * 10.0).collect();
         assert_eq!(tuplet_runs(&beats, &positions), vec![(5, 0.0, 40.0)]);
     }
-
 }
