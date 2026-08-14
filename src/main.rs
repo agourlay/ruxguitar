@@ -50,6 +50,7 @@ pub fn main_result() -> Result<(), RuxError> {
         sound_font_bank: sound_font_file,
         tab_file_path,
         no_antialiasing: args.no_antialiasing,
+        theme: args.theme,
         local_config: Config::read_config()?,
     };
 
@@ -69,6 +70,25 @@ pub struct CliArgs {
     /// Disable antialiasing.
     #[arg(long, default_value_t = false)]
     no_antialiasing: bool,
+    /// Force the color theme instead of following the desktop.
+    #[arg(long, value_enum)]
+    theme: Option<ThemeChoice>,
+}
+
+/// Color theme requested on the command line.
+#[derive(clap::ValueEnum, Debug, Clone, Copy)]
+pub enum ThemeChoice {
+    Light,
+    Dark,
+}
+
+impl From<ThemeChoice> for iced::Theme {
+    fn from(choice: ThemeChoice) -> Self {
+        match choice {
+            ThemeChoice::Light => Self::Light,
+            ThemeChoice::Dark => Self::Dark,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +96,7 @@ pub struct ApplicationArgs {
     sound_font_bank: Option<PathBuf>,
     tab_file_path: Option<PathBuf>,
     no_antialiasing: bool,
+    theme: Option<ThemeChoice>,
     local_config: Config,
 }
 

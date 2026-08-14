@@ -7,7 +7,7 @@ use iced::{
 };
 use std::fmt::Display;
 
-use crate::ApplicationArgs;
+use crate::{ApplicationArgs, ThemeChoice};
 use crate::audio::midi_player::AudioPlayer;
 use crate::audio::playback_order::compute_playback_order;
 use crate::config::Config;
@@ -231,10 +231,12 @@ impl RuxApplication {
 
     pub fn start(args: ApplicationArgs) -> iced::Result {
         let antialiasing = !args.no_antialiasing;
+        let theme = resolve_theme(args.theme);
         iced::application(move || Self::boot(&args), Self::update, Self::view)
             .title(Self::title)
             .subscription(Self::subscription)
             .default_font(iced::Font::MONOSPACE)
+            .theme(move |_state: &Self| theme.clone())
             .font(ICONS_FONT)
             .window_size((1150.0, 768.0))
             .centered()
@@ -834,6 +836,18 @@ impl RuxApplication {
 
         Subscription::batch(subscriptions)
     }
+}
+
+/// The theme to run with, or `None` to let iced follow the desktop.
+///
+/// An explicit choice always wins. Otherwise iced resolves the desktop
+/// preference - except on Linux, where winit reports none and iced would
+/// fall back to light whatever the desktop looks like; the dark tab stays
+/// the default there.
+fn resolve_theme(choice: Option<ThemeChoice>) -> Option<Theme> {
+    choice.map(Theme::from).or_else(|| {
+        cfg!(target_os = "linux").then_some(Theme::Dark)
+    })
 }
 
 /// Seconds elapsed from the song's start up to (but not including) `measure_idx`.
