@@ -127,9 +127,9 @@ impl Tablature {
         }
     }
 
-    /// The measure and beat containing `tick`, i.e. the last ones starting at
-    /// or before it.
-    pub fn get_measure_beat_indexes_for_tick(&self, track_id: usize, tick: u32) -> (usize, usize) {
+    /// The measure containing `tick`, with the tick mapped back onto the
+    /// measure's own timeline (playback repeats shift it forward).
+    fn measure_and_original_tick(&self, tick: u32) -> (usize, u32) {
         // range scan on `measure_per_tick` to find measure index and playback start tick
         let (playback_start, measure_index) = self
             .measure_per_tick
@@ -144,10 +144,17 @@ impl Tablature {
         // compute tick offset between playback position and original measure position
         let original_start = self.song.measure_headers[measure_index].start;
         let tick_offset = i64::from(playback_start) - i64::from(original_start);
+        let original_tick = (i64::from(tick) - tick_offset) as u32;
+        (measure_index, original_tick)
+    }
+
+    /// The measure and beat containing `tick`, i.e. the last ones starting at
+    /// or before it.
+    pub fn get_measure_beat_indexes_for_tick(&self, track_id: usize, tick: u32) -> (usize, usize) {
+        let (measure_index, original_tick) = self.measure_and_original_tick(tick);
 
         // get beat index within the measure containing the tick
         // adjust tick by removing the offset to compare with original beat.start values
-        let original_tick = (i64::from(tick) - tick_offset) as u32;
         let voice = &self.song.tracks[track_id].measures[measure_index].voices[0];
         let beat_index = voice
             .beats
@@ -156,10 +163,9 @@ impl Tablature {
         (measure_index, beat_index)
     }
 
-    /// Focus on the beat at the given tick
-    ///
-    /// Returns the amount of scroll needed to focus on the beat
-    pub fn focus_on_tick(&mut self, tick: u32) -> Option<f32> {
+    /// Move the highlight to the beat at the given playback tick. Scrolling
+    /// is driven separately by [`Self::playback_scroll_offset`].
+    pub fn focus_on_tick(&mut self, tick: u32) {
         let (new_measure_id, new_beat_id) = if tick == 1 {
             (0, 0)
         } else {
@@ -181,10 +187,8 @@ impl Tablature {
                 // beat notifications coalesce, so the first tick in a measure
                 // may already be past beat 0
                 next_canvas.focus_beat(new_beat_id);
-                return self.scroll_offset_for_measure(next_focus_id);
             }
         }
-        None
     }
 
     pub fn focus_on_measure(&mut self, new_measure_id: usize) {
@@ -221,15 +225,48 @@ impl Tablature {
         self.canvas_measures.len()
     }
 
+    /// Scroll offset following the playback position continuously: the view
+    /// glides across a line as the cursor crosses it, instead of jumping
+    /// when the line changes.
+    pub fn playback_scroll_offset(&self, tick: u32) -> f32 {
+        let (measure_id, original_tick) = self.measure_and_original_tick(tick);
+        let header = &self.song.measure_headers[measure_id];
+        let measure_length = header.length();
+        let progress_in_measure = if measure_length == 0 {
+            0.0
+        } else {
+            (original_tick.saturating_sub(header.start) as f32 / measure_length as f32).clamp(0.0, 1.0)
+        };
+
+        let line = self.line_tracker.get_line(measure_id);
+        let (first_measure, measure_count) = self.line_tracker.line_span(line);
+        let progress_in_line = if measure_count == 0 {
+            0.0
+        } else {
+            let index_in_line = measure_id.saturating_sub(first_measure) as f32;
+            (index_in_line + progress_in_measure) / measure_count as f32
+        };
+
+        let from = self.offset_for_line(line);
+        let to = self.offset_for_line(line + 1);
+        from + progress_in_line * (to - from)
+    }
+
+    /// Scroll offset that puts `line` in the second visible slot.
+    fn offset_for_line(&self, line: u32) -> f32 {
+        if line < 2 {
+            return 0.0;
+        }
+        let scroll_lines = (line - 2) as usize;
+        INNER_PADDING + self.line_heights.iter().take(scroll_lines).sum::<f32>()
+    }
+
     pub fn scroll_offset_for_measure(&self, measure_id: usize) -> Option<f32> {
         let focus_line = self.line_tracker.get_line(measure_id);
         if focus_line < 2 {
             return None;
         }
-        // scroll past every line above the one before the focused line
-        let scroll_lines = focus_line.saturating_sub(2) as usize;
-        let offset: f32 = self.line_heights.iter().take(scroll_lines).sum();
-        Some(INNER_PADDING + offset)
+        Some(self.offset_for_line(focus_line))
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -323,6 +360,13 @@ impl LineTracker {
         self.measure_to_line[measure_id]
     }
 
+    /// First measure of a line and how many measures it holds.
+    fn line_span(&self, line: u32) -> (usize, usize) {
+        let first = self.measure_to_line.partition_point(|&l| l < line);
+        let end = self.measure_to_line.partition_point(|&l| l <= line);
+        (first, end - first)
+    }
+
     /// Number of lines, or `None` when there is no measure at all.
     fn line_count(&self) -> Option<usize> {
         self.measure_to_line.last().map(|&last| last as usize)
@@ -369,6 +413,96 @@ mod tests {
             distinct.len() > 1,
             "expected lines of different heights, got {distinct:?}"
         );
+    }
+
+    #[test]
+    fn playback_scroll_glides_across_a_line() {
+        let tab = load_tablature(800.0);
+        // a line holding several measures, so there is a glide to observe
+        let line = (1..)
+            .find(|&l| tab.line_tracker.line_span(l).1 > 1 && tab.offset_for_line(l + 1) > 0.0)
+            .expect("a line with several measures");
+        let (first, count) = tab.line_tracker.line_span(line);
+        let from = tab.offset_for_line(line);
+        let to = tab.offset_for_line(line + 1);
+        assert!(to > from, "the line should scroll: {from} -> {to}");
+
+        // the glide starts exactly where the line starts
+        let start_tick = tab.song.measure_headers[first].start;
+        assert!((tab.playback_scroll_offset(start_tick) - from).abs() < 0.01);
+
+        // and advances without going backwards or overshooting the next line
+        let mut previous = f32::NEG_INFINITY;
+        for i in 0..count {
+            let header = &tab.song.measure_headers[first + i];
+            for numerator in 0..4 {
+                let tick = header.start + header.length() * numerator / 4;
+                let offset = tab.playback_scroll_offset(tick);
+                assert!(offset >= previous, "scroll went backwards at tick {tick}");
+                assert!(
+                    (from - 0.01..=to + 0.01).contains(&offset),
+                    "offset {offset} outside {from}..{to}"
+                );
+                previous = offset;
+            }
+        }
+    }
+
+    #[test]
+    fn playback_scroll_stays_within_its_line() {
+        let tab = load_tablature(800.0);
+        // walking the real playback order: while a measure plays, the scroll
+        // stays inside the band between its line and the next
+        for (&start_tick, &measure) in &tab.measure_per_tick {
+            let measure = measure as usize;
+            let line = tab.line_tracker.get_line(measure);
+            let from = tab.offset_for_line(line);
+            let to = tab.offset_for_line(line + 1);
+            let length = tab.song.measure_headers[measure].length();
+            let mut previous = f32::NEG_INFINITY;
+            for numerator in 0..4 {
+                let offset = tab.playback_scroll_offset(start_tick + length * numerator / 4);
+                assert!(
+                    (from - 0.01..=to + 0.01).contains(&offset),
+                    "measure {measure} on line {line}: {offset} outside {from}..{to}"
+                );
+                assert!(offset >= previous, "scroll went backwards in measure {measure}");
+                previous = offset;
+            }
+        }
+    }
+
+    #[test]
+    fn playback_scroll_has_no_jump_between_lines() {
+        let tab = load_tablature(800.0);
+        // where playback moves forward onto the next line, the glide must
+        // already have arrived: no jump left to make
+        let entries: Vec<(u32, usize)> = tab
+            .measure_per_tick
+            .iter()
+            .map(|(&tick, &m)| (tick, m as usize))
+            .collect();
+        let mut checked = 0;
+        for pair in entries.windows(2) {
+            let [(tick, measure), (_, next_measure)] = pair else {
+                continue;
+            };
+            let line = tab.line_tracker.get_line(*measure);
+            let next_line = tab.line_tracker.get_line(*next_measure);
+            // skip repeat jumps: those legitimately move the view back
+            if *next_measure != measure + 1 || next_line == line {
+                continue;
+            }
+            let length = tab.song.measure_headers[*measure].length();
+            let at_line_end = tab.playback_scroll_offset(tick + length - 1);
+            let next_line_start = tab.offset_for_line(next_line);
+            assert!(
+                (at_line_end - next_line_start).abs() < 2.0,
+                "line {line} ends at {at_line_end}, line {next_line} starts at {next_line_start}"
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "no forward line change found to check");
     }
 
     #[test]
