@@ -1,4 +1,6 @@
-use crate::audio::midi_builder::{METRONOME_KEYS, METRONOME_TRACK, METRONOME_VELOCITY, MidiBuilder};
+use crate::audio::midi_builder::{
+    METRONOME_KEYS, METRONOME_TRACK, METRONOME_VELOCITY, MidiBuilder,
+};
 use crate::audio::midi_event::{FIRST_TICK, MidiEventType};
 use crate::audio::midi_player_params::MidiPlayerParams;
 use crate::audio::midi_sequencer::{MidiSequencer, tick_increase};
@@ -20,15 +22,20 @@ const TIMIDITY_SOUND_FONT: &[u8] = include_bytes!("../../resources/TimGM6mb.sf2"
 
 pub struct AudioPlayer {
     is_playing: bool,
-    song: Rc<Song>,                       // Song to play (shared with app)
-    stream: Option<Rc<cpal::Stream>>,     // Stream is not Send & Sync
-    sequencer: Arc<Mutex<MidiSequencer>>, // Need a handle to reset sequencer
-    player_params: Arc<MidiPlayerParams>, // Lock-free playback parameters
-    synthesizer: Arc<Mutex<Synthesizer>>, // Synthesizer for audio output
-    sound_font: Arc<SoundFont>,           // Sound font for synthesizer
-    current_tick: Arc<AtomicU32>,         // Latest tick reached by the audio callback
-    beat_notify: Arc<Notify>,             // Wake UI when current_tick changes
-    measure_playback_ticks: Vec<u32>,     // first playback tick per measure (for seeking)
+    /// Song to play, shared with the app.
+    song: Rc<Song>,
+    /// `cpal::Stream` is neither `Send` nor `Sync`.
+    stream: Option<Rc<cpal::Stream>>,
+    sequencer: Arc<Mutex<MidiSequencer>>,
+    /// Lock-free playback parameters.
+    player_params: Arc<MidiPlayerParams>,
+    synthesizer: Arc<Mutex<Synthesizer>>,
+    sound_font: Arc<SoundFont>,
+    /// Latest tick reached by the audio callback, and the UI wake-up signal.
+    current_tick: Arc<AtomicU32>,
+    beat_notify: Arc<Notify>,
+    /// First playback tick per measure, for seeking.
+    measure_playback_ticks: Vec<u32>,
 }
 
 impl AudioPlayer {
@@ -41,24 +48,12 @@ impl AudioPlayer {
         beat_notify: Arc<Notify>,
         playback_order: &[(usize, i64)],
     ) -> Result<Self, AudioPlayerError> {
-        // default to no solo track
-        let solo_track_id = None;
+        // no solo track by default
+        let player_params = Arc::new(MidiPlayerParams::new(song_tempo, tempo_percentage, None));
 
-        // player params
-        let player_params = Arc::new(MidiPlayerParams::new(
-            song_tempo,
-            tempo_percentage,
-            solo_track_id,
-        ));
-
-        // midi sequencer initialization
-        let builder = MidiBuilder::new();
-        let events = builder.build_for_song_with_order(&song, playback_order);
-
-        // build first-playback-tick lookup per measure (for seeking)
+        let events = MidiBuilder::new().build_for_song_with_order(&song, playback_order);
         let measure_playback_ticks = first_playback_ticks(&song.measure_headers, playback_order);
 
-        // sound font setup
         let sound_font = if let Some(ref sound_font_file) = sound_font_file {
             let mut sf2 = File::open(sound_font_file).map_err(|e| {
                 AudioPlayerError::SoundFontFileError(format!("{}: {e}", sound_font_file.display()))
@@ -72,13 +67,10 @@ impl AudioPlayer {
                 .map_err(|e| AudioPlayerError::SoundFontLoadError(format!("embedded: {e}")))?
         };
         let sound_font = Arc::new(sound_font);
-
-        // build new default synthesizer for the stream
         let synthesizer = Self::make_synthesizer(sound_font.clone(), DEFAULT_SAMPLE_RATE)?;
-        let midi_sequencer = MidiSequencer::new(events);
 
         let synthesizer = Arc::new(Mutex::new(synthesizer));
-        let sequencer = Arc::new(Mutex::new(midi_sequencer));
+        let sequencer = Arc::new(Mutex::new(MidiSequencer::new(events)));
         Ok(Self {
             is_playing: false,
             song,
@@ -169,8 +161,15 @@ impl AudioPlayer {
         self.player_params.set_master_volume(volume);
     }
 
+    /// Cut all sounding notes and recenter the pitch wheel: leaving it mid-bend
+    /// would keep later notes out of tune (the bend range RPN is preserved).
+    fn silence_synthesizer(&self) {
+        let mut synthesizer_guard = self.synthesizer.lock().unwrap();
+        synthesizer_guard.note_off_all(false);
+        synthesizer_guard.reset_all_controllers();
+    }
+
     pub fn stop(&mut self) {
-        // Pause stream
         if let Some(stream) = &self.stream {
             log::debug!("Stopping audio stream");
             if let Err(err) = stream.pause() {
@@ -180,22 +179,13 @@ impl AudioPlayer {
         }
         self.is_playing = false;
 
-        // reset ticks
         self.sequencer.lock().unwrap().reset_ticks();
-
-        // stop all sound in synthesizer
-        let mut synthesizer_guard = self.synthesizer.lock().unwrap();
-        synthesizer_guard.note_off_all(false);
-        // recenter the pitch wheel: leaving mid-bend would keep later notes
-        // out of tune (the bend range RPN is preserved)
-        synthesizer_guard.reset_all_controllers();
-        drop(synthesizer_guard);
+        self.silence_synthesizer();
 
         // reset the UI cursor to the first playable tick so the measure lookup resolves cleanly
         self.current_tick.store(FIRST_TICK, Ordering::Relaxed);
         self.beat_notify.notify_one();
 
-        // Drop stream
         self.stream.take();
     }
 
@@ -252,28 +242,16 @@ impl AudioPlayer {
         log::debug!("Focus audio player on measure:{measure_id} (+{beat_tick_offset} ticks)");
         let measure = &self.song.measure_headers[measure_id];
         let measure_start_tick = self.measure_playback_ticks[measure_id] + beat_tick_offset;
-        let tempo = measure.tempo.value;
 
-        // move sequencer to measure start tick
-        let mut sequencer_guard = self.sequencer.lock().unwrap();
-        sequencer_guard.set_tick(measure_start_tick);
-        drop(sequencer_guard);
+        self.sequencer.lock().unwrap().set_tick(measure_start_tick);
 
         // keep the cursor tick in sync: the count-in looks up the measure
         // (and its time signature) through it
         self.current_tick
             .store(measure_start_tick, Ordering::Relaxed);
 
-        // stop current sound
-        let mut synthesizer_guard = self.synthesizer.lock().unwrap();
-        synthesizer_guard.note_off_all(false);
-        // recenter the pitch wheel: leaving mid-bend would keep later notes
-        // out of tune (the bend range RPN is preserved)
-        synthesizer_guard.reset_all_controllers();
-        drop(synthesizer_guard);
-
-        // set tempo for focuses measure
-        self.player_params.set_tempo(tempo);
+        self.silence_synthesizer();
+        self.player_params.set_tempo(measure.tempo.value);
     }
 }
 
@@ -293,7 +271,6 @@ pub enum AudioPlayerError {
     StreamError(String),
 }
 
-/// Create a new output stream for audio playback.
 fn new_output_stream(
     sequencer: Arc<Mutex<MidiSequencer>>,
     player_params: Arc<MidiPlayerParams>,
@@ -547,7 +524,6 @@ fn write_frames(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::write_frames;
 
     #[test]
     fn write_frames_stereo_applies_volume() {
@@ -597,37 +573,39 @@ mod tests {
         write_frames(&mut output, &left, &right, 2, 1.0);
         assert_eq!(output, [1.0, 0.5, 0.0, 0.0, 0.0]);
     }
+
     #[test]
     fn metronome_click_produces_sound() {
+        fn click_energy(sound_font: &Arc<SoundFont>, with_channel_setup: bool) -> f32 {
+            let settings = Arc::new(SynthesizerSettings::new(44100));
+            let mut synth = Synthesizer::new(sound_font, &settings).unwrap();
+            if with_channel_setup {
+                synth.process_midi_message(9, 0xB0, 0x00, 128); // bank select 128
+                synth.process_midi_message(9, 0xC0, 0, 0); // program 0
+            }
+            for key in METRONOME_KEYS {
+                synth.note_on(9, key, i32::from(METRONOME_VELOCITY));
+            }
+            let mut l = vec![0f32; 4410];
+            let mut r = vec![0f32; 4410];
+            synth.render(&mut l, &mut r);
+            l.iter().map(|s| s.abs()).sum()
+        }
+
         let mut sf2: &[u8] = TIMIDITY_SOUND_FONT;
         let sound_font = Arc::new(SoundFont::new(&mut sf2).unwrap());
-        let settings = SynthesizerSettings::new(44100);
-        let mut synth = Synthesizer::new(&sound_font, &Arc::new(settings)).unwrap();
 
-        // fresh channel 9: default percussion
-        for key in METRONOME_KEYS {
-            synth.note_on(9, key, i32::from(METRONOME_VELOCITY));
-        }
-        let mut l = vec![0f32; 4410];
-        let mut r = vec![0f32; 4410];
-        synth.render(&mut l, &mut r);
-        let energy: f32 = l.iter().map(|s| s.abs()).sum();
-        eprintln!("fresh channel 9 key 37 energy: {energy}");
-        assert!(energy > 0.01, "no sound on fresh percussion channel");
-
-        // after the app's channel 9 setup (bank 128 + program 0 like a drum track)
-        let mut synth = Synthesizer::new(&sound_font, &Arc::new(SynthesizerSettings::new(44100))).unwrap();
-        synth.process_midi_message(9, 0xB0, 0x00, 128); // bank select 128
-        synth.process_midi_message(9, 0xC0, 0, 0); // program 0
-        for key in METRONOME_KEYS {
-            synth.note_on(9, key, i32::from(METRONOME_VELOCITY));
-        }
-        let mut l = vec![0f32; 4410];
-        let mut r = vec![0f32; 4410];
-        synth.render(&mut l, &mut r);
-        let energy: f32 = l.iter().map(|s| s.abs()).sum();
-        eprintln!("post-setup channel 9 key 37 energy: {energy}");
-        assert!(energy > 0.01, "no sound after channel 9 setup");
+        // fresh channel 9 is percussion by default
+        assert!(
+            click_energy(&sound_font, false) > 0.01,
+            "no sound on fresh percussion channel"
+        );
+        // ... and stays audible after the app's channel 9 setup
+        // (bank 128 + program 0, like a drum track)
+        assert!(
+            click_energy(&sound_font, true) > 0.01,
+            "no sound after channel 9 setup"
+        );
     }
 
     #[test]
@@ -664,11 +642,8 @@ mod tests {
                 }
             }
         }
-        eprintln!("metronome clicks delivered: {clicks}");
         assert!(clicks > 50, "expected metronome clicks, got {clicks}");
     }
-
-
 
     #[test]
     fn seeking_updates_the_cursor_tick() {
@@ -683,16 +658,8 @@ mod tests {
         let order = compute_playback_order(&song.measure_headers);
         let current_tick = Arc::new(AtomicU32::new(FIRST_TICK));
         let notify = Arc::new(Notify::new());
-        let player = AudioPlayer::new(
-            song,
-            tempo,
-            100,
-            None,
-            current_tick.clone(),
-            notify,
-            &order,
-        )
-        .unwrap();
+        let player =
+            AudioPlayer::new(song, tempo, 100, None, current_tick.clone(), notify, &order).unwrap();
 
         // the count-in resolves the measure signature through the cursor
         // tick: seeking must move it

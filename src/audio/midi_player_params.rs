@@ -8,8 +8,8 @@ pub struct MidiPlayerParams {
     tempo_percentage: AtomicU32,
     solo_track_id: AtomicI32, // -1 == None
     mute_mask: AtomicU64,     // bit per muted track id
-    metronome: AtomicBool,    // metronome clicks enabled
-    count_in: AtomicBool,     // count-in measure enabled
+    metronome: AtomicBool,
+    count_in: AtomicBool,
     // pending count-in request: total ticks (high) | beat ticks (low), 0 = none
     count_in_request: AtomicU64,
     master_volume: AtomicU32, // f32 bits

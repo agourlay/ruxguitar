@@ -18,8 +18,7 @@ use crate::parser::song_parser::{
     GpVersion, GraceEffect, GraceEffectTransition, HarmonicEffect, HarmonicType, KeySignature,
     MAX_VOICES, Marker, Measure, MeasureHeader, MidiChannel, NATURAL_FREQUENCIES, Note, NoteEffect,
     NoteType, QUARTER, QUARTER_TIME, SEMITONE_LENGTH, SlapEffect, SlideType, Song, SongInfo, Tempo,
-    TimeSignature,
-    Track, TremoloBarEffect, TremoloPickingEffect, TrillEffect, TripletFeel, Voice,
+    TimeSignature, Track, TremoloBarEffect, TremoloPickingEffect, TrillEffect, TripletFeel, Voice,
     convert_velocity,
 };
 
@@ -209,7 +208,7 @@ fn build_measures(doc: &GpxDocument, song: &mut Song, tracks: &mut [Track]) {
         let header = build_measure_header(doc, mbar, index, start);
         let length = header.length();
         let time_signature = header.time_signature.clone();
-        let key_signature = clone_key_signature(&header.key_signature);
+        let key_signature = header.key_signature;
         song.measure_headers.push(header);
 
         for (track_index, track) in tracks.iter_mut().enumerate() {
@@ -217,7 +216,7 @@ fn build_measures(doc: &GpxDocument, song: &mut Song, tracks: &mut [Track]) {
                 header_index: index,
                 track_index,
                 time_signature: time_signature.clone(),
-                key_signature: clone_key_signature(&key_signature),
+                key_signature,
                 voices: Vec::with_capacity(MAX_VOICES as usize),
             };
 
@@ -308,10 +307,6 @@ fn key_signature_of(mbar: &GpxMasterBar) -> KeySignature {
         .as_deref()
         .is_some_and(|m| m.eq_ignore_ascii_case("minor"));
     KeySignature::new(key, is_minor)
-}
-
-const fn clone_key_signature(k: &KeySignature) -> KeySignature {
-    KeySignature::new(k.key, k.is_minor)
 }
 
 fn triplet_feel_of(mbar: &GpxMasterBar) -> TripletFeel {

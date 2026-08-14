@@ -1,4 +1,5 @@
-/// Thanks to `TuxGuitar` for the reference implementation in `MidiSequenceParser.java`
+//! Port of TuxGuitar's `MidiSequenceParser.java`.
+
 use crate::audio::midi_event::{FIRST_TICK, MidiEvent};
 use crate::audio::playback_order::playback_tick;
 use crate::parser::song_parser::{
@@ -20,6 +21,18 @@ use super::effects::{
 const DEFAULT_BEND: f32 = 64.0;
 const DEFAULT_BEND_SEMI_TONE: f32 = 2.75;
 
+// MIDI control change numbers. The coarse (MSB) controllers are the ones that
+// matter here: their LSB counterparts leave the coarse byte at its default,
+// which silently ignores the setting.
+const CC_BANK_SELECT: i32 = 0x00;
+const CC_VOLUME: i32 = 0x07;
+const CC_PAN: i32 = 0x0A;
+const CC_EXPRESSION: i32 = 0x0B;
+const CC_REVERB: i32 = 0x5B;
+const CC_TREMOLO: i32 = 0x5C;
+const CC_CHORUS: i32 = 0x5D;
+const CC_PHASER: i32 = 0x5F;
+
 /// Pseudo track id carried by metronome events, so playback can gate them
 /// on the metronome toggle instead of the regular mute/solo filtering.
 pub const METRONOME_TRACK: u8 = u8::MAX;
@@ -38,7 +51,7 @@ fn to_channel_short(value: i8) -> i32 {
 }
 
 pub struct MidiBuilder {
-    events: Vec<MidiEvent>, // events accumulated during build
+    events: Vec<MidiEvent>,
 }
 
 impl MidiBuilder {
@@ -393,12 +406,24 @@ impl MidiBuilder {
             let mut tick = *note_start;
             let tick_increment = *duration / ((127 - expression) / expression_increment);
             while tick < (*note_start + *duration) && expression < 127 {
-                self.add_expression(tick, track_id, channel_id, expression as i32);
+                self.add_control_change(
+                    tick,
+                    track_id,
+                    channel_id,
+                    CC_EXPRESSION,
+                    expression as i32,
+                );
                 tick += tick_increment;
                 expression += expression_increment;
             }
             // normalize the expression
-            self.add_expression(*note_start + *duration, track_id, channel_id, 127);
+            self.add_control_change(
+                *note_start + *duration,
+                track_id,
+                channel_id,
+                CC_EXPRESSION,
+                127,
+            );
         }
 
         // grace note
@@ -680,8 +705,8 @@ impl MidiBuilder {
         for (point_id, point) in tremolo_bar.points.iter().enumerate() {
             // truncate the offset before adding, like TuxGuitar: adding first
             // rounds negative dips one unit lower
-            let value =
-                DEFAULT_BEND as i32 + (f32::from(point.value) * DEFAULT_BEND_SEMI_TONE * 2.0) as i32;
+            let value = DEFAULT_BEND as i32
+                + (f32::from(point.value) * DEFAULT_BEND_SEMI_TONE * 2.0) as i32;
             let bend_start = start + point.get_time(duration);
             self.add_pitch_bend(bend_start, track_id, channel_id, value);
 
@@ -690,13 +715,7 @@ impl MidiBuilder {
                 let next_value = DEFAULT_BEND as i32
                     + (f32::from(next_point.value) * DEFAULT_BEND_SEMI_TONE * 2.0) as i32;
                 self.process_next_bend_values(
-                    track_id,
-                    channel_id,
-                    value,
-                    next_value,
-                    bend_start,
-                    start,
-                    next_point,
+                    track_id, channel_id, value, next_value, bend_start, start, next_point,
                     duration,
                 );
             }
@@ -716,69 +735,35 @@ impl MidiBuilder {
         // clamp like TuxGuitar: harmonics can push the key past the MIDI
         // range, and the synthesizer silently drops out-of-range keys
         let key = key.clamp(0, 127);
-        let note_on = MidiEvent::new_note_on(start, track_id, key, velocity, channel);
-        self.add_event(note_on);
+        self.add_event(MidiEvent::new_note_on(
+            start, track_id, key, velocity, channel,
+        ));
         if duration > 0 {
-            let tick = start + duration;
-            let note_off = MidiEvent::new_note_off(tick, track_id, key, channel);
-            self.add_event(note_off);
+            self.add_event(MidiEvent::new_note_off(
+                start + duration,
+                track_id,
+                key,
+                channel,
+            ));
         }
     }
 
     fn add_tempo_change(&mut self, tick: u32, tempo: u32) {
-        let event = MidiEvent::new_tempo_change(tick, tempo);
-        self.add_event(event);
+        self.add_event(MidiEvent::new_tempo_change(tick, tempo));
     }
 
-    fn add_bank_selection(&mut self, tick: u32, track_id: usize, channel: i32, bank: i32) {
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x00, bank);
-        self.add_event(event);
-    }
-
-    fn add_volume_selection(&mut self, tick: u32, track_id: usize, channel: i32, volume: i32) {
-        // Channel Volume coarse (CC 0x07); the prior 0x27 (LSB) left the coarse
-        // byte at its default, so per-track volume was effectively ignored.
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x07, volume);
-        self.add_event(event);
-    }
-
-    fn add_balance_selection(&mut self, tick: u32, track_id: usize, channel: i32, balance: i32) {
-        // Pan controller (CC 0x0A).
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x0A, balance);
-        self.add_event(event);
-    }
-
-    fn add_expression_selection(
+    /// Emit a control change (0xB0) for the given controller number.
+    fn add_control_change(
         &mut self,
         tick: u32,
         track_id: usize,
         channel: i32,
-        expression: i32,
+        controller: i32,
+        value: i32,
     ) {
-        // Expression coarse (CC 0x0B); the prior 0x2B (LSB) left the coarse
-        // byte at its default, so the initial expression was effectively ignored.
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x0B, expression);
-        self.add_event(event);
-    }
-
-    fn add_chorus_selection(&mut self, tick: u32, track_id: usize, channel: i32, chorus: i32) {
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x5D, chorus);
-        self.add_event(event);
-    }
-
-    fn add_reverb_selection(&mut self, tick: u32, track_id: usize, channel: i32, reverb: i32) {
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x5B, reverb);
-        self.add_event(event);
-    }
-
-    fn add_phaser_selection(&mut self, tick: u32, track_id: usize, channel: i32, phaser: i32) {
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x5F, phaser);
-        self.add_event(event);
-    }
-
-    fn add_tremolo_selection(&mut self, tick: u32, track_id: usize, channel: i32, tremolo: i32) {
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x5C, tremolo);
-        self.add_event(event);
+        self.add_event(MidiEvent::new_midi_message(
+            tick, track_id, channel, 0xB0, controller, value,
+        ));
     }
 
     fn add_pitch_bend(&mut self, tick: u32, track_id: usize, channel: i32, value: i32) {
@@ -792,93 +777,46 @@ impl MidiBuilder {
         // the bend value must be split into two bytes and sent to the synthesizer.
         let data1 = midi_value & 0x7F;
         let data2 = midi_value >> 7;
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xE0, data1, data2);
-        self.add_event(event);
-    }
-
-    fn add_expression(&mut self, tick: u32, track_id: usize, channel: i32, expression: i32) {
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x0B, expression);
-        self.add_event(event);
+        self.add_event(MidiEvent::new_midi_message(
+            tick, track_id, channel, 0xE0, data1, data2,
+        ));
     }
 
     fn add_program_selection(&mut self, tick: u32, track_id: usize, channel: i32, program: i32) {
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xC0, program, 0);
-        self.add_event(event);
+        self.add_event(MidiEvent::new_midi_message(
+            tick, track_id, channel, 0xC0, program, 0,
+        ));
     }
 
+    /// Set the pitch bend range to 12 semitones through RPN 0/0.
     fn add_pitch_bend_range(&mut self, tick: u32, track_id: usize, channel: i32) {
-        // RPN MSB: Select RPN group (usually 0)
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x65, 0);
-        self.add_event(event);
-
-        // RPN LSB: Select RPN 0/0 (Pitch Bend Sensitivity)
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x64, 0);
-        self.add_event(event);
-
-        // Data Entry MSB: Set the value (Pitch Bend Range)
-        // 12 semitones for the guitar
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x06, 12);
-        self.add_event(event);
-
-        // Data Entry LSB: Cents (usually 0)
-        let event = MidiEvent::new_midi_message(tick, track_id, channel, 0xB0, 0x26, 0);
-        self.add_event(event);
+        // RPN MSB: select RPN group (usually 0)
+        self.add_control_change(tick, track_id, channel, 0x65, 0);
+        // RPN LSB: select RPN 0/0 (pitch bend sensitivity)
+        self.add_control_change(tick, track_id, channel, 0x64, 0);
+        // Data entry MSB: the range in semitones
+        self.add_control_change(tick, track_id, channel, 0x06, 12);
+        // Data entry LSB: cents (usually 0)
+        self.add_control_change(tick, track_id, channel, 0x26, 0);
     }
 
     fn add_track_channel_midi_control(&mut self, track_id: usize, midi_channel: &MidiChannel) {
-        let channel_id = midi_channel.channel_id;
         // publish MIDI control messages for the track channel at the start
-        let info_tick = FIRST_TICK;
-        self.add_volume_selection(
-            info_tick,
-            track_id,
-            i32::from(channel_id),
-            to_channel_short(midi_channel.volume),
-        );
-        self.add_balance_selection(
-            info_tick,
-            track_id,
-            i32::from(channel_id),
-            to_channel_short(midi_channel.balance),
-        );
-        self.add_expression_selection(info_tick, track_id, i32::from(channel_id), 127);
-        self.add_chorus_selection(
-            info_tick,
-            track_id,
-            i32::from(channel_id),
-            to_channel_short(midi_channel.chorus),
-        );
-        self.add_reverb_selection(
-            info_tick,
-            track_id,
-            i32::from(channel_id),
-            to_channel_short(midi_channel.reverb),
-        );
-        self.add_phaser_selection(
-            info_tick,
-            track_id,
-            i32::from(channel_id),
-            to_channel_short(midi_channel.phaser),
-        );
-        self.add_tremolo_selection(
-            info_tick,
-            track_id,
-            i32::from(channel_id),
-            to_channel_short(midi_channel.tremolo),
-        );
-        self.add_bank_selection(
-            info_tick,
-            track_id,
-            i32::from(channel_id),
-            i32::from(midi_channel.bank),
-        );
-        self.add_program_selection(
-            info_tick,
-            track_id,
-            i32::from(channel_id),
-            midi_channel.instrument,
-        );
-        self.add_pitch_bend_range(info_tick, track_id, i32::from(channel_id));
+        let tick = FIRST_TICK;
+        let channel = i32::from(midi_channel.channel_id);
+        let mut control = |controller, value| {
+            self.add_control_change(tick, track_id, channel, controller, value);
+        };
+        control(CC_VOLUME, to_channel_short(midi_channel.volume));
+        control(CC_PAN, to_channel_short(midi_channel.balance));
+        control(CC_EXPRESSION, 127);
+        control(CC_CHORUS, to_channel_short(midi_channel.chorus));
+        control(CC_REVERB, to_channel_short(midi_channel.reverb));
+        control(CC_PHASER, to_channel_short(midi_channel.phaser));
+        control(CC_TREMOLO, to_channel_short(midi_channel.tremolo));
+        control(CC_BANK_SELECT, i32::from(midi_channel.bank));
+        self.add_program_selection(tick, track_id, channel, midi_channel.instrument);
+        self.add_pitch_bend_range(tick, track_id, channel);
     }
 
     fn add_event(&mut self, event: MidiEvent) {

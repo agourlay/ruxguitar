@@ -3,9 +3,10 @@ use crate::parser::song_parser::{
     SlideType, Song, TimeSignature, TremoloPickingEffect,
 };
 use crate::ui::application::Message;
+use crate::ui::utils::{COLOR_DARK_RED, COLOR_GRAY};
 use iced::advanced::mouse;
 use iced::advanced::text::Shaping::Auto;
-use iced::mouse::{Cursor, Interaction};
+use iced::mouse::Cursor;
 use iced::widget::canvas::{Cache, Event, Frame, Geometry, LineDash, Path, Stroke, Text};
 use iced::widget::text::Alignment;
 use iced::widget::{Action, Canvas, canvas};
@@ -136,21 +137,19 @@ impl CanvasMeasure {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let canvas = Canvas::new(self)
+        Canvas::new(self)
             .height(self.vertical_measure_height)
-            .width(Length::Fixed(self.total_measure_len));
-        canvas.into()
+            .width(Length::Fixed(self.total_measure_len))
+            .into()
     }
 
-    /// View with FillPortion width for stretching to fill the row.
-    /// The portion is proportional to the natural width of the measure.
+    /// View stretched to fill its row, weighted by the natural measure width.
     pub fn view_fill(&self) -> Element<'_, Message> {
-        // Use total_measure_len as the portion weight (rounded to u16)
         let portion = (self.total_measure_len.round() as u16).max(1);
-        let canvas = Canvas::new(self)
+        Canvas::new(self)
             .height(self.vertical_measure_height)
-            .width(Length::FillPortion(portion));
-        canvas.into()
+            .width(Length::FillPortion(portion))
+            .into()
     }
 
     /// The fixed overhead width (padding, time signature, repeats) that doesn't scale with beats.
@@ -159,10 +158,8 @@ impl CanvasMeasure {
     }
 
     pub fn toggle_focused(&mut self) {
-        // reset focus state
         self.is_focused = !self.is_focused;
         self.focused_beat = 0;
-        // clear cache
         self.canvas_cache.clear();
     }
 
@@ -229,7 +226,10 @@ impl canvas::Program<Message> for CanvasMeasure {
             let beat_id = self.beat_at_x(cursor_position.x, bounds.width);
             log::info!("Clicked on measure {} beat {beat_id}", self.measure_id);
             *state = MeasureInteraction::Clicked;
-            return Some(Action::publish(Message::FocusMeasure(self.measure_id, beat_id)));
+            return Some(Action::publish(Message::FocusMeasure(
+                self.measure_id,
+                beat_id,
+            )));
         }
         None
     }
@@ -261,10 +261,6 @@ impl canvas::Program<Message> for CanvasMeasure {
             let measure_start_x = 0.0;
             let measure_start_y = FIRST_STRING_Y;
 
-            // colors
-            let color_gray = crate::ui::utils::COLOR_GRAY;
-            let color_dark_red = crate::ui::utils::COLOR_DARK_RED;
-
             // draw focused box
             if self.is_focused {
                 draw_focused_box(
@@ -289,7 +285,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                     measure_start_y + local_start_y,
                 );
                 let line = Path::line(start_point, end_point);
-                let stroke = Stroke::default().with_width(0.8).with_color(color_gray);
+                let stroke = Stroke::default().with_width(0.8).with_color(COLOR_GRAY);
                 frame.stroke(&line, stroke);
             }
 
@@ -317,17 +313,15 @@ impl canvas::Program<Message> for CanvasMeasure {
                     measure_start_y,
                     vertical_measure_height,
                 );
-            } else {
-                // draw first vertical line only for the first measure on a row
-                // otherwise it doubles with the end line of the previous measure
-                if self.is_first_on_line {
-                    draw_measure_vertical_line(
-                        frame,
-                        vertical_measure_height,
-                        measure_start_x,
-                        measure_start_y,
-                    );
-                }
+            } else if self.is_first_on_line {
+                // only the first measure on a row draws its opening line,
+                // otherwise it doubles with the previous measure's end line
+                draw_measure_vertical_line(
+                    frame,
+                    vertical_measure_height,
+                    measure_start_x,
+                    measure_start_y,
+                );
             }
 
             // display time signature (if first measure OR if it changed)
@@ -347,8 +341,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             if self.measure_id == 0
                 || measure_header.tempo != previous_measure_header.unwrap().tempo
             {
-                let tempo_sign = TEMPO_SIGN;
-                let tempo_label = format!("{} = {}", tempo_sign, measure_header.tempo.value);
+                let tempo_label = format!("{TEMPO_SIGN} = {}", measure_header.tempo.value);
                 tempo_label_len = tempo_label.chars().count() * 10;
                 let tempo_text = Text {
                     shaping: Auto,
@@ -367,7 +360,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                 let marker_text = Text {
                     shaping: Auto,
                     content: marker.title.clone(),
-                    color: color_dark_red,
+                    color: COLOR_DARK_RED,
                     size: 10.0.into(),
                     position: Point::new(
                         measure_start_x + MEASURE_NOTES_PADDING + tempo_label_len as f32,
@@ -382,7 +375,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             let measure_count_text = Text {
                 shaping: Auto,
                 content: format!("{}", self.measure_id + 1),
-                color: color_dark_red,
+                color: COLOR_DARK_RED,
                 size: 10.0.into(),
                 position: Point::new(measure_start_x, FIRST_STRING_Y - 15.0),
                 ..Text::default()
@@ -423,7 +416,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             for (b_id, beat) in beats.iter().enumerate() {
                 // pick color if beat under focus
                 let beat_color = if self.is_focused && b_id == self.focused_beat {
-                    color_dark_red
+                    COLOR_DARK_RED
                 } else {
                     Color::WHITE
                 };
@@ -470,15 +463,6 @@ impl canvas::Program<Message> for CanvasMeasure {
         });
 
         vec![tab]
-    }
-
-    fn mouse_interaction(
-        &self,
-        _state: &Self::State,
-        _bounds: Rectangle,
-        _cursor: Cursor,
-    ) -> Interaction {
-        Interaction::default()
     }
 }
 
@@ -965,7 +949,10 @@ fn draw_pick_stroke(
                 stroke,
             );
             let top_bar = Path::line(Point::new(x - 3.0, y), Point::new(x + 3.0, y));
-            frame.stroke(&top_bar, Stroke::default().with_width(2.0).with_color(Color::WHITE));
+            frame.stroke(
+                &top_bar,
+                Stroke::default().with_width(2.0).with_color(Color::WHITE),
+            );
         }
         BeatStrokeDirection::None => {}
     }
@@ -1235,18 +1222,16 @@ fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<&'static str> {
 fn inlined_note_effect_annotation(note_effect: &NoteEffect) -> String {
     let mut annotation = String::new();
     if note_effect.hammer {
-        // https://unicodeplus.com/U+25E0
         annotation.push(HAMMER_ON);
     }
     if let Some(slide) = &note_effect.slide {
-        match slide {
-            SlideType::IntoFromAbove => annotation.push(HORIZONTAL_BAR),
-            SlideType::IntoFromBelow => annotation.push(HORIZONTAL_BAR),
-            SlideType::ShiftSlideTo => annotation.push(SHIFT_SLIDE),
-            SlideType::LegatoSlideTo => annotation.push(LEGATO_SLIDE),
-            SlideType::OutDownwards => annotation.push(HORIZONTAL_BAR),
-            SlideType::OutUpWards => annotation.push(LEGATO_SLIDE),
-        }
+        annotation.push(match slide {
+            SlideType::IntoFromAbove | SlideType::IntoFromBelow | SlideType::OutDownwards => {
+                HORIZONTAL_BAR
+            }
+            SlideType::ShiftSlideTo => SHIFT_SLIDE,
+            SlideType::LegatoSlideTo | SlideType::OutUpWards => LEGATO_SLIDE,
+        });
     }
     annotation
 }
@@ -1264,10 +1249,7 @@ fn note_value(note: &Note) -> String {
                 note.value.to_string()
             }
         }
-        NoteType::Tie => {
-            // https://unicodeplus.com/U+2323
-            TIE.into()
-        }
+        NoteType::Tie => TIE.into(),
         NoteType::Dead => "x".to_string(),
         NoteType::Unknown(i) => {
             log::warn!("NoteType Unknown({i})");

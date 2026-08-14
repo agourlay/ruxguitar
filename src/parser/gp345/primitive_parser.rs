@@ -2,27 +2,22 @@ use encoding_rs::WINDOWS_1252;
 use nom::combinator::{flat_map, map};
 use nom::{IResult, Parser, bytes, number};
 
-/// Parse signed byte
 pub fn parse_i8(i: &[u8]) -> IResult<&[u8], i8> {
     number::complete::le_i8(i)
 }
 
-/// Parse unsigned byte
 pub fn parse_u8(i: &[u8]) -> IResult<&[u8], u8> {
     number::complete::le_u8(i)
 }
 
-/// Parse signed 32
 pub fn parse_int(i: &[u8]) -> IResult<&[u8], i32> {
     number::complete::le_i32(i)
 }
 
-/// Parse bool
 pub fn parse_bool(i: &[u8]) -> IResult<&[u8], bool> {
     map(number::complete::le_u8, |b| b == 1).parse(i)
 }
 
-/// Parse signed short
 pub fn parse_short(i: &[u8]) -> IResult<&[u8], i16> {
     number::complete::le_i16(i)
 }

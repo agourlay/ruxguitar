@@ -2,15 +2,16 @@ use crate::audio::midi_event::MidiEvent;
 use crate::parser::song_parser::QUARTER_TIME;
 
 pub struct MidiSequencer {
-    last_tick: u32,                // last Midi tick
-    tick_position: f64,            // exact tick position; the current tick is its integer part
-    needs_init: bool,              // true until the first advance after a reset or seek
-    sorted_events: Vec<MidiEvent>, // sorted Midi events
+    last_tick: u32,
+    /// Exact tick position; the current tick is its integer part.
+    tick_position: f64,
+    /// True until the first advance after a reset or a seek.
+    needs_init: bool,
+    sorted_events: Vec<MidiEvent>,
 }
 
 impl MidiSequencer {
     pub fn new(sorted_events: Vec<MidiEvent>) -> Self {
-        // events are sorted by tick
         assert!(
             sorted_events
                 .as_slice()

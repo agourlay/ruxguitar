@@ -13,7 +13,10 @@ use crate::audio::playback_order::compute_playback_order;
 use crate::config::Config;
 use crate::parser::parse_gp_data;
 use crate::parser::song_parser::{GpVersion, MeasureHeader, QUARTER_TIME, Song};
-use crate::ui::icons::{count_in_icon, metronome_icon, mute_icon, open_icon, pause_icon, play_icon, solo_icon, stop_icon};
+use crate::ui::icons::{
+    count_in_icon, metronome_icon, mute_icon, open_icon, pause_icon, play_icon, solo_icon,
+    stop_icon,
+};
 use crate::ui::picker::{FilePickerError, load_file, open_file_dialog};
 use crate::ui::tablature::Tablature;
 use crate::ui::tuning::tuning_label;
@@ -30,22 +33,24 @@ use tokio::sync::Notify;
 const ICONS_FONT: &[u8] = include_bytes!("../../resources/icons.ttf");
 
 pub struct RuxApplication {
-    song_info: Option<SongDisplayInfo>, // parsed song
-    track_selection: TrackSelection,    // selected track
-    all_tracks: Vec<TrackSelection>,    // all possible tracks
-    tablature: Option<Tablature>,       // loaded tablature
-    tablature_id: Id,                   // tablature container id
-    tempo_selection: TempoSelection,    // tempo percentage for playback
-    audio_player: Option<AudioPlayer>,  // audio player
-    metronome_enabled: bool,            // metronome user preference
-    count_in_enabled: bool,             // count-in user preference
-    tab_file_is_loading: bool,          // file loading flag in progress
-    sound_font_file: Option<PathBuf>,   // sound font file
-    current_tick: Arc<AtomicU32>,       // latest tick published by audio callback
-    beat_notify: Arc<Notify>,           // wake-up signal from audio callback
-    config: Config,                     // local configuration
-    error_message: Option<String>,      // error message to display
-    is_fullscreen: bool,                // F11 toggles fullscreen + hides chrome
+    song_info: Option<SongDisplayInfo>,
+    track_selection: TrackSelection,
+    all_tracks: Vec<TrackSelection>,
+    tablature: Option<Tablature>,
+    tablature_id: Id,
+    tempo_selection: TempoSelection,
+    audio_player: Option<AudioPlayer>,
+    /// Playback preferences kept at the app level so they survive reloading a file.
+    metronome_enabled: bool,
+    count_in_enabled: bool,
+    tab_file_is_loading: bool,
+    sound_font_file: Option<PathBuf>,
+    /// Latest tick published by the audio callback, with its wake-up signal.
+    current_tick: Arc<AtomicU32>,
+    beat_notify: Arc<Notify>,
+    config: Config,
+    error_message: Option<String>,
+    is_fullscreen: bool,
 }
 
 #[derive(Debug)]
@@ -113,19 +118,17 @@ impl TempoSelection {
         Self { percentage }
     }
 
-    const PRESET: [Self; 9] = {
-        [
-            Self::new(25),
-            Self::new(50),
-            Self::new(60),
-            Self::new(70),
-            Self::new(80),
-            Self::new(90),
-            Self::new(100),
-            Self::new(150),
-            Self::new(200),
-        ]
-    };
+    const PRESET: [Self; 9] = [
+        Self::new(25),
+        Self::new(50),
+        Self::new(60),
+        Self::new(70),
+        Self::new(80),
+        Self::new(90),
+        Self::new(100),
+        Self::new(150),
+        Self::new(200),
+    ];
 }
 
 impl Display for TempoSelection {
@@ -163,29 +166,34 @@ impl Display for TrackSelection {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    OpenFileDialog,    // open file dialog
-    OpenFile(PathBuf), // open file path
-    FileOpened(Result<(Vec<u8>, Option<PathBuf>, String), FilePickerError>), // file content, parent folder & file name
-    TrackSelected(TrackSelection),                                           // track selection
-    FocusMeasure(usize, usize),    // measure and beat clicked in the tablature
-    FocusTick(u32),                // focus on a specific tick in the tablature
-    NextMeasure,                   // focus next measure
-    PreviousMeasure,               // focus previous measure
-    PlayPause,                     // toggle play/pause
-    StopPlayer,                    // stop playback
-    ToggleSolo,                    // toggle solo mode
-    ToggleMute,                    // toggle mute of the current track
-    ToggleMetronome,               // toggle metronome clicks
-    ToggleCountIn,                 // toggle count-in measure before playback
-    WindowResized,                 // window resized
-    TablatureResized(Size),        // tablature resized
-    TempoSelected(TempoSelection), // tempo selected
-    IncreaseTempo,                 // increase tempo
-    DecreaseTempo,                 // decrease selection
-    ClearError,                    // clear error message
-    ReportError(String),           // report error message
-    ToggleFullscreen,              // toggle fullscreen + hide chrome
-    MasterVolumeChanged(f32),      // master volume slider (0.0 .. 1.0)
+    OpenFileDialog,
+    OpenFile(PathBuf),
+    /// File content, parent folder and file name.
+    FileOpened(Result<(Vec<u8>, Option<PathBuf>, String), FilePickerError>),
+    TrackSelected(TrackSelection),
+    /// Measure and beat clicked in the tablature.
+    FocusMeasure(usize, usize),
+    FocusTick(u32),
+    NextMeasure,
+    PreviousMeasure,
+    PlayPause,
+    StopPlayer,
+    ToggleSolo,
+    /// Toggle mute of the currently selected track.
+    ToggleMute,
+    ToggleMetronome,
+    ToggleCountIn,
+    WindowResized,
+    TablatureResized(Size),
+    TempoSelected(TempoSelection),
+    IncreaseTempo,
+    DecreaseTempo,
+    ClearError,
+    ReportError(String),
+    /// Toggle fullscreen, which also hides the controls and status bar.
+    ToggleFullscreen,
+    /// Master volume slider, in `0.0..=1.0`.
+    MasterVolumeChanged(f32),
 }
 
 impl RuxApplication {
@@ -325,8 +333,7 @@ impl RuxApplication {
                             self.song_info = Some(SongDisplayInfo::new(&song, file_name));
                             // select first track by default
                             let default_track = 0;
-                            let default_track_selection = track_selections[default_track].clone();
-                            self.track_selection = default_track_selection;
+                            self.track_selection = track_selections[default_track].clone();
                             // share song ownership with tablature and player
                             let song_rc = Rc::new(song);
                             let playback_order = compute_playback_order(&song_rc.measure_headers);

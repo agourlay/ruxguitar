@@ -747,7 +747,6 @@ pub struct Note {
     pub effect: NoteEffect,
     pub swap_accidentals: bool,
     pub kind: NoteType,
-    tuplet: Option<i8>,
 }
 
 impl Note {
@@ -759,7 +758,6 @@ impl Note {
             effect: note_effect,
             swap_accidentals: false,
             kind: NoteType::Rest,
-            tuplet: None,
         }
     }
 }

@@ -1,5 +1,7 @@
-/// Returns a human-readable tuning label for a stringed track.
-/// Returns `None` for tracks with no strings (non-string instruments).
+use crate::parser::song_parser::SHARP_NOTES;
+
+/// A human-readable tuning label for a stringed track, or `None` for tracks
+/// with no strings (non-string instruments).
 pub fn tuning_label(strings: &[(i32, i32)]) -> Option<String> {
     if strings.is_empty() {
         return None;
@@ -58,10 +60,7 @@ fn preset_name(pitches_sorted: &[i32]) -> Option<&'static str> {
 }
 
 fn note_name(midi_pitch: i32) -> String {
-    const NOTES: [&str; 12] = [
-        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-    ];
-    let note = NOTES[midi_pitch.rem_euclid(12) as usize];
+    let note = SHARP_NOTES[midi_pitch.rem_euclid(12) as usize];
     let octave = midi_pitch / 12 - 1;
     format!("{note}{octave}")
 }

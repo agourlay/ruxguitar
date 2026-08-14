@@ -24,7 +24,6 @@ impl Config {
 
     pub fn set_tabs_folder(&mut self, new_tabs_folder: Option<PathBuf>) -> Result<(), RuxError> {
         if self.tabs_folder == new_tabs_folder {
-            // no op
             Ok(())
         } else {
             self.tabs_folder = new_tabs_folder;

@@ -51,27 +51,21 @@ impl Tablature {
     }
 
     pub fn load_measures(&mut self) {
-        // clear existing measures
         self.canvas_measures.clear();
 
-        // load new measures
-        let track = &self.song.tracks[self.track_id];
-        let measures = track.measures.len();
+        let measures = self.song.tracks[self.track_id].measures.len();
         for i in 0..measures {
-            let measure_header = &self.song.measure_headers[i];
-            let previous_measure_header = if i > 0 {
-                self.song.measure_headers.get(i - 1)
-            } else {
-                None
-            };
-            let focused = self.focused_measure == i;
-            let has_time_signature = i == 0
-                || measure_header.time_signature != previous_measure_header.unwrap().time_signature;
+            // the first measure always shows its time signature, the others
+            // only when it changed
+            let has_time_signature = i.checked_sub(1).is_none_or(|previous| {
+                self.song.measure_headers[i].time_signature
+                    != self.song.measure_headers[previous].time_signature
+            });
             let measure = CanvasMeasure::new(
                 i,
                 self.track_id,
                 self.song.clone(),
-                focused,
+                self.focused_measure == i,
                 has_time_signature,
             );
             if i == 0 {
@@ -111,27 +105,8 @@ impl Tablature {
         }
     }
 
-    /// Get the measure and beat indexes for the given tick
-    /// The measure index is the first measure containing the tick
-    ///
-    /// | measure 0 | measure 1 | measure 2 | measure 3 |
-    /// |-----------|-----------|-----------|-----------|
-    /// | 0         | 100       | 200       | 300       |
-    ///
-    ///
-    /// tick: 50
-    /// measure_index: 0
-    ///
-    /// tick: 100
-    /// measure_index: 1
-    ///
-    /// tick: 150
-    /// measure_index: 1
-    ///
-    /// tick: 250
-    /// measure_index: 2
-    ///
-    /// Returns the measure and beat indexes
+    /// The measure and beat containing `tick`, i.e. the last ones starting at
+    /// or before it.
     pub fn get_measure_beat_indexes_for_tick(&self, track_id: usize, tick: u32) -> (usize, usize) {
         // range scan on `measure_per_tick` to find measure index and playback start tick
         let (playback_start, measure_index) = self
@@ -283,7 +258,6 @@ impl Tablature {
     }
 
     pub fn update_track(&mut self, track: usize) {
-        // No op if track is the same
         if track != self.track_id {
             self.track_id = track;
             self.load_measures();

@@ -5,11 +5,9 @@ pub const FIRST_TICK: u32 = 1;
 /// Try to keep this struct as small as possible because there will be a lot of them.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct MidiEvent {
-    /// The tick at which the event occurs.
     pub tick: u32,
-    /// The type of the event.
     pub event: MidiEventType,
-    /// The track number of the event. None = info event.
+    /// `None` for info events (tempo changes), which belong to no track.
     pub track: Option<u8>,
 }
 
@@ -32,28 +30,25 @@ impl MidiEvent {
         velocity: i16,
         channel: i32,
     ) -> Self {
-        let event = MidiEventType::note_on(channel, key, velocity);
         Self {
             tick,
-            event,
+            event: MidiEventType::NoteOn(channel, key, velocity),
             track: Some(track as u8),
         }
     }
 
     pub const fn new_note_off(tick: u32, track: usize, key: i32, channel: i32) -> Self {
-        let event = MidiEventType::note_off(channel, key);
         Self {
             tick,
-            event,
+            event: MidiEventType::NoteOff(channel, key),
             track: Some(track as u8),
         }
     }
 
     pub const fn new_tempo_change(tick: u32, tempo: u32) -> Self {
-        let event = MidiEventType::tempo_change(tempo);
         Self {
             tick,
-            event,
+            event: MidiEventType::TempoChange(tempo),
             track: None,
         }
     }
@@ -66,10 +61,9 @@ impl MidiEvent {
         data1: i32,
         data2: i32,
     ) -> Self {
-        let event = MidiEventType::midi_message(channel, command, data1, data2);
         Self {
             tick,
-            event,
+            event: MidiEventType::MidiMessage(channel, command, data1, data2),
             track: Some(track as u8),
         }
     }
@@ -80,23 +74,5 @@ pub enum MidiEventType {
     NoteOn(i32, i32, i16),           // channel, note, velocity
     NoteOff(i32, i32),               // channel, note
     TempoChange(u32),                // tempo in BPM
-    MidiMessage(i32, i32, i32, i32), // channel: i32, command: i32, data1: i32, data2: i32
-}
-
-impl MidiEventType {
-    const fn note_on(channel: i32, key: i32, velocity: i16) -> Self {
-        Self::NoteOn(channel, key, velocity)
-    }
-
-    const fn note_off(channel: i32, key: i32) -> Self {
-        Self::NoteOff(channel, key)
-    }
-
-    const fn tempo_change(tempo: u32) -> Self {
-        Self::TempoChange(tempo)
-    }
-
-    const fn midi_message(channel: i32, command: i32, data1: i32, data2: i32) -> Self {
-        Self::MidiMessage(channel, command, data1, data2)
-    }
+    MidiMessage(i32, i32, i32, i32), // channel, command, data1, data2
 }

@@ -23,45 +23,36 @@ fn main() {
 }
 
 pub fn main_result() -> Result<(), RuxError> {
-    // setup logging
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("ruxguitar=info"))
         .init();
 
-    // args
     let mut args = CliArgs::parse();
     let sound_font_file = args.sound_font_file.take();
     let tab_file_path = args.tab_file_path.take();
 
-    // check if sound font file exists
     if let Some(sound_font_file) = &sound_font_file {
         if !sound_font_file.exists() {
-            let err = ConfigError(format!("Sound font file not found {sound_font_file:?}"));
-            return Err(err);
+            return Err(ConfigError(format!(
+                "Sound font file not found {sound_font_file:?}"
+            )));
         }
         log::info!("Starting with custom sound font file {sound_font_file:?}");
     }
 
-    // check if tab file exists
     if let Some(tab_file_path) = &tab_file_path {
         if !tab_file_path.exists() {
-            let err = ConfigError(format!("Tab file not found {tab_file_path:?}"));
-            return Err(err);
+            return Err(ConfigError(format!("Tab file not found {tab_file_path:?}")));
         }
         log::info!("Starting with tab file {tab_file_path:?}");
     }
 
-    // read local config
-    let local_config = Config::read_config()?;
-
-    // bundle application args
     let args = ApplicationArgs {
         sound_font_bank: sound_font_file,
         tab_file_path,
         no_antialiasing: args.no_antialiasing,
-        local_config,
+        local_config: Config::read_config()?,
     };
 
-    // go!
     RuxApplication::start(args)?;
     Ok(())
 }

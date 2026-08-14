@@ -66,17 +66,15 @@ fn print_event(event: &MidiEvent) -> String {
 
 fn validate_gold_rendered_result(events: &[MidiEvent], gold_path: PathBuf) {
     let gold = std::fs::read_to_string(&gold_path).expect("gold file not found!");
-    let mut expected_lines = events.iter().map(print_event);
-    for (i1, l1) in gold.lines().enumerate() {
-        let l2 = expected_lines.next().unwrap();
-        if l1.trim_end() != l2.trim_end() {
-            println!("## GOLD line {} ##", i1 + 1);
-            println!("{}", l1.trim_end());
-            println!("## ACTUAL ##");
-            println!("{}", l2.trim_end());
-            println!("#####");
-            assert_eq!(l1, l2, "line {i1} failed for {gold_path:?}");
-        }
+    let mut actual_lines = events.iter().map(print_event);
+    for (line_number, expected) in gold.lines().enumerate() {
+        let actual = actual_lines.next().unwrap();
+        assert_eq!(
+            expected.trim_end(),
+            actual.trim_end(),
+            "line {} failed for {gold_path:?}",
+            line_number + 1
+        );
     }
 }
 
@@ -102,11 +100,6 @@ fn test_midi_events_for_demo_song() {
         .filter(|e| e.track == Some(0))
         .skip(13)
         .collect();
-
-    // print 20 first for debugging
-    // for (i, event) in rhythm_track_events.iter().enumerate().take(20) {
-    //     eprintln!("{} {:?}", i, event);
-    // }
 
     // C5 ON
     let event = &rhythm_track_events[0];
@@ -186,11 +179,6 @@ fn test_midi_events_for_demo_song() {
         .filter(|e| e.track == Some(1))
         .skip(13)
         .collect();
-
-    //print 100 first for debugging
-    for (i, event) in solo_track_events.iter().enumerate().take(100) {
-        eprintln!("{i} {event:?}");
-    }
 
     // trill ON
     let event = &solo_track_events[0];
@@ -302,11 +290,6 @@ fn test_midi_events_for_bleed() {
         .skip(13)
         .collect();
 
-    // print 60 first for debugging
-    // for (i, event) in rhythm_track_events.iter().enumerate().take(100) {
-    //     eprintln!("{} {:?}", i, event);
-    // }
-
     let event = &rhythm_track_events[44];
     assert_eq!(event.tick, 4800);
     assert_eq!(event.track, Some(0));
@@ -336,21 +319,6 @@ fn test_midi_events_for_bleed() {
     assert_eq!(event.tick, 5395);
     assert_eq!(event.track, Some(0));
     assert!(matches!(event.event, MidiEventType::NoteOff(0, 39)));
-
-    let event = &rhythm_track_events[50];
-    assert_eq!(event.tick, 5400);
-    assert_eq!(event.track, Some(0));
-    assert!(matches!(event.event, MidiEventType::NoteOn(0, 39, 95)));
-
-    let event = &rhythm_track_events[51];
-    assert_eq!(event.tick, 5515);
-    assert_eq!(event.track, Some(0));
-    assert!(matches!(event.event, MidiEventType::NoteOff(0, 39)));
-
-    let event = &rhythm_track_events[52];
-    assert_eq!(event.tick, 5520);
-    assert_eq!(event.track, Some(0));
-    assert!(matches!(event.event, MidiEventType::NoteOn(0, 39, 95)));
 
     let event = &rhythm_track_events[50];
     assert_eq!(event.tick, 5400);
