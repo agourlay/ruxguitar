@@ -32,8 +32,6 @@ use tokio::sync::Notify;
 
 const ICONS_FONT: &[u8] = include_bytes!("../../resources/icons.ttf");
 
-/// Frame interval of the playback scroll animation (~30 fps).
-const SCROLL_FRAME_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33);
 
 pub struct RuxApplication {
     song_info: Option<SongDisplayInfo>,
@@ -177,7 +175,6 @@ pub enum Message {
     /// Measure and beat clicked in the tablature.
     FocusMeasure(usize, usize),
     FocusTick(u32),
-    ScrollTick,                    // animation frame driving the playback scroll
     NextMeasure,
     PreviousMeasure,
     PlayPause,
@@ -258,7 +255,7 @@ impl RuxApplication {
             return Task::none();
         };
         tablature.focus_on_measure(measure_id);
-        let scroll_offset = tablature.scroll_offset_for_measure(measure_id);
+        let scroll_offset = tablature.page_scroll_offset(measure_id);
         let scroll_id = tablature.scroll_id.clone();
         if let Some(audio_player) = &self.audio_player {
             audio_player.focus_measure_at(measure_id, 0);
@@ -399,22 +396,21 @@ impl RuxApplication {
                 Task::none()
             }
             Message::FocusTick(tick) => {
-                // only the highlight moves here: ScrollTick owns the scrolling
-                // while playing, so the view glides instead of jumping
-                if let Some(tablature) = &mut self.tablature {
-                    tablature.focus_on_tick(tick);
-                }
-                Task::none()
-            }
-            Message::ScrollTick => {
-                let Some(tablature) = &self.tablature else {
+                let Some(tablature) = &mut self.tablature else {
                     return Task::none();
                 };
-                let tick = self.current_tick.load(Ordering::Relaxed);
-                let offset = tablature.playback_scroll_offset(tick);
-                scroll_to(
-                    tablature.scroll_id.clone(),
-                    AbsoluteOffset { x: 0.0, y: offset },
+                tablature.focus_on_tick(tick);
+                // hold the page still while it is being read, turn it when
+                // playback moves past it
+                let focused = tablature.focused_measure();
+                tablature.page_scroll_offset(focused).map_or_else(
+                    Task::none,
+                    |offset| {
+                        scroll_to(
+                            tablature.scroll_id.clone(),
+                            AbsoluteOffset { x: 0.0, y: offset },
+                        )
+                    },
                 )
             }
             Message::NextMeasure => {
@@ -502,7 +498,10 @@ impl RuxApplication {
             }
             Message::TablatureResized(tablature_container_size) => {
                 if let Some(tablature) = &mut self.tablature {
-                    tablature.update_container_width(tablature_container_size.width);
+                    tablature.update_container_size(
+                        tablature_container_size.width,
+                        tablature_container_size.height,
+                    );
                 }
                 Task::none()
             }
@@ -824,17 +823,6 @@ impl RuxApplication {
             BeatSubscriptionData(self.current_tick.clone(), self.beat_notify.clone()),
             |data| Self::audio_player_beat_subscription(data.0.clone(), data.1.clone()),
         ));
-
-        // playback scroll animation, only while the song is playing
-        if self
-            .audio_player
-            .as_ref()
-            .is_some_and(AudioPlayer::is_playing)
-        {
-            subscriptions.push(
-                iced::time::every(SCROLL_FRAME_INTERVAL).map(|_| Message::ScrollTick),
-            );
-        }
 
         let window_resized = window::resize_events().map(|_| Message::WindowResized);
         subscriptions.push(window_resized);
