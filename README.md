@@ -42,6 +42,7 @@ Options:
       --sound-font-file <SOUND_FONT_FILE>  Optional path to a sound font file
       --tab-file-path <TAB_FILE_PATH>      Optional path to tab file to by-pass the file picker
       --no-antialiasing                    Disable antialiasing
+      --theme <THEME>                      Force the color theme [possible values: light, dark]
   -h, --help                               Print help
   -V, --version                            Print version
 ```
@@ -70,6 +71,9 @@ For instance I like to use `FluidR3_GM.sf2` which is present on most systems and
 
 - **Why are the strings not rendered on the tablature?**
   - You might need to disable antialiasing using the `--no-antialiasing` option.
+
+- **Why does the application not follow my desktop's light or dark theme?**
+  - On macOS and Windows it does. On Linux the windowing layer reports no theme preference, so the application keeps its dark theme. Use `--theme light` or `--theme dark` to pick one.
 
 - **Does it run on Windows 7 or Windows 8?**
   - The last compatible release with those versions of Windows is [v0.6.3](https://github.com/agourlay/ruxguitar/releases/tag/v0.6.3).

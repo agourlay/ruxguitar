@@ -70,7 +70,7 @@ pub struct CliArgs {
     /// Disable antialiasing.
     #[arg(long, default_value_t = false)]
     no_antialiasing: bool,
-    /// Force the color theme instead of following the desktop.
+    /// Force the color theme.
     #[arg(long, value_enum)]
     theme: Option<ThemeChoice>,
 }
