@@ -4,7 +4,7 @@ use crate::parser::song_parser::{
     TremoloPickingEffect,
 };
 use crate::ui::application::Message;
-use crate::ui::utils::{COLOR_DARK_RED, COLOR_GRAY};
+use crate::ui::utils::TablatureColors;
 use iced::advanced::mouse;
 use iced::advanced::text::Shaping::Auto;
 use iced::mouse::Cursor;
@@ -12,6 +12,7 @@ use iced::widget::canvas::{Cache, Event, Frame, Geometry, LineDash, Path, Stroke
 use iced::widget::text::Alignment;
 use iced::widget::{Action, Canvas, canvas};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
+use std::cell::Cell;
 use std::rc::Rc;
 
 // Unicode symbols for musical notation
@@ -218,6 +219,8 @@ pub struct CanvasMeasure {
     // rows this measure needs, and the rows granted to its line
     row_needs: RowSpacing,
     row_spacing: RowSpacing,
+    // colors the cached geometry was painted with
+    painted_colors: Cell<Option<TablatureColors>>,
     has_tempo_label: bool,
 }
 
@@ -277,6 +280,7 @@ impl CanvasMeasure {
             is_first_on_line: false,
             row_needs,
             row_spacing: row_needs,
+            painted_colors: Cell::new(None),
             has_tempo_label,
         }
     }
@@ -402,10 +406,17 @@ impl canvas::Program<Message> for CanvasMeasure {
         &self,
         _state: &Self::State,
         renderer: &Renderer,
-        _theme: &Theme,
+        theme: &Theme,
         bounds: Rectangle,
         _cursor: Cursor,
     ) -> Vec<Geometry> {
+        let colors = TablatureColors::of(theme);
+        // the cached geometry holds the colors it was painted with, so a
+        // change of theme has to repaint it
+        if self.painted_colors.get() != Some(colors) {
+            self.painted_colors.set(Some(colors));
+            self.canvas_cache.clear();
+        }
         // the cache will not redraw its geometry unless the dimensions of its layer change, or it is explicitly cleared.
         let tab = self.canvas_cache.draw(renderer, bounds.size(), |frame| {
             log::debug!("Re-drawing measure {}", self.measure_id);
@@ -430,6 +441,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             if self.is_focused {
                 draw_focused_box(
                     frame,
+                    colors,
                     actual_width,
                     vertical_measure_height,
                     measure_start_x,
@@ -451,7 +463,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                     measure_start_y + local_start_y,
                 );
                 let line = Path::line(start_point, end_point);
-                let stroke = Stroke::default().with_width(0.8).with_color(COLOR_GRAY);
+                let stroke = Stroke::default().with_width(0.8).with_color(colors.string_line);
                 frame.stroke(&line, stroke);
             }
 
@@ -463,6 +475,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             if measure_header.repeat_open {
                 draw_open_repeat(
                     frame,
+                    colors,
                     measure_start_x,
                     measure_start_y,
                     vertical_measure_height,
@@ -470,6 +483,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             } else if self.measure_id == 0 {
                 draw_open_section(
                     frame,
+                    colors,
                     measure_start_x,
                     measure_start_y,
                     vertical_measure_height,
@@ -479,6 +493,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                 // otherwise it doubles with the previous measure's end line
                 draw_measure_vertical_line(
                     frame,
+                    colors,
                     vertical_measure_height,
                     measure_start_x,
                     measure_start_y,
@@ -489,6 +504,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             if self.has_time_signature {
                 draw_time_signature(
                     frame,
+                    colors,
                     &measure_header.time_signature,
                     measure_start_x,
                     measure_start_y,
@@ -506,7 +522,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                 let tempo_text = Text {
                     shaping: Auto,
                     content: tempo_label,
-                    color: Color::WHITE,
+                    color: colors.foreground,
                     size: 11.0.into(),
                     position: Point::new(measure_start_x, rows.marker_y()),
                     ..Text::default()
@@ -520,7 +536,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                 let marker_text = Text {
                     shaping: Auto,
                     content: marker.title.clone(),
-                    color: COLOR_DARK_RED,
+                    color: colors.accent,
                     size: 10.0.into(),
                     position: Point::new(
                         measure_start_x + MEASURE_NOTES_PADDING + tempo_label_len as f32,
@@ -535,7 +551,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             let measure_count_text = Text {
                 shaping: Auto,
                 content: format!("{}", self.measure_id + 1),
-                color: COLOR_DARK_RED,
+                color: colors.accent,
                 size: 10.0.into(),
                 position: Point::new(measure_start_x, measure_start_y - 15.0),
                 ..Text::default()
@@ -546,6 +562,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             if measure_header.repeat_alternative > 0 {
                 draw_alternative_ending(
                     frame,
+                    colors,
                     measure_header.repeat_alternative,
                     measure_start_x,
                     actual_width,
@@ -578,9 +595,9 @@ impl canvas::Program<Message> for CanvasMeasure {
             for (b_id, beat) in beats.iter().enumerate() {
                 // pick color if beat under focus
                 let beat_color = if self.is_focused && b_id == self.focused_beat {
-                    COLOR_DARK_RED
+                    colors.accent
                 } else {
-                    Color::WHITE
+                    colors.foreground
                 };
                 let beat_width = self.beat_widths[b_id] * width_scale;
                 // the inline effect glyphs may not reach into the space the
@@ -589,6 +606,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                 // draw beat
                 draw_beat(
                     frame,
+                    colors,
                     beat_position_x,
                     beat_width - next_grace,
                     width_scale,
@@ -605,7 +623,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             // tuplet brackets span consecutive beats of the same division
             if rows.tuplet > 0.0 {
                 for (enters, x1, x2) in tuplet_runs(beats, &beat_positions) {
-                    draw_tuplet_bracket(frame, enters, x1, x2, rows.tuplet_y());
+                    draw_tuplet_bracket(frame, colors, enters, x1, x2, rows.tuplet_y());
                 }
             }
 
@@ -613,6 +631,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             if measure_header.repeat_close > 0 {
                 draw_close_repeat(
                     frame,
+                    colors,
                     measure_start_x + actual_width,
                     measure_start_y,
                     vertical_measure_height,
@@ -621,6 +640,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             } else if next_measure_header.is_none() {
                 draw_end_section(
                     frame,
+                    colors,
                     measure_start_x + actual_width,
                     measure_start_y,
                     vertical_measure_height,
@@ -629,6 +649,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                 // vertical measure end
                 draw_measure_vertical_line(
                     frame,
+                    colors,
                     vertical_measure_height,
                     measure_start_x + actual_width, // end of measure
                     measure_start_y,
@@ -642,6 +663,7 @@ impl canvas::Program<Message> for CanvasMeasure {
 
 fn draw_focused_box(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     total_measure_len: f32,
     vertical_measure_height: f32,
     measure_start_x: f32,
@@ -673,12 +695,13 @@ fn draw_focused_box(
 
     let top_left = Point::new(x, y);
     let rectangle_size = Size::new(width, height);
-    let stroke = Stroke::default().with_width(1.0).with_color(Color::WHITE);
+    let stroke = Stroke::default().with_width(1.0).with_color(colors.foreground);
     frame.stroke_rectangle(top_left, rectangle_size, stroke);
 }
 
 fn draw_measure_vertical_line(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     vertical_measure_height: f32,
     measure_start_x: f32,
     measure_start_y: f32,
@@ -686,7 +709,7 @@ fn draw_measure_vertical_line(
     let start_point = Point::new(measure_start_x, measure_start_y);
     let end_point = Point::new(measure_start_x, measure_start_y + vertical_measure_height);
     let vertical_line = Path::line(start_point, end_point);
-    let stroke = Stroke::default().with_width(1.5).with_color(Color::WHITE);
+    let stroke = Stroke::default().with_width(1.5).with_color(colors.foreground);
     frame.stroke(&vertical_line, stroke);
 }
 
@@ -762,6 +785,7 @@ fn multiple_bend_conflicts(beat: &Beat, note: &Note, movements: &[i32]) -> bool 
 #[allow(clippy::too_many_arguments)]
 fn draw_beat(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     beat_position_x: f32,
     // span usable for glyphs drawn after the note, up to the next beat's grace
     beat_span: f32,
@@ -777,7 +801,7 @@ fn draw_beat(
         let note_effect_text = Text {
             shaping: Auto,
             content: chord.name.clone(),
-            color: Color::WHITE,
+            color: colors.foreground,
             size: 8.0.into(),
             position: Point::new(beat_position_x + 3.0, rows.chord_y()),
             ..Text::default()
@@ -785,18 +809,19 @@ fn draw_beat(
         frame.fill_text(note_effect_text);
     }
     if !beat.effect.stroke.is_empty() && !beat.notes.is_empty() {
-        draw_stroke_arrow(frame, beat, beat_position_x, measure_start_y);
+        draw_stroke_arrow(frame, colors, beat, beat_position_x, measure_start_y);
     }
     if beat.effect.pick_stroke != BeatStrokeDirection::None {
         draw_pick_stroke(
             frame,
+            colors,
             &beat.effect.pick_stroke,
             beat_position_x,
             rows.pick_stroke_y(),
         );
     }
     if beat.notes.iter().any(|n| n.effect.staccato) {
-        draw_staccato_dot(frame, beat, beat_position_x, measure_start_y);
+        draw_staccato_dot(frame, colors, beat, beat_position_x, measure_start_y);
     }
     if let Some(tremolo_picking) = beat
         .notes
@@ -805,6 +830,7 @@ fn draw_beat(
     {
         draw_tremolo_picking(
             frame,
+            colors,
             tremolo_picking,
             beat_position_x,
             measure_start_y + vertical_measure_height,
@@ -819,6 +845,7 @@ fn draw_beat(
             .is_some_and(|movements| !multiple_bend_conflicts(beat, note, movements));
         draw_note(
             frame,
+            colors,
             measure_start_y,
             beat_position_x,
             beat_span,
@@ -838,7 +865,7 @@ fn draw_beat(
         let note_effect_text = Text {
             shaping: Auto,
             content: merged_annotations,
-            color: Color::WHITE,
+            color: colors.foreground,
             size: 9.0.into(),
             position: Point::new(beat_position_x - 3.0, y_position),
             ..Text::default()
@@ -851,7 +878,7 @@ fn draw_beat(
         let beat_text = Text {
             shaping: Auto,
             content: beat.text.clone(),
-            color: Color::WHITE,
+            color: colors.foreground,
             size: 8.0.into(),
             position: Point::new(beat_position_x + 3.0, rows.text_y()),
             ..Text::default()
@@ -863,6 +890,7 @@ fn draw_beat(
 #[allow(clippy::too_many_arguments)]
 fn draw_note(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     measure_start_y: f32,
     beat_position_x: f32,
     width_per_beat: f32,
@@ -900,7 +928,7 @@ fn draw_note(
         let grace_text = Text {
             shaping: Auto,
             content: label,
-            color: Color::WHITE,
+            color: colors.foreground,
             size: 7.0.into(),
             position: Point::new(
                 note_position_x - note_half - grace_half - GRACE_GAP,
@@ -917,6 +945,7 @@ fn draw_note(
     if let Some(movements) = bend_movements {
         draw_bend(
             frame,
+            colors,
             movements,
             note_position_x,
             note_position_y,
@@ -936,7 +965,7 @@ fn draw_note(
         let note_effect_text = Text {
             shaping: Auto,
             content: inlined_annotation_label,
-            color: Color::WHITE,
+            color: colors.foreground,
             size: inlined_annotation_width.into(),
             position: Point::new(annotation_position_x, note_position_y),
             ..Text::default()
@@ -957,6 +986,7 @@ const BEND_AMPLITUDES: [&str; 13] = [
 #[allow(clippy::too_many_arguments)]
 fn draw_bend(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     movements: &[i32],
     note_position_x: f32,
     note_position_y: f32,
@@ -966,7 +996,7 @@ fn draw_bend(
     measure_start_y: f32,
     show_amplitude: bool,
 ) {
-    let stroke = Stroke::default().with_width(0.8).with_color(Color::WHITE);
+    let stroke = Stroke::default().with_width(0.8).with_color(colors.foreground);
     let arrow_size = 2.5;
     // shrink the arrows with the beat when the measure is compressed, so
     // they stay within the width reserved by beat_natural_width
@@ -1060,7 +1090,7 @@ fn draw_bend(
                 let amplitude_text = Text {
                     shaping: Auto,
                     content: (*label).to_string(),
-                    color: Color::WHITE,
+                    color: colors.foreground,
                     size: 8.0.into(),
                     position: Point::new(x_amplitude, amplitude_y),
                     ..Text::default()
@@ -1076,6 +1106,7 @@ fn draw_bend(
 
 fn draw_open_section(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     measure_start_x: f32,
     measure_start_y: f32,
     vertical_measure_height: f32,
@@ -1086,12 +1117,13 @@ fn draw_open_section(
     let start_point = Point::new(position_x, measure_start_y);
     let end_point = Point::new(position_x, measure_start_y + vertical_measure_height);
     let tick_vertical_line = Path::line(start_point, end_point);
-    let stroke = Stroke::default().with_width(4.0).with_color(Color::WHITE);
+    let stroke = Stroke::default().with_width(4.0).with_color(colors.foreground);
     frame.stroke(&tick_vertical_line, stroke);
 
     // then thin one
     draw_measure_vertical_line(
         frame,
+        colors,
         vertical_measure_height,
         measure_start_x + 6.0,
         measure_start_y,
@@ -1100,12 +1132,14 @@ fn draw_open_section(
 
 fn draw_open_repeat(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     measure_start_x: f32,
     measure_start_y: f32,
     vertical_measure_height: f32,
 ) {
     draw_open_section(
         frame,
+        colors,
         measure_start_x,
         measure_start_y,
         vertical_measure_height,
@@ -1113,6 +1147,7 @@ fn draw_open_repeat(
     // draw repeat dots
     draw_repeat_dots(
         frame,
+        colors,
         measure_start_x + HALF_BEAT_LENGTH,
         measure_start_y,
         vertical_measure_height,
@@ -1121,6 +1156,7 @@ fn draw_open_repeat(
 
 fn draw_close_repeat(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     measure_end_x: f32,
     measure_start_y: f32,
     vertical_measure_height: f32,
@@ -1128,6 +1164,7 @@ fn draw_close_repeat(
 ) {
     draw_end_section(
         frame,
+        colors,
         measure_end_x,
         measure_start_y,
         vertical_measure_height,
@@ -1135,6 +1172,7 @@ fn draw_close_repeat(
     // draw repeat dots
     draw_repeat_dots(
         frame,
+        colors,
         measure_end_x - HALF_BEAT_LENGTH,
         measure_start_y,
         vertical_measure_height,
@@ -1143,7 +1181,7 @@ fn draw_close_repeat(
     let repeat_count_text = Text {
         shaping: Auto,
         content: format!("x{repeat_count}"),
-        color: Color::WHITE,
+        color: colors.foreground,
         size: 9.0.into(),
         position: Point::new(measure_end_x - 12.0, measure_start_y - 15.0),
         ..Text::default()
@@ -1155,11 +1193,12 @@ fn draw_close_repeat(
 /// an up stroke is a `∨`, a down stroke the bracket-shaped `∏`.
 fn draw_pick_stroke(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     direction: &BeatStrokeDirection,
     beat_position_x: f32,
     y: f32,
 ) {
-    let stroke = Stroke::default().with_width(0.8).with_color(Color::WHITE);
+    let stroke = Stroke::default().with_width(0.8).with_color(colors.foreground);
     let x = beat_position_x + 3.5;
     match direction {
         BeatStrokeDirection::Up => {
@@ -1179,7 +1218,7 @@ fn draw_pick_stroke(
             let top_bar = Path::line(Point::new(x - 3.0, y), Point::new(x + 3.0, y));
             frame.stroke(
                 &top_bar,
-                Stroke::default().with_width(2.0).with_color(Color::WHITE),
+                Stroke::default().with_width(2.0).with_color(colors.foreground),
             );
         }
         BeatStrokeDirection::None => {}
@@ -1190,6 +1229,7 @@ fn draw_pick_stroke(
 /// score mode; the dot above the fret number is the tab equivalent).
 fn draw_staccato_dot(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     beat: &Beat,
     beat_position_x: f32,
     measure_start_y: f32,
@@ -1197,13 +1237,14 @@ fn draw_staccato_dot(
     let min_string = beat.notes.iter().map(|n| n.string).min().unwrap_or(1);
     let top_note_y = measure_start_y + (f32::from(min_string) - 1.0) * STRING_LINE_HEIGHT - 5.0;
     let center = Point::new(beat_position_x + 3.5, top_note_y - 3.0);
-    frame.fill(&Path::circle(center, 1.3), Color::WHITE);
+    frame.fill(&Path::circle(center, 1.3), colors.foreground);
 }
 
 /// Tremolo picking slashes below the tab, one per duration halving from an
 /// eighth note, like TuxGuitar's tablature-only rendering.
 fn draw_tremolo_picking(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     tremolo_picking: &TremoloPickingEffect,
     beat_position_x: f32,
     tab_bottom_y: f32,
@@ -1213,7 +1254,7 @@ fn draw_tremolo_picking(
         v if v >= 16 => 2,
         _ => 1,
     };
-    let stroke = Stroke::default().with_width(1.2).with_color(Color::WHITE);
+    let stroke = Stroke::default().with_width(1.2).with_color(colors.foreground);
     let x = beat_position_x + 3.5;
     let mut y = tab_bottom_y + 5.0;
     for _ in 0..slashes {
@@ -1227,6 +1268,7 @@ fn draw_tremolo_picking(
 
 fn draw_stroke_arrow(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     beat: &Beat,
     beat_position_x: f32,
     measure_start_y: f32,
@@ -1238,7 +1280,7 @@ fn draw_stroke_arrow(
     let arrow_x = beat_position_x + 10.0;
     let arrow_size = 3.0;
 
-    let stroke = Stroke::default().with_width(0.8).with_color(Color::WHITE);
+    let stroke = Stroke::default().with_width(0.8).with_color(colors.foreground);
 
     // vertical line spanning the chord
     frame.stroke(
@@ -1347,7 +1389,8 @@ impl<'a> TupletRun<'a> {
 /// A tuplet bracket: a horizontal line broken by the group size, with a
 /// tick at each end pointing down towards the notes. A run covering a
 /// single beat has no span to bracket, so only its label is drawn.
-fn draw_tuplet_bracket(frame: &mut Frame<Renderer>, enters: u8, x1: f32, x2: f32, y: f32) {
+fn draw_tuplet_bracket(frame: &mut Frame<Renderer>,
+    colors: TablatureColors, enters: u8, x1: f32, x2: f32, y: f32) {
     const TICK: f32 = 4.0;
     const LABEL_SIZE: f32 = 8.0;
     let has_span = x2 > x1;
@@ -1359,7 +1402,7 @@ fn draw_tuplet_bracket(frame: &mut Frame<Renderer>, enters: u8, x1: f32, x2: f32
     let label_half = label.chars().count() as f32 * LABEL_SIZE / 4.0;
 
     if has_span {
-        let stroke = Stroke::default().with_width(0.8).with_color(Color::WHITE);
+        let stroke = Stroke::default().with_width(0.8).with_color(colors.foreground);
         frame.stroke(
             &Path::line(Point::new(left, y + TICK), Point::new(left, y)),
             stroke,
@@ -1389,7 +1432,7 @@ fn draw_tuplet_bracket(frame: &mut Frame<Renderer>, enters: u8, x1: f32, x2: f32
     let label_text = Text {
         shaping: Auto,
         content: label,
-        color: Color::WHITE,
+        color: colors.foreground,
         size: LABEL_SIZE.into(),
         position: Point::new(center, y - LABEL_SIZE / 2.0),
         align_x: Alignment::Center,
@@ -1400,6 +1443,7 @@ fn draw_tuplet_bracket(frame: &mut Frame<Renderer>, enters: u8, x1: f32, x2: f32
 
 fn draw_alternative_ending(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     repeat_alternative: u8,
     measure_start_x: f32,
     measure_width: f32,
@@ -1409,7 +1453,7 @@ fn draw_alternative_ending(
     let bracket_start = measure_start_x + 2.0;
     let bracket_end = measure_start_x + measure_width;
 
-    let stroke = Stroke::default().with_width(1.0).with_color(Color::WHITE);
+    let stroke = Stroke::default().with_width(1.0).with_color(colors.foreground);
 
     // vertical line down
     let start = Point::new(bracket_start, bracket_y);
@@ -1435,7 +1479,7 @@ fn draw_alternative_ending(
     let label_text = Text {
         shaping: Auto,
         content: label,
-        color: Color::WHITE,
+        color: colors.foreground,
         size: 9.0.into(),
         position: Point::new(bracket_start + 3.0, bracket_y),
         ..Text::default()
@@ -1445,6 +1489,7 @@ fn draw_alternative_ending(
 
 fn draw_repeat_dots(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     start_x: f32,
     start_y: f32,
     vertical_measure_height: f32,
@@ -1456,7 +1501,7 @@ fn draw_repeat_dots(
 
     frame.stroke(
         &circle,
-        Stroke::default().with_width(2.0).with_color(Color::WHITE),
+        Stroke::default().with_width(2.0).with_color(colors.foreground),
     );
 
     // bottom dot
@@ -1466,12 +1511,13 @@ fn draw_repeat_dots(
 
     frame.stroke(
         &circle,
-        Stroke::default().with_width(2.0).with_color(Color::WHITE),
+        Stroke::default().with_width(2.0).with_color(colors.foreground),
     );
 }
 
 fn draw_end_section(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     measure_end_x: f32,
     measure_start_y: f32,
     vertical_measure_height: f32,
@@ -1479,6 +1525,7 @@ fn draw_end_section(
     // draw first thin one
     draw_measure_vertical_line(
         frame,
+        colors,
         vertical_measure_height,
         measure_end_x - 8.0,
         measure_start_y,
@@ -1489,12 +1536,13 @@ fn draw_end_section(
     let start_point = Point::new(position_x, measure_start_y);
     let end_point = Point::new(position_x, measure_start_y + vertical_measure_height);
     let thick_vertical_line = Path::line(start_point, end_point);
-    let stroke = Stroke::default().with_width(4.0).with_color(Color::WHITE);
+    let stroke = Stroke::default().with_width(4.0).with_color(colors.foreground);
     frame.stroke(&thick_vertical_line, stroke);
 }
 
 fn draw_time_signature(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     time_signature: &TimeSignature,
     measure_start_x: f32,
     measure_start_y: f32,
@@ -1516,7 +1564,7 @@ fn draw_time_signature(
     let tempo_text = Text {
         shaping: Auto,
         content: format!("{numerator}\n{denominator}"),
-        color: Color::WHITE,
+        color: colors.foreground,
         size: 17.into(),
         position: Point::new(
             measure_start_x + position_x,

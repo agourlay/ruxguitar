@@ -2,11 +2,45 @@ use crate::ui::application::Message;
 use iced::widget::{
     Container, Text, button, center, container, mouse_area, opaque, stack, tooltip,
 };
-use iced::{Color, Element, Length};
+use iced::{Color, Element, Length, Theme};
 
 // Shared UI colors
-pub const COLOR_GRAY: Color = Color::from_rgb8(0x40, 0x44, 0x4B);
 pub const COLOR_DARK_RED: Color = Color::from_rgb8(200, 50, 50);
+
+/// Colors the tablature draws with, taken from the active theme so the tab
+/// follows the system light or dark setting.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TablatureColors {
+    /// Notes, bar lines and effect glyphs.
+    pub foreground: Color,
+    /// String lines, which sit behind the notes.
+    pub string_line: Color,
+    /// Measure numbers and the beat being played.
+    pub accent: Color,
+}
+
+impl TablatureColors {
+    pub fn of(theme: &Theme) -> Self {
+        let palette = theme.palette();
+        Self {
+            foreground: palette.text,
+            // the strings recede behind the notes: mostly background, with
+            // enough text mixed in to stay visible on either tone
+            string_line: mix(palette.background, palette.text, 0.35),
+            accent: COLOR_DARK_RED,
+        }
+    }
+}
+
+/// Blend `amount` of `over` into `base`.
+fn mix(base: Color, over: Color, amount: f32) -> Color {
+    Color {
+        r: base.r + (over.r - base.r) * amount,
+        g: base.g + (over.g - base.g) * amount,
+        b: base.b + (over.b - base.b) * amount,
+        a: base.a,
+    }
+}
 
 pub fn untitled_text_table_box() -> Container<'static, Message> {
     let message = "Tips:\n \
@@ -15,7 +49,7 @@ pub fn untitled_text_table_box() -> Container<'static, Message> {
         - use left/right to navigate measures\n \
         - use s to toggle solo mode\n \
         - use F11 to toggle fullscreen";
-    let text = Text::new(message).color(Color::WHITE);
+    let text = Text::new(message);
 
     Container::new(text)
         .center_x(Length::Fill)

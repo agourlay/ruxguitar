@@ -235,7 +235,6 @@ impl RuxApplication {
             .title(Self::title)
             .subscription(Self::subscription)
             .default_font(iced::Font::MONOSPACE)
-            .theme(Self::theme)
             .font(ICONS_FONT)
             .window_size((1150.0, 768.0))
             .centered()
@@ -695,9 +694,10 @@ impl RuxApplication {
 
         let controls = container(controls)
             .padding(10)
-            .style(|_theme| container::Style {
+            .style(|theme: &Theme| container::Style {
+                // a muted border that reads on either theme tone
                 border: Border::default()
-                    .color(crate::ui::utils::COLOR_GRAY)
+                    .color(crate::ui::utils::TablatureColors::of(theme).string_line)
                     .width(1),
                 ..Default::default()
             });
@@ -763,10 +763,6 @@ impl RuxApplication {
     }
 
     #[allow(clippy::unused_self)]
-    const fn theme(&self) -> Theme {
-        Theme::Dark
-    }
-
     fn audio_player_beat_subscription(
         current_tick: Arc<AtomicU32>,
         beat_notify: Arc<Notify>,
