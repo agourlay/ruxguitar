@@ -1,6 +1,6 @@
 use crate::parser::song_parser::{
-    Beat, BeatStrokeDirection, BendEffect, HarmonicType, Note, NoteEffect, NoteType, SlapEffect,
-    SlideType, Song, TimeSignature, TremoloPickingEffect,
+    Beat, BeatStrokeDirection, BendEffect, HarmonicType, Measure, MeasureHeader, Note, NoteEffect,
+    NoteType, SlapEffect, SlideType, Song, TimeSignature, TremoloPickingEffect,
 };
 use crate::ui::application::Message;
 use crate::ui::utils::{COLOR_DARK_RED, COLOR_GRAY};
@@ -24,21 +24,129 @@ const TIE: char = '\u{2323}'; // ⌣ https://unicodeplus.com/U+2323
 
 // Drawing constants
 
-// Vertical layout above the staff (y grows downward):
-//   y=3   MEASURE_ANNOTATION_Y   measure number / marker title
-//   y=15  CHORD_ANNOTATION_Y     chord name
-//   y=27  NOTE_EFFECT_ANNOTATION_Y  vibrato / hammer / slide labels
-//   y=38  BEAT_TEXT_ANNOTATION_Y beat.text ("Verse", "fill", ...)
-//   y=47  PICK_STROKE_Y          pick stroke direction symbols
-//   y=60  FIRST_STRING_Y         first tab line (leaves room for the
-//                                focus box to not sit on the first string)
-// Tremolo picking slashes are drawn below the last string.
-const MEASURE_ANNOTATION_Y: f32 = 3.0;
-const CHORD_ANNOTATION_Y: f32 = 15.0;
-const NOTE_EFFECT_ANNOTATION_Y: f32 = 27.0;
-const BEAT_TEXT_ANNOTATION_Y: f32 = 38.0;
-const PICK_STROKE_Y: f32 = 47.0;
-const FIRST_STRING_Y: f32 = 60.0;
+// Annotation rows are stacked above the staff, top to bottom, and each one
+// is only allocated when something on the line uses it (like TuxGuitar's
+// TGTrackSpacing). Tremolo picking slashes are drawn below the last string.
+const ROW_ALT_ENDING: f32 = 13.0;
+const ROW_MARKER: f32 = 15.0;
+const ROW_CHORD: f32 = 11.0;
+const ROW_EFFECT_LINE: f32 = 12.0;
+const ROW_TEXT: f32 = 11.0;
+const ROW_PICK_STROKE: f32 = 10.0;
+// Always-present gap between the last annotation row and the staff: holds
+// the measure number, the repeat count and the focus box edge.
+const STAFF_HEADER: f32 = 16.0;
+// Bends reach higher above the staff for their amplitude labels.
+const STAFF_HEADER_WITH_BEND: f32 = 20.0;
+
+/// Height of each annotation row above the staff, zero when unused.
+///
+/// Computed per measure, then merged across every measure of a line so
+/// their staves stay aligned.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RowSpacing {
+    alt_ending: f32,
+    marker: f32,
+    chord: f32,
+    effects: f32,
+    text: f32,
+    pick_stroke: f32,
+    staff_header: f32,
+}
+
+impl Default for RowSpacing {
+    fn default() -> Self {
+        Self {
+            alt_ending: 0.0,
+            marker: 0.0,
+            chord: 0.0,
+            effects: 0.0,
+            text: 0.0,
+            pick_stroke: 0.0,
+            staff_header: STAFF_HEADER,
+        }
+    }
+}
+
+impl RowSpacing {
+    /// The alternative-ending bracket sits at the very top.
+    const ALT_ENDING_Y: f32 = 0.0;
+
+    /// Which rows a measure uses, and how tall they need to be.
+    fn for_measure(measure: &Measure, header: &MeasureHeader, has_tempo_label: bool) -> Self {
+        let mut spacing = Self::default();
+        if header.repeat_alternative > 0 {
+            spacing.alt_ending = ROW_ALT_ENDING;
+        }
+        if has_tempo_label || header.marker.is_some() {
+            spacing.marker = ROW_MARKER;
+        }
+        let beats = &measure.voices[0].beats;
+        if beats.iter().any(|beat| beat.effect.chord.is_some()) {
+            spacing.chord = ROW_CHORD;
+        }
+        if beats.iter().any(|beat| !beat.text.is_empty()) {
+            spacing.text = ROW_TEXT;
+        }
+        if beats
+            .iter()
+            .any(|beat| beat.effect.pick_stroke != BeatStrokeDirection::None)
+        {
+            spacing.pick_stroke = ROW_PICK_STROKE;
+        }
+        if beats
+            .iter()
+            .flat_map(|beat| &beat.notes)
+            .any(|note| note.effect.bend.is_some())
+        {
+            spacing.staff_header = STAFF_HEADER_WITH_BEND;
+        }
+        // the effect row grows with the tallest annotation stack of the measure
+        let effect_lines = beats
+            .iter()
+            .map(|beat| beat_annotations(beat).len())
+            .max()
+            .unwrap_or(0);
+        spacing.effects = ROW_EFFECT_LINE * effect_lines as f32;
+        spacing
+    }
+
+    /// Keep the largest of each row, so a line fits every measure on it.
+    pub const fn merge(&mut self, other: Self) {
+        self.alt_ending = self.alt_ending.max(other.alt_ending);
+        self.marker = self.marker.max(other.marker);
+        self.chord = self.chord.max(other.chord);
+        self.effects = self.effects.max(other.effects);
+        self.text = self.text.max(other.text);
+        self.pick_stroke = self.pick_stroke.max(other.pick_stroke);
+        self.staff_header = self.staff_header.max(other.staff_header);
+    }
+
+    const fn marker_y(self) -> f32 {
+        self.alt_ending
+    }
+
+    const fn chord_y(self) -> f32 {
+        self.marker_y() + self.marker
+    }
+
+    const fn effects_y(self) -> f32 {
+        self.chord_y() + self.chord
+    }
+
+    const fn text_y(self) -> f32 {
+        self.effects_y() + self.effects
+    }
+
+    const fn pick_stroke_y(self) -> f32 {
+        self.text_y() + self.text
+    }
+
+    /// First tab line: below every annotation row.
+    const fn first_string_y(self) -> f32 {
+        self.pick_stroke_y() + self.pick_stroke + self.staff_header
+    }
+}
 
 // Space below the last string (just enough for focus box clearance).
 const BOTTOM_PADDING: f32 = 16.0;
@@ -77,6 +185,10 @@ pub struct CanvasMeasure {
     pub vertical_measure_height: f32,
     has_time_signature: bool,
     pub is_first_on_line: bool,
+    // rows this measure needs, and the rows granted to its line
+    row_needs: RowSpacing,
+    row_spacing: RowSpacing,
+    has_tempo_label: bool,
 }
 
 impl CanvasMeasure {
@@ -112,9 +224,13 @@ impl CanvasMeasure {
             total_measure_len += BEAT_LENGTH + HALF_BEAT_LENGTH;
         }
         let string_count = track.strings.len();
-        // total height of measure (same for all measures in track)
-        let vertical_measure_height = STRING_LINE_HEIGHT * (string_count - 1) as f32;
-        let vertical_measure_height = vertical_measure_height + FIRST_STRING_Y + BOTTOM_PADDING;
+        // the tempo is shown on the first measure and whenever it changes
+        let has_tempo_label = measure_id.checked_sub(1).is_none_or(|previous| {
+            measure_header.tempo != song.measure_headers[previous].tempo
+        });
+        let row_needs = RowSpacing::for_measure(measure, measure_header, has_tempo_label);
+        let vertical_measure_height =
+            measure_height(row_needs.first_string_y(), string_count);
         Self {
             measure_id,
             track_id,
@@ -129,6 +245,25 @@ impl CanvasMeasure {
             vertical_measure_height,
             has_time_signature,
             is_first_on_line: false,
+            row_needs,
+            row_spacing: row_needs,
+            has_tempo_label,
+        }
+    }
+
+    /// The annotation rows this measure needs, for the line to merge.
+    pub const fn row_needs(&self) -> RowSpacing {
+        self.row_needs
+    }
+
+    /// Apply the rows granted to this measure's line.
+    pub fn set_row_spacing(&mut self, row_spacing: RowSpacing) {
+        if self.row_spacing != row_spacing {
+            self.row_spacing = row_spacing;
+            let string_count = self.song.tracks[self.track_id].strings.len();
+            self.vertical_measure_height =
+                measure_height(row_spacing.first_string_y(), string_count);
+            self.canvas_cache.clear();
         }
     }
 
@@ -259,7 +394,8 @@ impl canvas::Program<Message> for CanvasMeasure {
 
             // Positive x-values extend to the right, and positive y-values extend downwards.
             let measure_start_x = 0.0;
-            let measure_start_y = FIRST_STRING_Y;
+            let rows = self.row_spacing;
+            let measure_start_y = rows.first_string_y();
 
             // draw focused box
             if self.is_focused {
@@ -292,11 +428,6 @@ impl canvas::Program<Message> for CanvasMeasure {
             // measure headers
             let measure_header = &self.song.measure_headers[self.measure_id];
             let next_measure_header = &self.song.measure_headers.get(self.measure_id + 1);
-            let previous_measure_header = if self.measure_id > 0 {
-                Some(&self.song.measure_headers[self.measure_id - 1])
-            } else {
-                None
-            };
 
             // display open measure bar
             if measure_header.repeat_open {
@@ -330,6 +461,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                     frame,
                     &measure_header.time_signature,
                     measure_start_x,
+                    measure_start_y,
                     string_count,
                     measure_header.repeat_open, // need to offset if repeat dots present
                 );
@@ -338,9 +470,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             // capture tempo label len to adjust next annotations
             let mut tempo_label_len = 0;
             // display measure tempo (if first measure OR if it changed)
-            if self.measure_id == 0
-                || measure_header.tempo != previous_measure_header.unwrap().tempo
-            {
+            if self.has_tempo_label {
                 let tempo_label = format!("{TEMPO_SIGN} = {}", measure_header.tempo.value);
                 tempo_label_len = tempo_label.chars().count() * 10;
                 let tempo_text = Text {
@@ -348,7 +478,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                     content: tempo_label,
                     color: Color::WHITE,
                     size: 11.0.into(),
-                    position: Point::new(measure_start_x, MEASURE_ANNOTATION_Y),
+                    position: Point::new(measure_start_x, rows.marker_y()),
                     ..Text::default()
                 };
                 frame.fill_text(tempo_text);
@@ -364,7 +494,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                     size: 10.0.into(),
                     position: Point::new(
                         measure_start_x + MEASURE_NOTES_PADDING + tempo_label_len as f32,
-                        MEASURE_ANNOTATION_Y,
+                        rows.marker_y(),
                     ),
                     ..Text::default()
                 };
@@ -377,7 +507,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                 content: format!("{}", self.measure_id + 1),
                 color: COLOR_DARK_RED,
                 size: 10.0.into(),
-                position: Point::new(measure_start_x, FIRST_STRING_Y - 15.0),
+                position: Point::new(measure_start_x, measure_start_y - 15.0),
                 ..Text::default()
             };
             frame.fill_text(measure_count_text);
@@ -389,6 +519,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                     measure_header.repeat_alternative,
                     measure_start_x,
                     actual_width,
+                    RowSpacing::ALT_ENDING_Y,
                 );
             }
 
@@ -429,6 +560,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                     width_scale,
                     measure_start_y,
                     vertical_measure_height,
+                    rows,
                     beat,
                     beat_color,
                 );
@@ -508,6 +640,24 @@ fn draw_measure_vertical_line(
     frame.stroke(&vertical_line, stroke);
 }
 
+/// Total canvas height: annotation rows, the staff, and bottom padding.
+fn measure_height(first_string_y: f32, string_count: usize) -> f32 {
+    first_string_y + STRING_LINE_HEIGHT * (string_count - 1) as f32 + BOTTOM_PADDING
+}
+
+/// Effect annotations stacked above a beat, deduplicated across its notes.
+/// Shared by the row sizing and the drawing so both agree on the height.
+fn beat_annotations(beat: &Beat) -> Vec<&'static str> {
+    let mut annotations: Vec<&'static str> = beat
+        .notes
+        .iter()
+        .flat_map(|note| above_note_effect_annotation(&note.effect))
+        .collect();
+    annotations.sort_unstable();
+    annotations.dedup();
+    annotations
+}
+
 /// Natural width of a beat: base length plus room for bend arrows
 /// (like TuxGuitar's `getEffectWidth`).
 fn beat_natural_width(beat: &Beat) -> f32 {
@@ -545,6 +695,7 @@ fn draw_beat(
     width_scale: f32,
     measure_start_y: f32,
     vertical_measure_height: f32,
+    rows: RowSpacing,
     beat: &Beat,
     beat_color: Color,
 ) {
@@ -555,7 +706,7 @@ fn draw_beat(
             content: chord.name.clone(),
             color: Color::WHITE,
             size: 8.0.into(),
-            position: Point::new(beat_position_x + 3.0, CHORD_ANNOTATION_Y),
+            position: Point::new(beat_position_x + 3.0, rows.chord_y()),
             ..Text::default()
         };
         frame.fill_text(note_effect_text);
@@ -564,7 +715,12 @@ fn draw_beat(
         draw_stroke_arrow(frame, beat, beat_position_x, measure_start_y);
     }
     if beat.effect.pick_stroke != BeatStrokeDirection::None {
-        draw_pick_stroke(frame, &beat.effect.pick_stroke, beat_position_x);
+        draw_pick_stroke(
+            frame,
+            &beat.effect.pick_stroke,
+            beat_position_x,
+            rows.pick_stroke_y(),
+        );
     }
     if beat.notes.iter().any(|n| n.effect.staccato) {
         draw_staccato_dot(frame, beat, beat_position_x, measure_start_y);
@@ -582,12 +738,8 @@ fn draw_beat(
         );
     }
 
-    // Annotate note effect above (same position for all notes)
-    let mut beat_annotations = Vec::new();
-
     // draw notes for beat
     for note in &beat.notes {
-        beat_annotations.extend(above_note_effect_annotation(&note.effect));
         let bend_movements = note.effect.bend.as_ref().map(BendEffect::movements);
         let show_bend_amplitude = bend_movements
             .as_deref()
@@ -605,12 +757,11 @@ fn draw_beat(
         );
     }
 
-    // merge and display beat annotations
-    if !beat_annotations.is_empty() {
-        beat_annotations.sort_unstable();
-        beat_annotations.dedup();
-        let merged_annotations = beat_annotations.join("\n");
-        let y_position = NOTE_EFFECT_ANNOTATION_Y - 4.0 * (beat_annotations.len() - 1) as f32;
+    // merge and display beat annotations (same position for all notes)
+    let annotations = beat_annotations(beat);
+    if !annotations.is_empty() {
+        let merged_annotations = annotations.join("\n");
+        let y_position = rows.effects_y();
         let note_effect_text = Text {
             shaping: Auto,
             content: merged_annotations,
@@ -629,7 +780,7 @@ fn draw_beat(
             content: beat.text.clone(),
             color: Color::WHITE,
             size: 8.0.into(),
-            position: Point::new(beat_position_x + 3.0, BEAT_TEXT_ANNOTATION_Y),
+            position: Point::new(beat_position_x + 3.0, rows.text_y()),
             ..Text::default()
         };
         frame.fill_text(beat_text);
@@ -917,7 +1068,7 @@ fn draw_close_repeat(
         content: format!("x{repeat_count}"),
         color: Color::WHITE,
         size: 9.0.into(),
-        position: Point::new(measure_end_x - 12.0, FIRST_STRING_Y - 15.0),
+        position: Point::new(measure_end_x - 12.0, measure_start_y - 15.0),
         ..Text::default()
     };
     frame.fill_text(repeat_count_text);
@@ -929,10 +1080,10 @@ fn draw_pick_stroke(
     frame: &mut Frame<Renderer>,
     direction: &BeatStrokeDirection,
     beat_position_x: f32,
+    y: f32,
 ) {
     let stroke = Stroke::default().with_width(0.8).with_color(Color::WHITE);
     let x = beat_position_x + 3.5;
-    let y = PICK_STROKE_Y;
     match direction {
         BeatStrokeDirection::Up => {
             let tip = Point::new(x, y + 8.0);
@@ -1051,8 +1202,8 @@ fn draw_alternative_ending(
     repeat_alternative: u8,
     measure_start_x: f32,
     measure_width: f32,
+    bracket_y: f32,
 ) {
-    let bracket_y = MEASURE_ANNOTATION_Y;
     let bracket_height = 10.0;
     let bracket_start = measure_start_x + 2.0;
     let bracket_end = measure_start_x + measure_width;
@@ -1145,6 +1296,7 @@ fn draw_time_signature(
     frame: &mut Frame<Renderer>,
     time_signature: &TimeSignature,
     measure_start_x: f32,
+    measure_start_y: f32,
     string_count: usize,
     has_repeat: bool,
 ) {
@@ -1167,7 +1319,7 @@ fn draw_time_signature(
         size: 17.into(),
         position: Point::new(
             measure_start_x + position_x,
-            (FIRST_STRING_Y - 1.0) + position_y,
+            (measure_start_y - 1.0) + position_y,
         ),
         ..Text::default()
     };

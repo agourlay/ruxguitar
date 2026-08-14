@@ -1,7 +1,7 @@
 use crate::audio::playback_order::playback_tick;
 use crate::parser::song_parser::Song;
 use crate::ui::application::Message;
-use crate::ui::canvas_measure::CanvasMeasure;
+use crate::ui::canvas_measure::{CanvasMeasure, RowSpacing};
 use iced::widget::{Id, Row, column, scrollable};
 use iced::{Element, Length};
 use std::collections::BTreeMap;
@@ -14,7 +14,7 @@ pub struct Tablature {
     pub song: Rc<Song>,
     pub track_id: usize,
     pub canvas_measures: Vec<CanvasMeasure>,
-    canvas_measure_height: f32,
+    line_heights: Vec<f32>, // rendered height of each line, in order
     focused_measure: usize,
     line_tracker: LineTracker,
     pub scroll_id: Id,
@@ -40,7 +40,7 @@ impl Tablature {
             song,
             track_id,
             canvas_measures: Vec::with_capacity(measure_count),
-            canvas_measure_height: 0.0,
+            line_heights: Vec::new(),
             focused_measure: 0,
             line_tracker: LineTracker::default(),
             scroll_id,
@@ -68,16 +68,13 @@ impl Tablature {
                 self.focused_measure == i,
                 has_time_signature,
             );
-            if i == 0 {
-                // all measures have the same height - grab first one
-                self.canvas_measure_height = measure.vertical_measure_height;
-            }
             self.canvas_measures.push(measure);
         }
         // recompute line tracker with existing width
         let existing_width = self.line_tracker.tablature_container_width;
         self.line_tracker = LineTracker::make(&self.canvas_measures, existing_width);
         self.update_first_on_line();
+        self.update_line_spacing();
     }
 
     pub fn update_container_width(&mut self, width: f32) {
@@ -88,6 +85,31 @@ impl Tablature {
         );
         // mark which measures start a new line and clear caches
         self.update_first_on_line();
+        self.update_line_spacing();
+    }
+
+    /// Give every measure of a line the same annotation rows, sized for the
+    /// most demanding measure on it, so their staves stay aligned.
+    fn update_line_spacing(&mut self) {
+        let Some(line_count) = self.line_tracker.line_count() else {
+            self.line_heights.clear();
+            return;
+        };
+        let mut per_line = vec![RowSpacing::default(); line_count];
+        for cm in &self.canvas_measures {
+            let line = self.line_tracker.get_line(cm.measure_id) as usize - 1;
+            per_line[line].merge(cm.row_needs());
+        }
+        for cm in &mut self.canvas_measures {
+            let line = self.line_tracker.get_line(cm.measure_id) as usize - 1;
+            cm.set_row_spacing(per_line[line]);
+        }
+        // line heights drive the playback scroll offset
+        self.line_heights = vec![0.0; line_count];
+        for cm in &self.canvas_measures {
+            let line = self.line_tracker.get_line(cm.measure_id) as usize - 1;
+            self.line_heights[line] = self.line_heights[line].max(cm.vertical_measure_height);
+        }
     }
 
     /// Update the `is_first_on_line` flag on each measure based on the line tracker
@@ -204,8 +226,10 @@ impl Tablature {
         if focus_line < 2 {
             return None;
         }
-        let scroll_line = focus_line.saturating_sub(2);
-        Some(INNER_PADDING + scroll_line as f32 * self.canvas_measure_height)
+        // scroll past every line above the one before the focused line
+        let scroll_lines = focus_line.saturating_sub(2) as usize;
+        let offset: f32 = self.line_heights.iter().take(scroll_lines).sum();
+        Some(INNER_PADDING + offset)
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -298,11 +322,77 @@ impl LineTracker {
     pub fn get_line(&self, measure_id: usize) -> u32 {
         self.measure_to_line[measure_id]
     }
+
+    /// Number of lines, or `None` when there is no measure at all.
+    fn line_count(&self) -> Option<usize> {
+        self.measure_to_line.last().map(|&last| last as usize)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::playback_order::compute_playback_order;
+    use crate::parser::song_parser_tests::parse_gp_file;
+
+    fn load_tablature(width: f32) -> Tablature {
+        let song = Rc::new(parse_gp_file("test-files/Demo v5.gp5").unwrap());
+        let order = compute_playback_order(&song.measure_headers);
+        let mut tab = Tablature::new(song, 0, Id::new("test-scroll"), &order);
+        tab.update_container_width(width);
+        tab
+    }
+
+    #[test]
+    fn measures_of_a_line_share_their_height() {
+        let tab = load_tablature(800.0);
+        // staves must align within a line, so every measure on it keeps the
+        // same annotation rows
+        let mut per_line: BTreeMap<u32, f32> = BTreeMap::new();
+        for cm in &tab.canvas_measures {
+            let line = tab.line_tracker.get_line(cm.measure_id);
+            let height = *per_line.entry(line).or_insert(cm.vertical_measure_height);
+            assert!(
+                (height - cm.vertical_measure_height).abs() < f32::EPSILON,
+                "measure {} breaks the height of line {line}",
+                cm.measure_id
+            );
+        }
+        // and the rows are allocated per line, not globally
+        let distinct: Vec<f32> = {
+            let mut heights: Vec<f32> = per_line.values().copied().collect();
+            heights.sort_by(f32::total_cmp);
+            heights.dedup();
+            heights
+        };
+        assert!(
+            distinct.len() > 1,
+            "expected lines of different heights, got {distinct:?}"
+        );
+    }
+
+    #[test]
+    fn line_heights_drive_the_scroll_offset() {
+        let tab = load_tablature(800.0);
+        // the first two lines stay in view
+        assert_eq!(tab.scroll_offset_for_measure(0), None);
+        // deeper lines scroll by the summed height of the lines above
+        let deep = tab
+            .canvas_measures
+            .iter()
+            .rev()
+            .find(|cm| tab.line_tracker.get_line(cm.measure_id) > 2)
+            .expect("a measure past the second line");
+        let line = tab.line_tracker.get_line(deep.measure_id);
+        let expected: f32 = tab
+            .line_heights
+            .iter()
+            .take(line as usize - 2)
+            .sum::<f32>()
+            + INNER_PADDING;
+        let offset = tab.scroll_offset_for_measure(deep.measure_id).unwrap();
+        assert!((offset - expected).abs() < f32::EPSILON);
+    }
 
     #[test]
     fn line_tracker_single_line() {
@@ -380,4 +470,5 @@ mod tests {
         }
         assert_eq!(first_on_line, vec![true, false, true, false]);
     }
+
 }
