@@ -236,10 +236,19 @@ impl Tablature {
     /// Scroll needed to bring `measure_id` into view, a page at a time: the
     /// view holds still while the measure is on the page being read, then
     /// turns to the page starting on its line.
+    ///
+    /// The turn comes one line early, as playback reaches the last line of
+    /// the page rather than once it has left: that line moves to the top
+    /// with a fresh page below it, so the eye arrives before the sound. It
+    /// lands on a line change, which is a natural break in the reading.
     pub fn page_scroll_offset(&mut self, measure_id: usize) -> Option<f32> {
         let line = self.line_tracker.get_line(measure_id);
-        let last_visible = self.page_top_line + self.visible_lines(self.page_top_line);
-        if line >= self.page_top_line && line < last_visible {
+        // already reading from the top of the view
+        if line == self.page_top_line {
+            return None;
+        }
+        let last_line = self.page_top_line + self.visible_lines(self.page_top_line) - 1;
+        if line > self.page_top_line && line < last_line {
             return None;
         }
         self.page_top_line = line;
@@ -415,10 +424,10 @@ mod tests {
     fn page_holds_still_while_being_read() {
         let mut tab = load_tablature(800.0, 400.0);
         let visible = tab.visible_lines(1);
-        assert!(visible > 1, "the view should hold several lines");
-        // every measure of the opening page leaves the view alone
+        assert!(visible > 2, "the view should hold several lines");
+        // the page only moves once playback reaches its last line
         for cm_id in 0..tab.measure_count() {
-            if tab.line_tracker.get_line(cm_id) > visible {
+            if tab.line_tracker.get_line(cm_id) >= visible {
                 break;
             }
             assert_eq!(
@@ -430,21 +439,23 @@ mod tests {
     }
 
     #[test]
-    fn page_turns_when_playback_leaves_it() {
+    fn page_turns_a_line_early() {
         let mut tab = load_tablature(800.0, 400.0);
         let visible = tab.visible_lines(1);
-        // the first measure past the page turns it, and lands on top
-        let first_off_page = (0..tab.measure_count())
-            .find(|&id| tab.line_tracker.get_line(id) > visible)
-            .expect("a measure past the first page");
-        let line = tab.line_tracker.get_line(first_off_page);
+        // reaching the last line of the page turns it, putting that line on
+        // top so the whole next page is readable while it plays
+        let last_line_measure = (0..tab.measure_count())
+            .find(|&id| tab.line_tracker.get_line(id) == visible)
+            .expect("a measure on the last visible line");
+        let line = tab.line_tracker.get_line(last_line_measure);
         let offset = tab
-            .page_scroll_offset(first_off_page)
+            .page_scroll_offset(last_line_measure)
             .expect("the page should turn");
         assert!((offset - tab.offset_for_line_top(line)).abs() < f32::EPSILON);
 
-        // the new page then holds still in turn
-        assert_eq!(tab.page_scroll_offset(first_off_page), None);
+        // the played line is now the top one, and the view settles again
+        assert_eq!(tab.page_top_line, line);
+        assert_eq!(tab.page_scroll_offset(last_line_measure), None);
     }
 
     #[test]
@@ -543,5 +554,6 @@ mod tests {
         }
         assert_eq!(first_on_line, vec![true, false, true, false]);
     }
+
 
 }
