@@ -212,6 +212,11 @@ fn build_measures(doc: &GpxDocument, song: &mut Song, tracks: &mut [Track]) {
         song.measure_headers.push(header);
 
         for (track_index, track) in tracks.iter_mut().enumerate() {
+            // drum sounds are placed by kit position rather than by pitch
+            let is_percussion = song
+                .midi_channels
+                .iter()
+                .any(|c| c.channel_id == track.channel_id && c.is_percussion());
             let mut measure = Measure {
                 header_index: index,
                 track_index,
@@ -222,7 +227,15 @@ fn build_measures(doc: &GpxDocument, song: &mut Song, tracks: &mut [Track]) {
 
             let gp_bar = resolve_bar(doc, index, track_index);
             for voice_slot in 0..MAX_VOICES as usize {
-                let voice = build_voice(doc, gp_bar, voice_slot, index, start, &track.strings);
+                let voice = build_voice(
+                    doc,
+                    gp_bar,
+                    voice_slot,
+                    index,
+                    start,
+                    &track.strings,
+                    is_percussion,
+                );
                 measure.voices.push(voice);
             }
 
@@ -344,6 +357,7 @@ fn resolve_bar(doc: &GpxDocument, master_index: usize, track_index: usize) -> Op
 }
 
 /// Build one voice (`voice_slot`) of a measure.
+#[allow(clippy::too_many_arguments)]
 fn build_voice(
     doc: &GpxDocument,
     gp_bar: Option<&GpxBar>,
@@ -351,6 +365,7 @@ fn build_voice(
     measure_index: usize,
     measure_start: u32,
     strings: &[(i32, i32)],
+    is_percussion: bool,
 ) -> Voice {
     let mut voice = Voice {
         measure_index: measure_index as i16,
@@ -411,11 +426,23 @@ fn build_voice(
 
         if let Some(note_ids) = &gp_beat.note_ids {
             let velocity = dynamic_velocity(gp_beat.dynamic.as_deref());
-            for &id in note_ids {
+            // drums claim their kit position in order, so that when two
+            // sounds want the same string the higher one on the staff wins
+            // it, like TuxGuitar's allocatePercussionNotesToStrings
+            let mut note_ids = note_ids.clone();
+            if is_percussion {
+                note_ids.sort_by_key(|&id| {
+                    doc.note(id)
+                        .and_then(midi_value_of)
+                        .map_or(i32::MAX, preferred_drum_string)
+                });
+            }
+            for &id in &note_ids {
                 if let Some(gp_note) = doc.note(id)
                     && let Some(note) = build_note(
                         gp_note,
                         strings,
+                        is_percussion,
                         &beat.notes,
                         velocity,
                         gp_beat,
@@ -514,6 +541,7 @@ fn dynamic_velocity(dynamic: Option<&str>) -> i16 {
 fn build_note(
     gp_note: &GpxNote,
     strings: &[(i32, i32)],
+    is_percussion: bool,
     beat_notes: &[Note],
     velocity: i16,
     gp_beat: &GpxBeat,
@@ -526,7 +554,11 @@ fn build_note(
         (gp_note.fret, string_count - gp_note.string)
     } else {
         let gm_value = midi_value_of(gp_note)?;
-        let (string_number, string_tuning) = string_for(strings, beat_notes, gm_value)?;
+        let (string_number, string_tuning) = if is_percussion {
+            drum_string_for(strings, beat_notes, gm_value)?
+        } else {
+            string_for(strings, beat_notes, gm_value)?
+        };
         (gm_value - string_tuning, string_number)
     };
 
@@ -603,6 +635,41 @@ fn midi_value_of(gp_note: &GpxNote) -> Option<i32> {
     }
 }
 
+/// `(midi key, string)` drum placement, from TuxGuitar's `TGDrumMap`: the
+/// kit is laid across the staff low to high, kicks at the bottom and
+/// cymbals at the top.
+const DRUM_STRINGS: [(i32, i32); 21] = [
+    (35, 6), // acoustic bass drum
+    (36, 6), // bass drum
+    (37, 4), // cross stick
+    (38, 4), // acoustic snare
+    (40, 4), // electric snare
+    (41, 5), // low floor tom
+    (42, 2), // closed hi-hat
+    (43, 5), // high floor tom
+    (44, 2), // pedal hi-hat
+    (45, 5), // low tom
+    (46, 2), // open hi-hat
+    (47, 4), // low-mid tom
+    (48, 3), // hi-mid tom
+    (49, 1), // crash cymbal
+    (50, 3), // high tom
+    (51, 2), // ride cymbal
+    (52, 1), // china cymbal
+    (53, 2), // ride bell
+    (55, 1), // splash cymbal
+    (57, 1), // crash cymbal 2
+    (59, 2), // ride cymbal 2
+];
+
+/// String a drum sound belongs on, defaulting to the top one like TuxGuitar.
+fn preferred_drum_string(value: i32) -> i32 {
+    DRUM_STRINGS
+        .iter()
+        .find(|(key, _)| *key == value)
+        .map_or(1, |(_, string)| *string)
+}
+
 /// Pick the lowest string able to play `value` that is not already used in the beat.
 fn string_for(strings: &[(i32, i32)], beat_notes: &[Note], value: i32) -> Option<(i32, i32)> {
     for &(number, tuning) in strings {
@@ -611,6 +678,19 @@ fn string_for(strings: &[(i32, i32)], beat_notes: &[Note], value: i32) -> Option
         }
     }
     None
+}
+
+/// Place a drum sound on the string it belongs to, like TuxGuitar's
+/// `allocatePercussionNotesToStrings`. When that string is taken by another
+/// sound in the beat, fall back to the closest free one.
+fn drum_string_for(strings: &[(i32, i32)], beat_notes: &[Note], value: i32) -> Option<(i32, i32)> {
+    let preferred = preferred_drum_string(value);
+    let taken = |number: i32| beat_notes.iter().any(|n| i32::from(n.string) == number);
+    strings
+        .iter()
+        .filter(|(number, _)| !taken(*number))
+        .min_by_key(|(number, _)| (number - preferred).abs())
+        .copied()
 }
 
 const fn slide_type_of(flags: i32) -> SlideType {
@@ -859,5 +939,54 @@ fn fix_first_measure_start_positions(measure: &mut Measure, measure_start: u32, 
         for beat in &mut voice.beats {
             beat.start += movement;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn drum_strings() -> Vec<(i32, i32)> {
+        (1..=6).map(|s| (s, 0)).collect()
+    }
+
+    fn note_on_string(string: i8) -> Note {
+        let mut note = Note::new(NoteEffect::default());
+        note.string = string;
+        note
+    }
+
+    #[test]
+    fn drums_land_on_their_kit_position() {
+        let strings = drum_strings();
+        // kicks at the bottom of the staff, cymbals at the top
+        for (key, expected) in [(36, 6), (38, 4), (42, 2), (49, 1), (48, 3), (41, 5)] {
+            let (string, _) = drum_string_for(&strings, &[], key).unwrap();
+            assert_eq!(string, expected, "midi key {key}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_drum_takes_the_top_string() {
+        let strings = drum_strings();
+        assert_eq!(drum_string_for(&strings, &[], 60).unwrap().0, 1);
+    }
+
+    #[test]
+    fn a_taken_string_falls_back_to_the_closest_free_one() {
+        let strings = drum_strings();
+        // the snare wants string 4; with it taken the nearest free one wins
+        let taken = vec![note_on_string(4)];
+        assert_eq!(drum_string_for(&strings, &taken, 38).unwrap().0, 3);
+        // with both neighbours taken it keeps stepping outwards
+        let taken = vec![note_on_string(3), note_on_string(4), note_on_string(5)];
+        assert_eq!(drum_string_for(&strings, &taken, 38).unwrap().0, 2);
+    }
+
+    #[test]
+    fn a_full_beat_leaves_no_room() {
+        let strings = drum_strings();
+        let taken: Vec<Note> = (1..=6).map(note_on_string).collect();
+        assert!(drum_string_for(&strings, &taken, 38).is_none());
     }
 }
