@@ -659,6 +659,21 @@ impl canvas::Program<Message> for CanvasMeasure {
     }
 }
 
+/// Keep drawn lines off the canvas edge, where they would be clipped in half.
+const CANVAS_MARGIN: f32 = 2.0;
+
+/// How far above the staff the focus box sits.
+///
+/// It rides the header boundary, so the box encloses everything drawn around
+/// the staff - measure number, bend labels, staccato dots - without crossing
+/// any of it. On a line with no annotation rows the header alone reaches the
+/// canvas edge, so the box is held below it.
+fn focus_box_top(rows: RowSpacing, measure_start_y: f32) -> f32 {
+    rows.staff_header
+        .min(measure_start_y - CANVAS_MARGIN)
+        .max(0.0)
+}
+
 fn draw_focused_box(
     frame: &mut Frame<Renderer>,
     colors: TablatureColors,
@@ -669,13 +684,8 @@ fn draw_focused_box(
     rows: RowSpacing,
 ) {
     const BOX_SIDE: f32 = 8.0;
-    // keep the line off the canvas edge
-    const CANVAS_MARGIN: f32 = 2.0;
 
-    // ride the header and footer boundaries so the box encloses everything
-    // drawn around the staff - measure number, bend labels, staccato dots
-    // above, tremolo picking slashes below - without crossing any of it
-    let top = rows.staff_header;
+    let top = focus_box_top(rows, measure_start_y);
     let bottom = rows.staff_footer - CANVAS_MARGIN;
     let focused_box = Rectangle {
         x: measure_start_x + BOX_SIDE,
@@ -1828,6 +1838,23 @@ mod tests {
             notes,
             ..Beat::default()
         }
+    }
+
+    #[test]
+    fn focus_box_stays_off_the_canvas_edge() {
+        // a line with no annotations at all: the header alone sits against
+        // the top of the canvas, where the box line would be clipped
+        let bare = RowSpacing::default();
+        let staff_y = bare.first_string_y();
+        assert!(staff_y - focus_box_top(bare, staff_y) >= CANVAS_MARGIN);
+
+        // with annotation rows there is room, so the box rides the boundary
+        let annotated = RowSpacing {
+            marker: ROW_MARKER,
+            ..Default::default()
+        };
+        let staff_y = annotated.first_string_y();
+        assert!((focus_box_top(annotated, staff_y) - annotated.staff_header).abs() < f32::EPSILON);
     }
 
     #[test]
