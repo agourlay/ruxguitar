@@ -1,6 +1,6 @@
 use crate::parser::song_parser::{
-    Beat, BeatStrokeDirection, BendEffect, HarmonicType, Measure, MeasureHeader, Note, NoteEffect,
-    NoteType, SlapEffect, SlideType, Song, TimeSignature, TremoloPickingEffect,
+    Beat, BeatStrokeDirection, BendEffect, Duration, HarmonicType, Measure, MeasureHeader, Note,
+    NoteEffect, NoteType, SlapEffect, SlideType, Song, TimeSignature, TremoloPickingEffect,
 };
 use crate::ui::application::Message;
 use crate::ui::utils::{COLOR_DARK_RED, COLOR_GRAY};
@@ -30,6 +30,7 @@ const TIE: char = '\u{2323}'; // ⌣ https://unicodeplus.com/U+2323
 const ROW_ALT_ENDING: f32 = 13.0;
 const ROW_MARKER: f32 = 15.0;
 const ROW_CHORD: f32 = 11.0;
+const ROW_TUPLET: f32 = 12.0;
 const ROW_EFFECT_LINE: f32 = 12.0;
 const ROW_TEXT: f32 = 11.0;
 const ROW_PICK_STROKE: f32 = 10.0;
@@ -48,6 +49,7 @@ pub struct RowSpacing {
     alt_ending: f32,
     marker: f32,
     chord: f32,
+    tuplet: f32,
     effects: f32,
     text: f32,
     pick_stroke: f32,
@@ -60,6 +62,7 @@ impl Default for RowSpacing {
             alt_ending: 0.0,
             marker: 0.0,
             chord: 0.0,
+            tuplet: 0.0,
             effects: 0.0,
             text: 0.0,
             pick_stroke: 0.0,
@@ -84,6 +87,9 @@ impl RowSpacing {
         let beats = &measure.voices[0].beats;
         if beats.iter().any(|beat| beat.effect.chord.is_some()) {
             spacing.chord = ROW_CHORD;
+        }
+        if beats.iter().any(|beat| beat.duration.is_tuplet()) {
+            spacing.tuplet = ROW_TUPLET;
         }
         if beats.iter().any(|beat| !beat.text.is_empty()) {
             spacing.text = ROW_TEXT;
@@ -116,6 +122,7 @@ impl RowSpacing {
         self.alt_ending = self.alt_ending.max(other.alt_ending);
         self.marker = self.marker.max(other.marker);
         self.chord = self.chord.max(other.chord);
+        self.tuplet = self.tuplet.max(other.tuplet);
         self.effects = self.effects.max(other.effects);
         self.text = self.text.max(other.text);
         self.pick_stroke = self.pick_stroke.max(other.pick_stroke);
@@ -130,8 +137,12 @@ impl RowSpacing {
         self.marker_y() + self.marker
     }
 
-    const fn effects_y(self) -> f32 {
+    const fn tuplet_y(self) -> f32 {
         self.chord_y() + self.chord
+    }
+
+    const fn effects_y(self) -> f32 {
+        self.tuplet_y() + self.tuplet
     }
 
     const fn text_y(self) -> f32 {
@@ -544,6 +555,7 @@ impl canvas::Program<Message> for CanvasMeasure {
                 1.0
             };
             let mut beat_position_x = beat_start + MEASURE_NOTES_PADDING;
+            let mut beat_positions = Vec::with_capacity(beats_len);
             for (b_id, beat) in beats.iter().enumerate() {
                 // pick color if beat under focus
                 let beat_color = if self.is_focused && b_id == self.focused_beat {
@@ -564,7 +576,15 @@ impl canvas::Program<Message> for CanvasMeasure {
                     beat,
                     beat_color,
                 );
+                beat_positions.push(beat_position_x);
                 beat_position_x += beat_width;
+            }
+
+            // tuplet brackets span consecutive beats of the same division
+            if rows.tuplet > 0.0 {
+                for (enters, x1, x2) in tuplet_runs(beats, &beat_positions) {
+                    draw_tuplet_bracket(frame, enters, x1, x2, rows.tuplet_y());
+                }
             }
 
             // draw close measure
@@ -1197,6 +1217,128 @@ fn draw_stroke_arrow(
     }
 }
 
+/// Group consecutive beats sharing a tuplet division, like TuxGuitar's
+/// `paintDivisionTypes`. A run ends when the division changes or when its
+/// accumulated duration completes a whole group.
+///
+/// Returns `(group size, first beat x, last beat x)` per run.
+fn tuplet_runs(beats: &[Beat], beat_positions: &[f32]) -> Vec<(u8, f32, f32)> {
+    let mut runs = Vec::new();
+    let mut run: Option<TupletRun> = None;
+    for (beat, &x) in beats.iter().zip(beat_positions) {
+        let duration = &beat.duration;
+        if let Some(current) = &run {
+            let whole_group = current.shortest > 0
+                && current
+                    .accumulated
+                    .is_multiple_of(u32::from(current.enters) * current.shortest);
+            if !duration.same_tuplet_division(current.division) || whole_group {
+                runs.push(current.bounds());
+                run = None;
+            }
+        }
+        if duration.is_tuplet() {
+            match &mut run {
+                Some(current) => current.x2 = x,
+                None => run = Some(TupletRun::new(duration, x)),
+            }
+        }
+        if let Some(current) = &mut run {
+            current.extend(duration.time());
+        }
+    }
+    if let Some(current) = &run {
+        runs.push(current.bounds());
+    }
+    runs
+}
+
+/// A run of consecutive beats sharing one tuplet division.
+struct TupletRun<'a> {
+    division: &'a Duration,
+    enters: u8,
+    x1: f32,
+    x2: f32,
+    accumulated: u32,
+    shortest: u32,
+}
+
+impl<'a> TupletRun<'a> {
+    const fn new(division: &'a Duration, x: f32) -> Self {
+        Self {
+            division,
+            enters: division.tuplet_enters,
+            x1: x,
+            x2: x,
+            accumulated: 0,
+            shortest: 0,
+        }
+    }
+
+    const fn extend(&mut self, time: u32) {
+        self.accumulated += time;
+        if self.shortest == 0 || time < self.shortest {
+            self.shortest = time;
+        }
+    }
+
+    const fn bounds(&self) -> (u8, f32, f32) {
+        (self.enters, self.x1, self.x2)
+    }
+}
+
+/// A tuplet bracket: a horizontal line broken by the group size, with a
+/// tick at each end pointing down towards the notes.
+fn draw_tuplet_bracket(frame: &mut Frame<Renderer>, enters: u8, x1: f32, x2: f32, y: f32) {
+    const TICK: f32 = 4.0;
+    const LABEL_SIZE: f32 = 8.0;
+    // the notes are centred a few pixels right of their beat position
+    let x1 = x1 + 1.0;
+    let x2 = x2 + 6.0;
+    let center = x1 + (x2 - x1) / 2.0;
+    let label = enters.to_string();
+    let label_half = label.chars().count() as f32 * LABEL_SIZE / 4.0;
+
+    let stroke = Stroke::default().with_width(0.8).with_color(Color::WHITE);
+    if x2 > x1 {
+        // left arm with its end tick
+        frame.stroke(
+            &Path::line(Point::new(x1, y + TICK), Point::new(x1, y)),
+            stroke,
+        );
+        frame.stroke(
+            &Path::line(
+                Point::new(x1, y),
+                Point::new(center - label_half - 1.0, y),
+            ),
+            stroke,
+        );
+        // right arm with its end tick
+        frame.stroke(
+            &Path::line(Point::new(x2, y + TICK), Point::new(x2, y)),
+            stroke,
+        );
+        frame.stroke(
+            &Path::line(
+                Point::new(center + label_half + 1.0, y),
+                Point::new(x2, y),
+            ),
+            stroke,
+        );
+    }
+
+    let label_text = Text {
+        shaping: Auto,
+        content: label,
+        color: Color::WHITE,
+        size: LABEL_SIZE.into(),
+        position: Point::new(center, y - LABEL_SIZE / 2.0),
+        align_x: Alignment::Center,
+        ..Text::default()
+    };
+    frame.fill_text(label_text);
+}
+
 fn draw_alternative_ending(
     frame: &mut Frame<Renderer>,
     repeat_alternative: u8,
@@ -1408,4 +1550,73 @@ fn note_value(note: &Note) -> String {
             String::new()
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::song_parser::QUARTER;
+
+    fn beat(value: u16, enters: u8, times: u8) -> Beat {
+        Beat {
+            duration: Duration {
+                value,
+                dotted: false,
+                double_dotted: false,
+                tuplet_enters: enters,
+                tuplet_times: times,
+            },
+            ..Beat::default()
+        }
+    }
+
+    #[test]
+    fn no_run_without_tuplets() {
+        let beats = vec![beat(QUARTER, 1, 1), beat(QUARTER, 1, 1)];
+        assert!(tuplet_runs(&beats, &[0.0, 10.0]).is_empty());
+    }
+
+    #[test]
+    fn triplet_of_eighths_is_one_run() {
+        // three eighth notes in the time of two: one bracket labelled 3
+        let beats = vec![beat(8, 3, 2), beat(8, 3, 2), beat(8, 3, 2)];
+        let runs = tuplet_runs(&beats, &[0.0, 10.0, 20.0]);
+        assert_eq!(runs, vec![(3, 0.0, 20.0)]);
+    }
+
+    #[test]
+    fn consecutive_triplets_are_separate_runs() {
+        // a complete group closes the bracket, so six eighths make two
+        let beats: Vec<Beat> = (0..6).map(|_| beat(8, 3, 2)).collect();
+        let positions: Vec<f32> = (0..6).map(|i| i as f32 * 10.0).collect();
+        let runs = tuplet_runs(&beats, &positions);
+        assert_eq!(runs, vec![(3, 0.0, 20.0), (3, 30.0, 50.0)]);
+    }
+
+    #[test]
+    fn a_normal_beat_closes_the_run() {
+        let beats = vec![
+            beat(8, 3, 2),
+            beat(8, 3, 2),
+            beat(QUARTER, 1, 1),
+            beat(8, 3, 2),
+        ];
+        let runs = tuplet_runs(&beats, &[0.0, 10.0, 20.0, 30.0]);
+        assert_eq!(runs, vec![(3, 0.0, 10.0), (3, 30.0, 30.0)]);
+    }
+
+    #[test]
+    fn changing_division_closes_the_run() {
+        let beats = vec![beat(8, 3, 2), beat(16, 5, 4), beat(16, 5, 4)];
+        let runs = tuplet_runs(&beats, &[0.0, 10.0, 20.0]);
+        assert_eq!(runs, vec![(3, 0.0, 0.0), (5, 10.0, 20.0)]);
+    }
+
+    #[test]
+    fn quintuplet_of_sixteenths_is_one_run() {
+        let beats: Vec<Beat> = (0..5).map(|_| beat(16, 5, 4)).collect();
+        let positions: Vec<f32> = (0..5).map(|i| i as f32 * 10.0).collect();
+        assert_eq!(tuplet_runs(&beats, &positions), vec![(5, 0.0, 40.0)]);
+    }
+
 }

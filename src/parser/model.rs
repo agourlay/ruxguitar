@@ -301,6 +301,16 @@ impl Default for Duration {
 }
 
 impl Duration {
+    /// Whether this duration belongs to a tuplet (a non-normal division).
+    pub const fn is_tuplet(&self) -> bool {
+        self.tuplet_enters != 1 || self.tuplet_times != 1
+    }
+
+    /// Whether two durations share the same tuplet division.
+    pub const fn same_tuplet_division(&self, other: &Self) -> bool {
+        self.tuplet_enters == other.tuplet_enters && self.tuplet_times == other.tuplet_times
+    }
+
     pub fn convert_time(&self, time: u32) -> u32 {
         log::debug!(
             "time:{} tuplet_times:{} tuplet_enters:{}",
