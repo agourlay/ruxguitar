@@ -10,6 +10,7 @@ pub struct MidiPlayerParams {
     mute_mask: AtomicU64,     // bit per muted track id
     metronome: AtomicBool,
     count_in: AtomicBool,
+    finished: AtomicBool, // the sequence ran past its last event
     // pending count-in request: total ticks (high) | beat ticks (low), 0 = none
     count_in_request: AtomicU64,
     master_volume: AtomicU32, // f32 bits
@@ -24,6 +25,7 @@ impl MidiPlayerParams {
             mute_mask: AtomicU64::new(0),
             metronome: AtomicBool::new(false),
             count_in: AtomicBool::new(false),
+            finished: AtomicBool::new(false),
             count_in_request: AtomicU64::new(0),
             master_volume: AtomicU32::new(1.0_f32.to_bits()),
         }
@@ -35,6 +37,15 @@ impl MidiPlayerParams {
 
     pub fn set_metronome(&self, enabled: bool) {
         self.metronome.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Whether playback has run past the last event of the sequence.
+    pub fn is_finished(&self) -> bool {
+        self.finished.load(Ordering::Relaxed)
+    }
+
+    pub fn set_finished(&self, finished: bool) {
+        self.finished.store(finished, Ordering::Relaxed);
     }
 
     pub fn count_in_enabled(&self) -> bool {

@@ -104,6 +104,11 @@ impl AudioPlayer {
         self.player_params.solo_track_id()
     }
 
+    /// Whether playback reached the end of the song.
+    pub fn is_finished(&self) -> bool {
+        self.player_params.is_finished()
+    }
+
     pub fn set_metronome(&self, enabled: bool) {
         log::info!("Metronome enabled: {enabled}");
         self.player_params.set_metronome(enabled);
@@ -180,6 +185,7 @@ impl AudioPlayer {
         self.is_playing = false;
 
         self.sequencer.lock().unwrap().reset_ticks();
+        self.player_params.set_finished(false);
         self.silence_synthesizer();
 
         // reset the UI cursor to the first playable tick so the measure lookup resolves cleanly
@@ -244,6 +250,7 @@ impl AudioPlayer {
         let measure_start_tick = self.measure_playback_ticks[measure_id] + beat_tick_offset;
 
         self.sequencer.lock().unwrap().set_tick(measure_start_tick);
+        self.player_params.set_finished(false);
 
         // keep the cursor tick in sync: the count-in looks up the measure
         // (and its time signature) through it
@@ -374,7 +381,13 @@ fn new_output_stream(
                 sequencer_guard.advance(player_params.adjusted_tempo(), elapsed_secs);
             }
             // process midi events for current tick
-            if let Some(events) = sequencer_guard.get_next_events().filter(|_| !counting_in) {
+            let next_events = sequencer_guard.get_next_events();
+            // the sequence is exhausted: wake the UI once to stop the transport
+            if next_events.is_none() && !player_params.is_finished() {
+                player_params.set_finished(true);
+                beat_notify.notify_one();
+            }
+            if let Some(events) = next_events.filter(|_| !counting_in) {
                 let tick = sequencer_guard.get_tick();
                 let last_tick = sequencer_guard.get_last_tick();
                 if !events.is_empty() {

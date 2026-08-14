@@ -397,6 +397,15 @@ impl RuxApplication {
                 Task::none()
             }
             Message::FocusTick(tick) => {
+                // the song ran out: stop the transport rather than leave it
+                // playing silence
+                if self
+                    .audio_player
+                    .as_ref()
+                    .is_some_and(AudioPlayer::is_finished)
+                {
+                    return Task::done(Message::StopPlayer);
+                }
                 let Some(tablature) = &mut self.tablature else {
                     return Task::none();
                 };
