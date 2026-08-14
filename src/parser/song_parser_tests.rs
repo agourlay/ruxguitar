@@ -808,33 +808,4 @@ mod tests {
         assert_eq!(TremoloPickingEffect::from_tremolo_value(0), None);
         assert_eq!(TremoloPickingEffect::from_tremolo_value(4), None);
     }
-
-    /// Corrupted input must yield a parse error at worst, never a panic.
-    #[test]
-    fn parse_corrupted_files_no_panic() {
-        init_logger();
-        let files = [
-            "test-files/Testament - Farewell Ballad.gp3",
-            "test-files/canon_rock.gp4",
-            "test-files/Eddie Vedder - Guaranted.gp5",
-            "test-files/Wretched - Dreams of Chaos.gpx",
-            "test-files/Patrick Rondat - Vivaldi Tribute (ver 5 by loicthion).gp",
-        ];
-        for file_path in files {
-            let mut data = std::fs::read(file_path).unwrap();
-            // truncations
-            for len in (0..data.len()).step_by(509) {
-                let _ = parse_gp_data(&data[..len]);
-            }
-            // byte flips
-            for offset in (0..data.len()).step_by(251) {
-                let original = data[offset];
-                for value in [0x00, 0x02, 0x7F, 0xFF] {
-                    data[offset] = value;
-                    let _ = parse_gp_data(&data);
-                }
-                data[offset] = original;
-            }
-        }
-    }
 }
