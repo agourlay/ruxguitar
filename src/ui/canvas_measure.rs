@@ -1,6 +1,6 @@
 use crate::parser::song_parser::{
     Beat, BeatStrokeDirection, BendEffect, Duration, GraceEffect, HarmonicType, Measure,
-    MeasureHeader, Note, NoteEffect, NoteType, SlapEffect, SlideType, Song, TimeSignature,
+    MeasureHeader, Note, NoteEffect, NoteType, SlapEffect, Song, TimeSignature,
     TremoloPickingEffect,
 };
 use crate::ui::application::Message;
@@ -18,11 +18,6 @@ use std::rc::Rc;
 // Unicode symbols for musical notation
 const TEMPO_SIGN: char = '\u{1D15F}'; // 𝅗𝅥 https://unicodeplus.com/U+1D15F
 const VIBRATO: &str = "\u{301C}\u{301C}"; // 〜〜 https://unicodeplus.com/U+301C
-const HAMMER_ON: char = '\u{25E0}'; // ◠ https://unicodeplus.com/U+25E0
-const HORIZONTAL_BAR: char = '\u{2015}'; // ― https://unicodeplus.com/U+2015
-const SHIFT_SLIDE: char = '\u{27CD}'; // ⟍ https://unicodeplus.com/U+27CD
-const LEGATO_SLIDE: char = '\u{27CB}'; // ⟋ https://unicodeplus.com/U+27CB
-const TIE: char = '\u{2323}'; // ⌣ https://unicodeplus.com/U+2323
 
 // Drawing constants
 
@@ -615,6 +610,9 @@ impl canvas::Program<Message> for CanvasMeasure {
                     rows,
                     beat,
                     beat_color,
+                    beats,
+                    &beat_positions,
+                    b_id,
                 );
                 beat_positions.push(beat_position_x);
                 beat_position_x += beat_width;
@@ -718,6 +716,47 @@ fn measure_height(rows: RowSpacing, string_count: usize) -> f32 {
     rows.first_string_y() + STRING_LINE_HEIGHT * (string_count - 1) as f32 + rows.staff_footer
 }
 
+/// Position and fret of the next note on `string` after `beat_index`,
+/// within the measure, like TuxGuitar's `getNextNote`. Beats without a note
+/// on the string are skipped.
+fn next_note_on_string(
+    beats: &[Beat],
+    beat_positions: &[f32],
+    beat_index: usize,
+    string: i8,
+) -> Option<(f32, i16)> {
+    beats
+        .iter()
+        .zip(beat_positions)
+        .skip(beat_index + 1)
+        .find_map(|(beat, &x)| {
+            beat.notes
+                .iter()
+                .find(|note| note.string == string)
+                .map(|note| (x, note.value))
+        })
+}
+
+/// Position of the note a tie hangs from: the closest earlier note on the
+/// same string, like TuxGuitar's `getNoteForTie`. A rest before it breaks
+/// the tie, leaving nothing to hang from.
+fn tied_from_note_x(
+    beats: &[Beat],
+    beat_positions: &[f32],
+    beat_index: usize,
+    string: i8,
+) -> Option<f32> {
+    for (beat, &x) in beats.iter().zip(beat_positions).take(beat_index).rev() {
+        if beat.notes.is_empty() {
+            return None;
+        }
+        if beat.notes.iter().any(|note| note.string == string) {
+            return Some(x);
+        }
+    }
+    None
+}
+
 /// Effect annotations stacked above a beat, deduplicated across its notes.
 /// Shared by the row sizing and the drawing so both agree on the height.
 fn beat_annotations(beat: &Beat) -> Vec<&'static str> {
@@ -795,6 +834,9 @@ fn draw_beat(
     rows: RowSpacing,
     beat: &Beat,
     beat_color: Color,
+    beats: &[Beat],
+    beat_positions: &[f32],
+    beat_index: usize,
 ) {
     // Annotate chord effect
     if let Some(chord) = &beat.effect.chord {
@@ -854,6 +896,9 @@ fn draw_beat(
             beat_color,
             bend_movements.as_deref(),
             show_bend_amplitude,
+            beats,
+            beat_positions,
+            beat_index,
         );
     }
 
@@ -899,6 +944,10 @@ fn draw_note(
     beat_color: Color,
     bend_movements: Option<&[i32]>,
     show_bend_amplitude: bool,
+    // the measure's beats and their positions, to reach neighbouring notes
+    beats: &[Beat],
+    beat_positions: &[f32],
+    beat_index: usize,
 ) {
     // note label (pushed down on the right string)
     let note_label = note_value(note);
@@ -907,16 +956,26 @@ fn draw_note(
     // center the notes with more than one char
     let note_position_x = beat_position_x + 3.0 - note_label_len as f32 / 2.0;
     let note_position_y = measure_start_y + local_beat_position_y - 5.0;
-    let note_text = Text {
-        shaping: Auto,
-        content: note_label,
-        color: beat_color,
-        size: 10.0.into(),
-        position: Point::new(note_position_x, note_position_y),
-        align_x: Alignment::Center,
-        ..Text::default()
-    };
-    frame.fill_text(note_text);
+    let string_y = measure_start_y + local_beat_position_y;
+
+    // a tied note carries no fret of its own: it is drawn as an arc hanging
+    // back to the note it continues, like TuxGuitar
+    if note.kind == NoteType::Tie {
+        let from_x = tied_from_note_x(beats, beat_positions, beat_index, note.string)
+            .map_or(note_position_x - STRING_LINE_HEIGHT * 2.0, |x| x + 3.0);
+        draw_tie_arc(frame, beat_color, from_x, note_position_x, string_y);
+    } else {
+        let note_text = Text {
+            shaping: Auto,
+            content: note_label,
+            color: beat_color,
+            size: 10.0.into(),
+            position: Point::new(note_position_x, note_position_y),
+            align_x: Alignment::Center,
+            ..Text::default()
+        };
+        frame.fill_text(note_text);
+    }
 
     // small grace fret before the note, like TuxGuitar's paintEffects.
     // both glyphs are centred, so offset by their half widths to keep the
@@ -956,22 +1015,117 @@ fn draw_note(
             show_bend_amplitude,
         );
     } else {
-        // Annotate some effects on the string after the note
-        let inlined_annotation_width = 10.0;
-        let inlined_annotation_label = inlined_note_effect_annotation(&note.effect);
-        // note_x + half of inter-beat space - half of annotation width
-        let annotation_position_x =
-            note_position_x + width_per_beat / 2.0 - inlined_annotation_width / 2.0;
-        let note_effect_text = Text {
-            shaping: Auto,
-            content: inlined_annotation_label,
-            color: colors.foreground,
-            size: inlined_annotation_width.into(),
-            position: Point::new(annotation_position_x, note_position_y),
-            ..Text::default()
-        };
-        frame.fill_text(note_effect_text);
+        // slides and hammers reach for the note they land on, like
+        // TuxGuitar's paintSlide and paintHammer
+        let next_note = next_note_on_string(beats, beat_positions, beat_index, note.string);
+        if note.effect.slide.is_some() {
+            draw_slide(
+                frame,
+                colors,
+                note_position_x,
+                string_y,
+                next_note.map(|(x, value)| (x + 3.0, value)),
+                note.value,
+            );
+        } else if note.effect.hammer {
+            draw_hammer_arc(
+                frame,
+                colors,
+                note_position_x,
+                note_position_y,
+                next_note.map(|(x, _)| x + 3.0),
+            );
+        }
     }
+}
+
+/// The sloped line of a slide, rising or falling towards the note it lands
+/// on. Without a target it is a short level stub, like TuxGuitar's.
+fn draw_slide(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    note_position_x: f32,
+    string_y: f32,
+    next_note: Option<(f32, i16)>,
+    value: i16,
+) {
+    const Y_MOVE: f32 = STRING_LINE_HEIGHT / 3.5;
+    let stroke = Stroke::default()
+        .with_width(0.9)
+        .with_color(colors.foreground);
+    let start_x = note_position_x + 5.0;
+    let Some((next_x, next_value)) = next_note else {
+        // nothing to reach: a level stub leaving the note
+        frame.stroke(
+            &Path::line(
+                Point::new(start_x, string_y - Y_MOVE),
+                Point::new(start_x + 13.0, string_y - Y_MOVE),
+            ),
+            stroke,
+        );
+        return;
+    };
+    let end_x = (next_x - 5.0).max(start_x + 2.0);
+    // slope towards the landing fret; equal frets slide level above the string
+    let (start_y, end_y) = match next_value.cmp(&value) {
+        std::cmp::Ordering::Less => (string_y - Y_MOVE, string_y + Y_MOVE),
+        std::cmp::Ordering::Greater => (string_y + Y_MOVE, string_y - Y_MOVE),
+        std::cmp::Ordering::Equal => (string_y - Y_MOVE, string_y - Y_MOVE),
+    };
+    frame.stroke(
+        &Path::line(Point::new(start_x, start_y), Point::new(end_x, end_y)),
+        stroke,
+    );
+}
+
+/// The slur of a hammer-on or pull-off, arcing over to the next note.
+fn draw_hammer_arc(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    note_position_x: f32,
+    note_position_y: f32,
+    next_note_x: Option<f32>,
+) {
+    let x = note_position_x + 5.0;
+    let width = next_note_x.map_or(10.0, |next| (next - 5.0 - x).max(8.0));
+    let y = note_position_y;
+    let height = STRING_LINE_HEIGHT / 2.0;
+    let arc = Path::new(|p| {
+        p.move_to(Point::new(x, y));
+        p.bezier_curve_to(
+            Point::new(x, y - height),
+            Point::new(x + width, y - height),
+            Point::new(x + width, y),
+        );
+    });
+    frame.stroke(
+        &arc,
+        Stroke::default()
+            .with_width(0.9)
+            .with_color(colors.foreground),
+    );
+}
+
+/// The arc joining a tied note back to the one it continues.
+fn draw_tie_arc(
+    frame: &mut Frame<Renderer>,
+    color: Color,
+    from_x: f32,
+    to_x: f32,
+    string_y: f32,
+) {
+    let y = string_y + STRING_LINE_HEIGHT / 3.0;
+    let height = STRING_LINE_HEIGHT / 3.0;
+    let from_x = from_x.min(to_x - 4.0);
+    let arc = Path::new(|p| {
+        p.move_to(Point::new(from_x, y));
+        p.bezier_curve_to(
+            Point::new(from_x, y + height),
+            Point::new(to_x, y + height),
+            Point::new(to_x, y),
+        );
+    });
+    frame.stroke(&arc, Stroke::default().with_width(0.9).with_color(color));
 }
 
 // Amplitude labels in tones, indexed by bend value (half-semitone units)
@@ -1620,22 +1774,6 @@ fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<&'static str> {
     annotations
 }
 
-fn inlined_note_effect_annotation(note_effect: &NoteEffect) -> String {
-    let mut annotation = String::new();
-    if note_effect.hammer {
-        annotation.push(HAMMER_ON);
-    }
-    if let Some(slide) = &note_effect.slide {
-        annotation.push(match slide {
-            SlideType::IntoFromAbove | SlideType::IntoFromBelow | SlideType::OutDownwards => {
-                HORIZONTAL_BAR
-            }
-            SlideType::ShiftSlideTo => SHIFT_SLIDE,
-            SlideType::LegatoSlideTo | SlideType::OutUpWards => LEGATO_SLIDE,
-        });
-    }
-    annotation
-}
 
 fn note_value(note: &Note) -> String {
     match note.kind {
@@ -1650,7 +1788,8 @@ fn note_value(note: &Note) -> String {
                 note.value.to_string()
             }
         }
-        NoteType::Tie => TIE.into(),
+        // a tie draws an arc back to its note instead of a label
+        NoteType::Tie => String::new(),
         NoteType::Dead => "x".to_string(),
         NoteType::Unknown(i) => {
             log::warn!("NoteType Unknown({i})");
@@ -1675,6 +1814,62 @@ mod tests {
             },
             ..Beat::default()
         }
+    }
+
+    fn note_on(string: i8, value: i16) -> Note {
+        let mut note = Note::new(NoteEffect::default());
+        note.string = string;
+        note.value = value;
+        note
+    }
+
+    fn beat_with(notes: Vec<Note>) -> Beat {
+        Beat {
+            notes,
+            ..Beat::default()
+        }
+    }
+
+    #[test]
+    fn slide_reaches_the_next_note_on_its_string() {
+        let beats = vec![
+            beat_with(vec![note_on(1, 5)]),
+            // an intervening beat that does not touch string 1
+            beat_with(vec![note_on(2, 7)]),
+            beat_with(vec![note_on(1, 9)]),
+        ];
+        let positions = [0.0, 10.0, 20.0];
+        assert_eq!(
+            next_note_on_string(&beats, &positions, 0, 1),
+            Some((20.0, 9))
+        );
+        // nothing follows the last note on the string
+        assert_eq!(next_note_on_string(&beats, &positions, 2, 1), None);
+    }
+
+    #[test]
+    fn tie_hangs_from_the_closest_earlier_note() {
+        let beats = vec![
+            beat_with(vec![note_on(1, 5)]),
+            beat_with(vec![note_on(2, 7)]),
+            beat_with(vec![note_on(1, 5)]),
+        ];
+        let positions = [0.0, 10.0, 20.0];
+        assert_eq!(tied_from_note_x(&beats, &positions, 2, 1), Some(0.0));
+        // nothing precedes the first beat
+        assert_eq!(tied_from_note_x(&beats, &positions, 0, 1), None);
+    }
+
+    #[test]
+    fn a_rest_breaks_the_tie() {
+        let beats = vec![
+            beat_with(vec![note_on(1, 5)]),
+            // a rest: no notes at all
+            beat_with(vec![]),
+            beat_with(vec![note_on(1, 5)]),
+        ];
+        let positions = [0.0, 10.0, 20.0];
+        assert_eq!(tied_from_note_x(&beats, &positions, 2, 1), None);
     }
 
     #[test]
