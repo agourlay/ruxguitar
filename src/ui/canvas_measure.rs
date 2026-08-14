@@ -254,9 +254,9 @@ impl CanvasMeasure {
         }
         let string_count = track.strings.len();
         // the tempo is shown on the first measure and whenever it changes
-        let has_tempo_label = measure_id.checked_sub(1).is_none_or(|previous| {
-            measure_header.tempo != song.measure_headers[previous].tempo
-        });
+        let has_tempo_label = measure_id
+            .checked_sub(1)
+            .is_none_or(|previous| measure_header.tempo != song.measure_headers[previous].tempo);
         let row_needs = RowSpacing::for_measure(measure, measure_header, has_tempo_label);
         let vertical_measure_height = measure_height(row_needs, string_count);
         Self {
@@ -458,7 +458,9 @@ impl canvas::Program<Message> for CanvasMeasure {
                     measure_start_y + local_start_y,
                 );
                 let line = Path::line(start_point, end_point);
-                let stroke = Stroke::default().with_width(0.8).with_color(colors.string_line);
+                let stroke = Stroke::default()
+                    .with_width(0.8)
+                    .with_color(colors.string_line);
                 frame.stroke(&line, stroke);
             }
 
@@ -703,7 +705,9 @@ fn draw_focused_box(
 
     let top_left = Point::new(x, y);
     let rectangle_size = Size::new(width, height);
-    let stroke = Stroke::default().with_width(1.0).with_color(colors.foreground);
+    let stroke = Stroke::default()
+        .with_width(1.0)
+        .with_color(colors.foreground);
     frame.stroke_rectangle(top_left, rectangle_size, stroke);
 }
 
@@ -717,7 +721,9 @@ fn draw_measure_vertical_line(
     let start_point = Point::new(measure_start_x, measure_start_y);
     let end_point = Point::new(measure_start_x, measure_start_y + vertical_measure_height);
     let vertical_line = Path::line(start_point, end_point);
-    let stroke = Stroke::default().with_width(1.5).with_color(colors.foreground);
+    let stroke = Stroke::default()
+        .with_width(1.5)
+        .with_color(colors.foreground);
     frame.stroke(&vertical_line, stroke);
 }
 
@@ -1117,13 +1123,7 @@ fn draw_hammer_arc(
 }
 
 /// The arc joining a tied note back to the one it continues.
-fn draw_tie_arc(
-    frame: &mut Frame<Renderer>,
-    color: Color,
-    from_x: f32,
-    to_x: f32,
-    string_y: f32,
-) {
+fn draw_tie_arc(frame: &mut Frame<Renderer>, color: Color, from_x: f32, to_x: f32, string_y: f32) {
     let y = string_y + STRING_LINE_HEIGHT / 3.0;
     let height = STRING_LINE_HEIGHT / 3.0;
     let from_x = from_x.min(to_x - 4.0);
@@ -1160,7 +1160,9 @@ fn draw_bend(
     measure_start_y: f32,
     show_amplitude: bool,
 ) {
-    let stroke = Stroke::default().with_width(0.8).with_color(colors.foreground);
+    let stroke = Stroke::default()
+        .with_width(0.8)
+        .with_color(colors.foreground);
     let arrow_size = 2.5;
     // shrink the arrows with the beat when the measure is compressed, so
     // they stay within the width reserved by beat_natural_width
@@ -1281,7 +1283,9 @@ fn draw_open_section(
     let start_point = Point::new(position_x, measure_start_y);
     let end_point = Point::new(position_x, measure_start_y + vertical_measure_height);
     let tick_vertical_line = Path::line(start_point, end_point);
-    let stroke = Stroke::default().with_width(4.0).with_color(colors.foreground);
+    let stroke = Stroke::default()
+        .with_width(4.0)
+        .with_color(colors.foreground);
     frame.stroke(&tick_vertical_line, stroke);
 
     // then thin one
@@ -1362,7 +1366,9 @@ fn draw_pick_stroke(
     beat_position_x: f32,
     y: f32,
 ) {
-    let stroke = Stroke::default().with_width(0.8).with_color(colors.foreground);
+    let stroke = Stroke::default()
+        .with_width(0.8)
+        .with_color(colors.foreground);
     let x = beat_position_x + 3.5;
     match direction {
         BeatStrokeDirection::Up => {
@@ -1382,7 +1388,9 @@ fn draw_pick_stroke(
             let top_bar = Path::line(Point::new(x - 3.0, y), Point::new(x + 3.0, y));
             frame.stroke(
                 &top_bar,
-                Stroke::default().with_width(2.0).with_color(colors.foreground),
+                Stroke::default()
+                    .with_width(2.0)
+                    .with_color(colors.foreground),
             );
         }
         BeatStrokeDirection::None => {}
@@ -1418,7 +1426,9 @@ fn draw_tremolo_picking(
         v if v >= 16 => 2,
         _ => 1,
     };
-    let stroke = Stroke::default().with_width(1.2).with_color(colors.foreground);
+    let stroke = Stroke::default()
+        .with_width(1.2)
+        .with_color(colors.foreground);
     let x = beat_position_x + 3.5;
     let mut y = tab_bottom_y + 5.0;
     for _ in 0..slashes {
@@ -1444,7 +1454,9 @@ fn draw_stroke_arrow(
     let arrow_x = beat_position_x + 10.0;
     let arrow_size = 3.0;
 
-    let stroke = Stroke::default().with_width(0.8).with_color(colors.foreground);
+    let stroke = Stroke::default()
+        .with_width(0.8)
+        .with_color(colors.foreground);
 
     // vertical line spanning the chord
     frame.stroke(
@@ -1553,8 +1565,14 @@ impl<'a> TupletRun<'a> {
 /// A tuplet bracket: a horizontal line broken by the group size, with a
 /// tick at each end pointing down towards the notes. A run covering a
 /// single beat has no span to bracket, so only its label is drawn.
-fn draw_tuplet_bracket(frame: &mut Frame<Renderer>,
-    colors: TablatureColors, enters: u8, x1: f32, x2: f32, y: f32) {
+fn draw_tuplet_bracket(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    enters: u8,
+    x1: f32,
+    x2: f32,
+    y: f32,
+) {
     const TICK: f32 = 4.0;
     const LABEL_SIZE: f32 = 8.0;
     let has_span = x2 > x1;
@@ -1566,7 +1584,9 @@ fn draw_tuplet_bracket(frame: &mut Frame<Renderer>,
     let label_half = label.chars().count() as f32 * LABEL_SIZE / 4.0;
 
     if has_span {
-        let stroke = Stroke::default().with_width(0.8).with_color(colors.foreground);
+        let stroke = Stroke::default()
+            .with_width(0.8)
+            .with_color(colors.foreground);
         frame.stroke(
             &Path::line(Point::new(left, y + TICK), Point::new(left, y)),
             stroke,
@@ -1617,7 +1637,9 @@ fn draw_alternative_ending(
     let bracket_start = measure_start_x + 2.0;
     let bracket_end = measure_start_x + measure_width;
 
-    let stroke = Stroke::default().with_width(1.0).with_color(colors.foreground);
+    let stroke = Stroke::default()
+        .with_width(1.0)
+        .with_color(colors.foreground);
 
     // vertical line down
     let start = Point::new(bracket_start, bracket_y);
@@ -1665,7 +1687,9 @@ fn draw_repeat_dots(
 
     frame.stroke(
         &circle,
-        Stroke::default().with_width(2.0).with_color(colors.foreground),
+        Stroke::default()
+            .with_width(2.0)
+            .with_color(colors.foreground),
     );
 
     // bottom dot
@@ -1675,7 +1699,9 @@ fn draw_repeat_dots(
 
     frame.stroke(
         &circle,
-        Stroke::default().with_width(2.0).with_color(colors.foreground),
+        Stroke::default()
+            .with_width(2.0)
+            .with_color(colors.foreground),
     );
 }
 
@@ -1700,7 +1726,9 @@ fn draw_end_section(
     let start_point = Point::new(position_x, measure_start_y);
     let end_point = Point::new(position_x, measure_start_y + vertical_measure_height);
     let thick_vertical_line = Path::line(start_point, end_point);
-    let stroke = Stroke::default().with_width(4.0).with_color(colors.foreground);
+    let stroke = Stroke::default()
+        .with_width(4.0)
+        .with_color(colors.foreground);
     frame.stroke(&thick_vertical_line, stroke);
 }
 
@@ -1783,7 +1811,6 @@ fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<&'static str> {
     }
     annotations
 }
-
 
 fn note_value(note: &Note) -> String {
     match note.kind {

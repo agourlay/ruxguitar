@@ -279,8 +279,6 @@ impl Tablature {
         count.max(1)
     }
 
-
-
     pub fn view(&self) -> Element<'_, Message> {
         let has_layout = self.line_tracker.tablature_container_width > 0.0;
 
@@ -554,6 +552,4 @@ mod tests {
         }
         assert_eq!(first_on_line, vec![true, false, true, false]);
     }
-
-
 }

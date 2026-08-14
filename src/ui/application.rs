@@ -7,7 +7,6 @@ use iced::{
 };
 use std::fmt::Display;
 
-use crate::{ApplicationArgs, ThemeChoice};
 use crate::audio::midi_player::AudioPlayer;
 use crate::audio::playback_order::compute_playback_order;
 use crate::config::Config;
@@ -21,6 +20,7 @@ use crate::ui::picker::{FilePickerError, load_file, open_file_dialog};
 use crate::ui::tablature::Tablature;
 use crate::ui::tuning::tuning_label;
 use crate::ui::utils::{action_gated, action_toggle, modal, untitled_text_table_box};
+use crate::{ApplicationArgs, ThemeChoice};
 use iced::futures::{SinkExt, Stream};
 use iced::keyboard::key::Named::{ArrowDown, ArrowLeft, ArrowRight, ArrowUp, F11, Space};
 use iced::widget::scrollable::AbsoluteOffset;
@@ -31,7 +31,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::Notify;
 
 const ICONS_FONT: &[u8] = include_bytes!("../../resources/icons.ttf");
-
 
 pub struct RuxApplication {
     song_info: Option<SongDisplayInfo>,
@@ -413,15 +412,14 @@ impl RuxApplication {
                 // hold the page still while it is being read, turn it when
                 // playback moves past it
                 let focused = tablature.focused_measure();
-                tablature.page_scroll_offset(focused).map_or_else(
-                    Task::none,
-                    |offset| {
+                tablature
+                    .page_scroll_offset(focused)
+                    .map_or_else(Task::none, |offset| {
                         scroll_to(
                             tablature.scroll_id.clone(),
                             AbsoluteOffset { x: 0.0, y: offset },
                         )
-                    },
-                )
+                    })
             }
             Message::NextMeasure => {
                 let target = self.tablature.as_ref().and_then(|t| {
@@ -854,9 +852,9 @@ impl RuxApplication {
 /// fall back to light whatever the desktop looks like; the dark tab stays
 /// the default there.
 fn resolve_theme(choice: Option<ThemeChoice>) -> Option<Theme> {
-    choice.map(Theme::from).or_else(|| {
-        cfg!(target_os = "linux").then_some(Theme::Dark)
-    })
+    choice
+        .map(Theme::from)
+        .or_else(|| cfg!(target_os = "linux").then_some(Theme::Dark))
 }
 
 /// Seconds elapsed from the song's start up to (but not including) `measure_idx`.
