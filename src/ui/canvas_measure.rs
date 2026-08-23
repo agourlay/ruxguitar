@@ -40,6 +40,8 @@ const ROW_TUPLET: f32 = 12.0;
 const ROW_EFFECT_LINE: f32 = 12.0;
 const ROW_TEXT: f32 = 11.0;
 const ROW_PICK_STROKE: f32 = 10.0;
+// Lyrics sit under the staff, below the footer.
+const ROW_LYRIC: f32 = 11.0;
 // Always-present gap between the last annotation row and the staff: holds
 // the measure number, the repeat count and the focus box edge.
 const STAFF_HEADER: f32 = 16.0;
@@ -66,6 +68,7 @@ pub struct RowSpacing {
     pick_stroke: f32,
     staff_header: f32,
     staff_footer: f32,
+    lyric: f32,
 }
 
 impl Default for RowSpacing {
@@ -81,6 +84,7 @@ impl Default for RowSpacing {
             pick_stroke: 0.0,
             staff_header: STAFF_HEADER,
             staff_footer: STAFF_FOOTER,
+            lyric: 0.0,
         }
     }
 }
@@ -95,8 +99,12 @@ impl RowSpacing {
         header: &MeasureHeader,
         has_tempo_label: bool,
         has_signature_label: bool,
+        has_lyrics: bool,
     ) -> Self {
         let mut spacing = Self::default();
+        if has_lyrics {
+            spacing.lyric = ROW_LYRIC;
+        }
         if header.repeat_alternative > 0 {
             spacing.alt_ending = ROW_ALT_ENDING;
         }
@@ -166,6 +174,7 @@ impl RowSpacing {
         self.pick_stroke = self.pick_stroke.max(other.pick_stroke);
         self.staff_header = self.staff_header.max(other.staff_header);
         self.staff_footer = self.staff_footer.max(other.staff_footer);
+        self.lyric = self.lyric.max(other.lyric);
     }
 
     const fn marker_y(self) -> f32 {
@@ -251,6 +260,8 @@ pub struct CanvasMeasure {
     has_tempo_label: bool,
     has_key_signature: bool,
     has_triplet_feel: bool,
+    /// One syllable per beat, empty where the beat carries none.
+    lyrics: Vec<String>,
 }
 
 impl CanvasMeasure {
@@ -260,6 +271,7 @@ impl CanvasMeasure {
         song: Rc<Song>,
         focused: bool,
         has_time_signature: bool,
+        lyrics: Vec<String>,
     ) -> Self {
         let track = &song.tracks[track_id];
         let measure = &track.measures[measure_id];
@@ -298,11 +310,13 @@ impl CanvasMeasure {
             measure_header.triplet_feel != TripletFeel::None,
             |previous| measure_header.triplet_feel != previous.triplet_feel,
         );
+        let has_lyrics = lyrics.iter().any(|syllable| !syllable.is_empty());
         let row_needs = RowSpacing::for_measure(
             measure,
             measure_header,
             has_tempo_label,
             has_key_signature || has_triplet_feel,
+            has_lyrics,
         );
         let vertical_measure_height = measure_height(row_needs, string_count);
         Self {
@@ -325,6 +339,7 @@ impl CanvasMeasure {
             has_tempo_label,
             has_key_signature,
             has_triplet_feel,
+            lyrics,
         }
     }
 
@@ -684,6 +699,23 @@ impl canvas::Program<Message> for CanvasMeasure {
                     &beat_positions,
                     b_id,
                 );
+                // the syllable sung on this beat, under the staff
+                if let Some(syllable) = self.lyrics.get(b_id)
+                    && !syllable.is_empty()
+                {
+                    let lyric_text = Text {
+                        shaping: Auto,
+                        content: syllable.clone(),
+                        color: colors.foreground,
+                        size: 8.0.into(),
+                        position: Point::new(
+                            beat_position_x,
+                            measure_start_y + vertical_measure_height + rows.staff_footer,
+                        ),
+                        ..Text::default()
+                    };
+                    frame.fill_text(lyric_text);
+                }
                 beat_positions.push(beat_position_x);
                 beat_position_x += beat_width;
             }
@@ -909,7 +941,10 @@ fn draw_measure_vertical_line(
 
 /// Total canvas height: annotation rows, the staff, and the footer.
 fn measure_height(rows: RowSpacing, string_count: usize) -> f32 {
-    rows.first_string_y() + STRING_LINE_HEIGHT * (string_count - 1) as f32 + rows.staff_footer
+    rows.first_string_y()
+        + STRING_LINE_HEIGHT * (string_count - 1) as f32
+        + rows.staff_footer
+        + rows.lyric
 }
 
 /// Position and fret of the next note on `string` after `beat_index`,

@@ -57,6 +57,7 @@ impl Tablature {
     pub fn load_measures(&mut self) {
         self.canvas_measures.clear();
 
+        let syllables = lyric_syllables(&self.song, self.track_id);
         let measures = self.song.tracks[self.track_id].measures.len();
         for i in 0..measures {
             // the first measure always shows its time signature, the others
@@ -71,6 +72,7 @@ impl Tablature {
                 self.song.clone(),
                 self.focused_measure == i,
                 has_time_signature,
+                syllables.get(i).cloned().unwrap_or_default(),
             );
             self.canvas_measures.push(measure);
         }
@@ -336,6 +338,43 @@ impl Tablature {
     }
 }
 
+/// Lay the song's lyrics out over the track, one syllable per beat that
+/// sounds, like TuxGuitar. Each line starts at its own measure.
+///
+/// The result is indexed by measure, then by beat.
+fn lyric_syllables(song: &Song, track_id: usize) -> Vec<Vec<String>> {
+    let measures = &song.tracks[track_id].measures;
+    let mut per_measure = vec![Vec::new(); measures.len()];
+    let Some(lyrics) = &song.lyrics else {
+        return per_measure;
+    };
+    // lyrics belong to one track, numbered from one
+    if lyrics.track_choice != song.tracks[track_id].number {
+        return per_measure;
+    }
+    for (start_measure, text) in &lyrics.lines {
+        let mut syllables = text.split_whitespace();
+        let first_measure = (*start_measure).max(1) as usize - 1;
+        'line: for (measure_index, measure) in measures.iter().enumerate().skip(first_measure) {
+            let beats = &measure.voices[0].beats;
+            let row = &mut per_measure[measure_index];
+            if row.len() < beats.len() {
+                row.resize(beats.len(), String::new());
+            }
+            for (beat_index, beat) in beats.iter().enumerate() {
+                if beat.notes.is_empty() {
+                    continue;
+                }
+                let Some(syllable) = syllables.next() else {
+                    break 'line;
+                };
+                row[beat_index] = syllable.to_string();
+            }
+        }
+    }
+    per_measure
+}
+
 #[derive(Default)]
 struct LineTracker {
     measure_to_line: Vec<u32>, // measure id to line number
@@ -388,6 +427,49 @@ mod tests {
         let mut tab = Tablature::new(song, 0, Id::new("test-scroll"), &order);
         tab.update_container_size(width, height);
         tab
+    }
+
+    #[test]
+    fn lyrics_follow_the_beats_that_sound() {
+        let song = Rc::new(
+            parse_gp_file("test-files/Oasis - Champagne Supernova (ver 7 by Prince of Peace).gp5")
+                .unwrap(),
+        );
+        let lyric_track = song
+            .tracks
+            .iter()
+            .position(|t| Some(t.number) == song.lyrics.as_ref().map(|l| l.track_choice))
+            .expect("a track carrying the lyrics");
+
+        let syllables = lyric_syllables(&song, lyric_track);
+        let sung: Vec<&String> = syllables
+            .iter()
+            .flatten()
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert!(sung.len() > 20, "expected the lyrics to be laid out");
+
+        // every syllable sits on a beat that actually sounds
+        for (measure_index, row) in syllables.iter().enumerate() {
+            let beats = &song.tracks[lyric_track].measures[measure_index].voices[0].beats;
+            for (beat_index, syllable) in row.iter().enumerate() {
+                if !syllable.is_empty() {
+                    assert!(
+                        !beats[beat_index].notes.is_empty(),
+                        "syllable {syllable:?} landed on a silent beat"
+                    );
+                }
+            }
+        }
+
+        // and a track without lyrics gets none
+        let other = (0..song.tracks.len()).find(|&t| t != lyric_track).unwrap();
+        assert!(
+            lyric_syllables(&song, other)
+                .iter()
+                .flatten()
+                .all(String::is_empty)
+        );
     }
 
     #[test]
