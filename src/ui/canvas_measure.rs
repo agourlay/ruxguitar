@@ -305,12 +305,20 @@ impl CanvasMeasure {
         let measure = &track.measures[measure_id];
         let measure_header = &song.measure_headers[measure_id];
         let beats = &measure.voices[0].beats;
-        // the measure is spaced by its shortest note
+        // the measure is spaced by its shortest note. A beat flagged empty
+        // carries no time, so it has no say, as TuxGuitar's own skips it.
+        // The fallback is for a measure with nothing to space by: a floor
+        // here would widen the long notes it is meant to protect
         let quarter_spacing = beats
             .iter()
+            .filter(|beat| !beat.empty)
             .map(|beat| spacing_for_quarter(&beat.duration))
-            .fold(0.0_f32, f32::max)
-            .max(MIN_BEAT_WIDTH);
+            .fold(0.0_f32, f32::max);
+        let quarter_spacing = if quarter_spacing > 0.0 {
+            quarter_spacing
+        } else {
+            MIN_BEAT_WIDTH
+        };
         let beat_widths: Vec<f32> = beats
             .iter()
             .enumerate()
@@ -1346,6 +1354,10 @@ fn beat_annotations(beat: &Beat) -> Vec<&'static str> {
 /// TuxGuitar's `getEffectWidth`), and room for the grace note that the
 /// next beat draws in the gap before it.
 fn beat_natural_width(beat: &Beat, next_beat: Option<&Beat>, quarter_spacing: f32) -> f32 {
+    // a beat flagged empty takes no time, so it takes no room either
+    if beat.empty {
+        return 0.0;
+    }
     let bend_extra = beat
         .notes
         .iter()
@@ -2646,6 +2658,33 @@ mod tests {
         let sixteenth = beat_natural_width(&beat_of(16), None, by_sixteenth);
         let quarter = beat_natural_width(&beat_of(QUARTER), None, by_quarter);
         assert!(sixteenth < quarter);
+    }
+
+    #[test]
+    fn long_notes_keep_their_proportions() {
+        // a measure of whole notes is spaced by the whole note, and one must
+        // not be widened by a floor meant to protect short notes
+        let spacing = spacing_for_quarter(&beat_of(1).duration);
+        let whole = beat_natural_width(&beat_of(1), None, spacing);
+        assert!(
+            (whole - DURATION_WIDTHS[0]).abs() < 0.01,
+            "whole note {whole}"
+        );
+
+        // the same holds a step down
+        let spacing = spacing_for_quarter(&beat_of(2).duration);
+        let half = beat_natural_width(&beat_of(2), None, spacing);
+        assert!((half - DURATION_WIDTHS[1]).abs() < 0.01, "half note {half}");
+    }
+
+    #[test]
+    fn an_empty_beat_takes_no_room() {
+        // it carries no time, so it may not take space from what does
+        let empty = Beat {
+            empty: true,
+            ..sounding(QUARTER, false)
+        };
+        assert!(beat_natural_width(&empty, None, BEAT_LENGTH) < f32::EPSILON);
     }
 
     #[test]
