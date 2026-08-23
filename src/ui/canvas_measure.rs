@@ -756,6 +756,16 @@ impl canvas::Program<Message> for CanvasMeasure {
                 beat_position_x += beat_width;
             }
 
+            // the rhythm under the staff, once every beat position is known
+            draw_rhythm(
+                frame,
+                colors,
+                beats,
+                &beat_positions,
+                measure_start_y + vertical_measure_height,
+                measure_header,
+            );
+
             // tuplet brackets span consecutive beats of the same division
             if rows.tuplet > 0.0 {
                 for (enters, x1, x2) in tuplet_runs(beats, &beat_positions) {
@@ -810,58 +820,152 @@ fn stem_beams(beat: &Beat) -> Option<usize> {
     Some(halvings.saturating_sub(2))
 }
 
-/// The stem under a beat, with a flag per beam and a dot for a dotted
-/// duration, like TuxGuitar's `paintTablatureBeat`.
-fn draw_stem(
+/// How long a run of short notes may be before it breaks, from TuxGuitar's
+/// `getDivisionLength`: a quarter note, or a dotted one in compound time.
+const fn division_length(header: &MeasureHeader) -> u32 {
+    let signature = &header.time_signature;
+    if signature.denominator.value == 8 && signature.numerator.is_multiple_of(3) {
+        QUARTER_TIME + QUARTER_TIME / 2
+    } else {
+        QUARTER_TIME
+    }
+}
+
+/// Runs of beats beamed together: consecutive sounding notes of an eighth or
+/// shorter falling in one division of the measure, like TuxGuitar's `canJoin`.
+///
+/// Each run is the inclusive index range of the beats it joins.
+fn beam_runs(beats: &[Beat], measure_start: u32, division: u32) -> Vec<(usize, usize)> {
+    let joinable = |beat: &Beat| stem_beams(beat).is_some_and(|beams| beams > 0);
+    let division_of = |beat: &Beat| beat.start.saturating_sub(measure_start) / division.max(1);
+
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for (index, beat) in beats.iter().enumerate() {
+        if !joinable(beat) {
+            continue;
+        }
+        match runs.last_mut() {
+            // a run carries on while the beats stay adjacent and in the same
+            // division of the measure
+            Some(run) if run.1 + 1 == index && division_of(&beats[run.1]) == division_of(beat) => {
+                run.1 = index;
+            }
+            _ => runs.push((index, index)),
+        }
+    }
+    runs
+}
+
+/// The rhythm under the staff: a stem per note, beams over the runs that
+/// join, and a flag where a note stands alone.
+fn draw_rhythm(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    beats: &[Beat],
+    beat_positions: &[f32],
+    tab_bottom_y: f32,
+    header: &MeasureHeader,
+) {
+    let stem_x = |index: usize| beat_positions.get(index).copied().unwrap_or(0.0) + 3.0;
+    let top = tab_bottom_y + STEM_TOP;
+    let bottom = top + STEM_LENGTH;
+    let stroke = Stroke::default()
+        .with_width(1.0)
+        .with_color(colors.foreground);
+
+    for (index, beat) in beats.iter().enumerate() {
+        if stem_beams(beat).is_none() {
+            continue;
+        }
+        let x = stem_x(index);
+        // a half note is stemmed only half way, so it reads as the longer note
+        let stem_top = if beat.duration.value == 2 {
+            top + STEM_LENGTH / 2.0
+        } else {
+            top
+        };
+        frame.stroke(
+            &Path::line(Point::new(x, stem_top), Point::new(x, bottom)),
+            stroke,
+        );
+        draw_duration_dot(frame, colors, beat, x, bottom);
+    }
+
+    let beam_stroke = Stroke::default()
+        .with_width(BEAM_THICKNESS)
+        .with_color(colors.foreground);
+    for (first, last) in beam_runs(beats, header.start, division_length(header)) {
+        let deepest = (first..=last)
+            .filter_map(|i| stem_beams(&beats[i]))
+            .max()
+            .unwrap_or(0);
+        // one bar per level, broken wherever the notes under it are longer
+        for level in 1..=deepest {
+            let y = bottom - (level - 1) as f32 * BEAM_SPACING;
+            let mut bar: Option<(usize, usize)> = None;
+            for (index, beat) in beats.iter().enumerate().take(last + 1).skip(first) {
+                let deep_enough = stem_beams(beat).is_some_and(|beams| beams >= level);
+                match (&mut bar, deep_enough) {
+                    (Some(open), true) => open.1 = index,
+                    (None, true) => bar = Some((index, index)),
+                    (Some(open), false) => {
+                        draw_beam(frame, beam_stroke, *open, first, last, &stem_x, y);
+                        bar = None;
+                    }
+                    (None, false) => {}
+                }
+            }
+            if let Some(open) = bar {
+                draw_beam(frame, beam_stroke, open, first, last, &stem_x, y);
+            }
+        }
+    }
+}
+
+/// One bar of a beam. A bar over a single note is a stub, leaning towards
+/// the run it belongs to.
+fn draw_beam(
+    frame: &mut Frame<Renderer>,
+    stroke: Stroke,
+    bar: (usize, usize),
+    run_first: usize,
+    run_last: usize,
+    stem_x: &impl Fn(usize) -> f32,
+    y: f32,
+) {
+    let (from, to) = bar;
+    let (x1, x2) = if from == to {
+        let x = stem_x(from);
+        // lean back towards the note it follows, unless it opens the run
+        if from == run_first && run_last > run_first {
+            (x, x + FLAG_WIDTH)
+        } else {
+            (x - FLAG_WIDTH, x)
+        }
+    } else {
+        (stem_x(from), stem_x(to))
+    };
+    frame.stroke(&Path::line(Point::new(x1, y), Point::new(x2, y)), stroke);
+}
+
+/// The dot of a dotted duration, beside the end of its stem.
+fn draw_duration_dot(
     frame: &mut Frame<Renderer>,
     colors: TablatureColors,
     beat: &Beat,
     x: f32,
-    tab_bottom_y: f32,
+    y: f32,
 ) {
-    let Some(beams) = stem_beams(beat) else {
+    if !beat.duration.dotted && !beat.duration.double_dotted {
         return;
-    };
-    let stroke = Stroke::default()
-        .with_width(1.0)
-        .with_color(colors.foreground);
-    let top = tab_bottom_y + STEM_TOP;
-    let bottom = top + STEM_LENGTH;
-    // a half note is stemmed only half way, so it reads as the longer note
-    let stem_top = if beat.duration.value == 2 {
-        top + STEM_LENGTH / 2.0
-    } else {
-        top
-    };
-    frame.stroke(
-        &Path::line(Point::new(x, stem_top), Point::new(x, bottom)),
-        stroke,
-    );
-
-    // flags stack up from the end of the stem
-    let flag_stroke = Stroke::default()
-        .with_width(BEAM_THICKNESS)
-        .with_color(colors.foreground);
-    for beam in 0..beams {
-        let y = bottom - beam as f32 * BEAM_SPACING;
-        frame.stroke(
-            &Path::line(Point::new(x, y), Point::new(x + FLAG_WIDTH, y)),
-            flag_stroke,
-        );
     }
-
-    if beat.duration.dotted || beat.duration.double_dotted {
-        let dot_x = x + FLAG_WIDTH + 2.0;
+    let dot_x = x + FLAG_WIDTH + 2.0;
+    frame.fill(&Path::circle(Point::new(dot_x, y), 1.2), colors.foreground);
+    if beat.duration.double_dotted {
         frame.fill(
-            &Path::circle(Point::new(dot_x, bottom), 1.2),
+            &Path::circle(Point::new(dot_x + 3.5, y), 1.2),
             colors.foreground,
         );
-        if beat.duration.double_dotted {
-            frame.fill(
-                &Path::circle(Point::new(dot_x + 3.5, bottom), 1.2),
-                colors.foreground,
-            );
-        }
     }
 }
 
@@ -1281,13 +1385,6 @@ fn draw_beat(
             rows.pick_stroke_y(),
         );
     }
-    draw_stem(
-        frame,
-        colors,
-        beat,
-        beat_position_x + 3.0,
-        measure_start_y + vertical_measure_height,
-    );
     if beat.notes.iter().any(|n| n.effect.staccato) {
         draw_staccato_dot(frame, colors, beat, beat_position_x, measure_start_y);
     }
@@ -2315,6 +2412,82 @@ mod tests {
         };
         beat.notes.push(Note::new(NoteEffect::default()));
         beat
+    }
+
+    fn run_of(durations: &[u16]) -> Vec<Beat> {
+        let mut start = QUARTER_TIME;
+        durations
+            .iter()
+            .map(|&value| {
+                let mut beat = sounding(value, false);
+                beat.start = start;
+                start += beat.duration.time();
+                beat
+            })
+            .collect()
+    }
+
+    #[test]
+    fn short_notes_beam_within_a_division() {
+        // eight eighths in 4/4 beam in pairs, one pair per quarter
+        let beats = run_of(&[8; 8]);
+        assert_eq!(
+            beam_runs(&beats, QUARTER_TIME, QUARTER_TIME),
+            vec![(0, 1), (2, 3), (4, 5), (6, 7)]
+        );
+    }
+
+    #[test]
+    fn a_long_note_breaks_the_run() {
+        // a quarter in the middle is not beamed, and parts what surrounds it
+        let beats = run_of(&[8, 8, QUARTER, 8, 8]);
+        assert_eq!(
+            beam_runs(&beats, QUARTER_TIME, QUARTER_TIME),
+            vec![(0, 1), (3, 4)]
+        );
+    }
+
+    #[test]
+    fn a_run_breaks_at_a_division_boundary() {
+        // an eighth landing off the beat carries its run into the next
+        // quarter, where it starts afresh rather than beaming across
+        let beats = run_of(&[QUARTER, 8, 8, 8]);
+        let runs = beam_runs(&beats, QUARTER_TIME, QUARTER_TIME);
+        assert_eq!(runs, vec![(1, 2), (3, 3)]);
+    }
+
+    #[test]
+    fn a_rest_breaks_the_run() {
+        let mut beats = run_of(&[8; 4]);
+        beats[1].notes.clear();
+        let runs = beam_runs(&beats, QUARTER_TIME, QUARTER_TIME);
+        assert!(
+            runs.iter()
+                .all(|&(first, last)| !(first..=last).contains(&1))
+        );
+    }
+
+    #[test]
+    fn compound_time_beams_in_threes() {
+        // 6/8 groups by the dotted quarter, so six eighths make two runs
+        let beats = run_of(&[8; 6]);
+        let compound = QUARTER_TIME + QUARTER_TIME / 2;
+        assert_eq!(
+            beam_runs(&beats, QUARTER_TIME, compound),
+            vec![(0, 2), (3, 5)]
+        );
+    }
+
+    #[test]
+    fn the_division_follows_the_time_signature() {
+        let mut header = MeasureHeader::default();
+        assert_eq!(division_length(&header), QUARTER_TIME);
+        header.time_signature.numerator = 6;
+        header.time_signature.denominator.value = 8;
+        assert_eq!(division_length(&header), QUARTER_TIME + QUARTER_TIME / 2);
+        // 7/8 is not a compound meter, so it groups by the quarter
+        header.time_signature.numerator = 7;
+        assert_eq!(division_length(&header), QUARTER_TIME);
     }
 
     #[test]
