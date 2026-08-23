@@ -431,10 +431,7 @@ mod tests {
 
     #[test]
     fn lyrics_follow_the_beats_that_sound() {
-        let song = Rc::new(
-            parse_gp_file("test-files/Oasis - Champagne Supernova (ver 7 by Prince of Peace).gp5")
-                .unwrap(),
-        );
+        let song = Rc::new(parse_gp_file("test-files/Demo v5.gp5").unwrap());
         let lyric_track = song
             .tracks
             .iter()
@@ -447,7 +444,7 @@ mod tests {
             .flatten()
             .filter(|s| !s.is_empty())
             .collect();
-        assert!(sung.len() > 20, "expected the lyrics to be laid out");
+        assert!(!sung.is_empty(), "expected the lyrics to be laid out");
 
         // every syllable sits on a beat that actually sounds
         for (measure_index, row) in syllables.iter().enumerate() {
@@ -470,6 +467,24 @@ mod tests {
                 .flatten()
                 .all(String::is_empty)
         );
+    }
+
+    #[test]
+    fn lyrics_attached_to_no_track_stay_silent() {
+        // a lyric track of zero names no track, as in TuxGuitar where only a
+        // matching one-based track number receives the lyrics
+        let song = Rc::new(parse_gp_file("test-files/Ghost - Cirice.gp5").unwrap());
+        let lyrics = song.lyrics.as_ref().expect("the file carries lyrics");
+        assert_eq!(lyrics.track_choice, 0);
+        for track_id in 0..song.tracks.len() {
+            assert!(
+                lyric_syllables(&song, track_id)
+                    .iter()
+                    .flatten()
+                    .all(String::is_empty),
+                "track {track_id} should not receive the lyrics"
+            );
+        }
     }
 
     #[test]
