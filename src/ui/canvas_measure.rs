@@ -1,7 +1,7 @@
 use crate::parser::song_parser::{
-    Beat, BeatStrokeDirection, BendEffect, Chord, Duration, GraceEffect, HarmonicType, Measure,
-    MeasureHeader, Note, NoteEffect, NoteType, SlapEffect, Song, TimeSignature,
-    TremoloPickingEffect, TripletFeel,
+    Beat, BeatStrokeDirection, BendEffect, Chord, Duration, GraceEffect, HarmonicType,
+    KeySignature, Measure, MeasureHeader, Note, NoteEffect, NoteType, SlapEffect, Song,
+    TimeSignature, TremoloPickingEffect, TripletFeel,
 };
 use crate::ui::application::Message;
 use crate::ui::utils::TablatureColors;
@@ -304,8 +304,7 @@ impl CanvasMeasure {
         let previous_header = measure_id.checked_sub(1).map(|p| &song.measure_headers[p]);
         let has_tempo_label =
             previous_header.is_none_or(|previous| measure_header.tempo != previous.tempo);
-        let has_key_signature = previous_header
-            .is_none_or(|previous| measure_header.key_signature != previous.key_signature);
+        let has_key_signature = shows_key_signature(measure_header, previous_header);
         let has_triplet_feel = previous_header.map_or(
             measure_header.triplet_feel != TripletFeel::None,
             |previous| measure_header.triplet_feel != previous.triplet_feel,
@@ -861,6 +860,15 @@ fn draw_chord_diagram(
             }
         }
     }
+}
+
+/// Whether a measure states its key: when it changes, or when a song opens
+/// in something other than the default key everything starts in.
+fn shows_key_signature(header: &MeasureHeader, previous: Option<&MeasureHeader>) -> bool {
+    previous.map_or(
+        header.key_signature != KeySignature::new(0, false),
+        |previous| header.key_signature != previous.key_signature,
+    )
 }
 
 /// How a change of feel reads: TuxGuitar draws note pictograms, which the
@@ -2097,6 +2105,26 @@ mod tests {
             notes,
             ..Beat::default()
         }
+    }
+
+    #[test]
+    fn the_default_key_is_not_announced() {
+        let c_major = KeySignature::new(0, false);
+        let header = MeasureHeader {
+            key_signature: c_major,
+            ..Default::default()
+        };
+        // most songs open in C major: saying so on every first measure is noise
+        assert!(!shows_key_signature(&header, None));
+        // anything else is worth stating
+        let e_flat = MeasureHeader {
+            key_signature: KeySignature::new(-3, false),
+            ..Default::default()
+        };
+        assert!(shows_key_signature(&e_flat, None));
+        // and so is a change, back to the default included
+        assert!(shows_key_signature(&header, Some(&e_flat)));
+        assert!(!shows_key_signature(&header, Some(&header)));
     }
 
     #[test]
