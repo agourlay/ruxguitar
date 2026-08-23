@@ -68,6 +68,9 @@ const STEM_LENGTH: f32 = 21.0;
 const BEAM_SPACING: f32 = 5.0;
 const BEAM_THICKNESS: f32 = 1.8;
 const FLAG_WIDTH: f32 = 6.0;
+// A sixty-fourth note carries four beams, the deepest written music asks
+// for. A malformed duration may claim more than the stem could hold.
+const MAX_BEAMS: usize = 5;
 
 /// Height of each annotation row above the staff, zero when unused.
 ///
@@ -826,7 +829,7 @@ fn stem_beams(beat: &Beat) -> Option<usize> {
         return None;
     }
     let halvings = f32::from(beat.duration.value).log2().round() as usize;
-    Some(halvings.saturating_sub(2))
+    Some(halvings.saturating_sub(2).min(MAX_BEAMS))
 }
 
 /// Whether a beat is a silence: it takes its time without sounding.
@@ -898,7 +901,8 @@ fn draw_rest(
             }
         }
     }
-    draw_duration_dot(frame, colors, beat, x + 7.0, center_y);
+    // just clear of the glyph, which is about seven wide
+    draw_duration_dot(frame, colors, beat, x + 9.0, center_y);
 }
 
 /// How long a run of short notes may be before it breaks, from TuxGuitar's
@@ -971,7 +975,10 @@ fn draw_rhythm(
         );
         // above the beams, which stack up from the end of the stem
         let beams = stem_beams(beat).unwrap_or(0) as f32;
-        draw_duration_dot(frame, colors, beat, x, bottom - beams * BEAM_SPACING);
+        // clear of the flag, and of the beams stacked up the stem, but
+        // never past the stem itself
+        let dot_y = (bottom - beams * BEAM_SPACING).max(stem_top);
+        draw_duration_dot(frame, colors, beat, x + FLAG_WIDTH + 2.0, dot_y);
     }
 
     let beam_stroke = Stroke::default()
@@ -1036,18 +1043,17 @@ fn draw_beam(
     frame.stroke(&Path::line(Point::new(x1, y), Point::new(x2, y)), stroke);
 }
 
-/// The dot of a dotted duration, beside the end of its stem.
+/// The dot of a dotted duration, at the position its caller sets aside.
 fn draw_duration_dot(
     frame: &mut Frame<Renderer>,
     colors: TablatureColors,
     beat: &Beat,
-    x: f32,
+    dot_x: f32,
     y: f32,
 ) {
     if !beat.duration.dotted && !beat.duration.double_dotted {
         return;
     }
-    let dot_x = x + FLAG_WIDTH + 2.0;
     frame.fill(&Path::circle(Point::new(dot_x, y), 1.2), colors.foreground);
     if beat.duration.double_dotted {
         frame.fill(
@@ -2615,6 +2621,15 @@ mod tests {
         // 7/8 is not a compound meter, so it groups by the quarter
         header.time_signature.numerator = 7;
         assert_eq!(division_length(&header), QUARTER_TIME);
+    }
+
+    #[test]
+    fn a_malformed_duration_cannot_overrun_the_stem() {
+        // a corrupt file can name a duration far shorter than music uses;
+        // its beams would be drawn past the stem and over the staff
+        assert_eq!(stem_beams(&sounding(16384, false)), Some(MAX_BEAMS));
+        // the deepest real duration stays under the limit
+        assert!(stem_beams(&sounding(64, false)).unwrap() < MAX_BEAMS);
     }
 
     #[test]
