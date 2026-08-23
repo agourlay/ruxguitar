@@ -42,13 +42,14 @@ const ROW_TEXT: f32 = 11.0;
 const ROW_PICK_STROKE: f32 = 10.0;
 // Lyrics sit under the staff, below the footer.
 const ROW_LYRIC: f32 = 11.0;
-// A syllable is drawn from its beat rightwards. Sung text is wider than a
-// beat far more often than not, so the beat carrying it claims the room:
-// roughly one character of the lyric font, plus a gap before the next word.
-const LYRIC_CHAR_WIDTH: f32 = 4.6;
-const LYRIC_GAP: f32 = 3.0;
-// One long word may not stretch its measure without limit.
-const LYRIC_MAX_EXTRA: f32 = BEAT_LENGTH * 2.0;
+// Labels drawn from their beat rightwards - sung words, chord names, beat
+// text - all share a size, and are wider than a beat often enough that the
+// beat carrying one claims the room: roughly a character of that font, plus
+// a gap before whatever follows.
+const LABEL_CHAR_WIDTH: f32 = 4.6;
+const LABEL_GAP: f32 = 3.0;
+// One long label may not stretch its measure without limit.
+const LABEL_MAX_EXTRA: f32 = BEAT_LENGTH * 2.0;
 // Always-present gap between the last annotation row and the staff: holds
 // the measure number, the repeat count and the focus box edge.
 const STAFF_HEADER: f32 = 16.0;
@@ -769,20 +770,28 @@ impl canvas::Program<Message> for CanvasMeasure {
     }
 }
 
-/// Room a beat needs for the syllable sung on it, beyond a plain beat.
+/// Room a label needs beyond a plain beat, capped so that one long label
+/// cannot stretch its measure without limit.
+fn label_extra_width(label: &str) -> f32 {
+    if label.is_empty() {
+        return 0.0;
+    }
+    let width = label.chars().count() as f32 * LABEL_CHAR_WIDTH + LABEL_GAP;
+    (width - BEAT_LENGTH).clamp(0.0, LABEL_MAX_EXTRA)
+}
+
+/// Room a beat needs for the syllable sung on it.
 ///
 /// Only claimed when the next beat sings too: with nothing beside it, a
 /// long word may lean into the space that follows.
 fn lyric_extra_width(lyrics: &[String], beat_index: usize) -> f32 {
-    let syllable = lyrics.get(beat_index).map_or("", String::as_str);
     let next_sings = lyrics
         .get(beat_index + 1)
         .is_some_and(|next| !next.is_empty());
-    if syllable.is_empty() || !next_sings {
+    if !next_sings {
         return 0.0;
     }
-    let width = syllable.chars().count() as f32 * LYRIC_CHAR_WIDTH + LYRIC_GAP;
-    (width - BEAT_LENGTH).clamp(0.0, LYRIC_MAX_EXTRA)
+    label_extra_width(lyrics.get(beat_index).map_or("", String::as_str))
 }
 
 /// Whether a chord carries a fingering worth drawing as a grid.
@@ -1046,7 +1055,7 @@ fn beat_natural_width(beat: &Beat, next_beat: Option<&Beat>) -> f32 {
         .fold(0.0, f32::max);
     let grace_extra = next_beat.map_or(0.0, grace_gap_width);
     // a diagram is wider than a beat, so it claims the room it needs
-    let chord_extra = beat
+    let diagram_extra = beat
         .effect
         .chord
         .as_ref()
@@ -1056,7 +1065,19 @@ fn beat_natural_width(beat: &Beat, next_beat: Option<&Beat>) -> f32 {
             let needed = chord_diagram_width(chord) + CHORD_FIRST_FRET_SPACE + CHORD_STRING_SPACING;
             (needed - BEAT_LENGTH).max(0.0)
         });
-    BEAT_LENGTH + bend_extra + grace_extra + chord_extra
+    // the name sits under the diagram, so the wider of the two governs, and
+    // only where the next beat names a chord of its own to run into
+    let name_extra = next_beat
+        .and_then(|next| next.effect.chord.as_ref())
+        .filter(|next| !next.name.is_empty())
+        .and(beat.effect.chord.as_ref())
+        .map_or(0.0, |chord| label_extra_width(&chord.name));
+    let chord_extra = diagram_extra.max(name_extra);
+    // beat text runs the same risk as a chord name
+    let text_extra = next_beat
+        .filter(|next| !next.text.is_empty())
+        .map_or(0.0, |_| label_extra_width(&beat.text));
+    BEAT_LENGTH + bend_extra + grace_extra + chord_extra + text_extra
 }
 
 /// Label of a grace note: its fret, or a cross when it is dead.
@@ -2132,6 +2153,59 @@ mod tests {
         }
     }
 
+    fn chord_named(name: &str) -> Chord {
+        Chord {
+            name: name.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn beat_naming(name: &str) -> Beat {
+        Beat {
+            effect: BeatEffects {
+                chord: Some(chord_named(name)),
+                ..Default::default()
+            },
+            ..Beat::default()
+        }
+    }
+
+    #[test]
+    fn a_long_chord_name_widens_its_beat() {
+        // a short name fits beside the next one
+        let short = beat_naming("C");
+        assert!(
+            (beat_natural_width(&short, Some(&beat_naming("G"))) - BEAT_LENGTH).abs()
+                < f32::EPSILON
+        );
+
+        // a long one pushes the next chord away
+        let long = beat_naming("Bbsus4add9");
+        assert!(beat_natural_width(&long, Some(&beat_naming("G"))) > BEAT_LENGTH);
+
+        // but claims nothing where the next beat names no chord to run into
+        assert!(
+            (beat_natural_width(&long, Some(&Beat::default())) - BEAT_LENGTH).abs() < f32::EPSILON
+        );
+        assert!((beat_natural_width(&long, None) - BEAT_LENGTH).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn beat_text_widens_its_beat_too() {
+        let verse = Beat {
+            text: "Verse".to_string(),
+            ..Beat::default()
+        };
+        let next = Beat {
+            text: "Chorus".to_string(),
+            ..Beat::default()
+        };
+        assert!(beat_natural_width(&verse, Some(&next)) > BEAT_LENGTH);
+        assert!(
+            (beat_natural_width(&verse, Some(&Beat::default())) - BEAT_LENGTH).abs() < f32::EPSILON
+        );
+    }
+
     #[test]
     fn a_long_syllable_widens_its_beat() {
         let lyrics =
@@ -2142,7 +2216,7 @@ mod tests {
         assert!(lyric_extra_width(&lyrics(&["spe-cial", "peo"]), 0) > 0.0);
         // but never past the limit, however long the word
         let very_long = lyrics(&["supercalifragilistic", "next"]);
-        assert!((lyric_extra_width(&very_long, 0) - LYRIC_MAX_EXTRA).abs() < f32::EPSILON);
+        assert!((lyric_extra_width(&very_long, 0) - LABEL_MAX_EXTRA).abs() < f32::EPSILON);
         // nothing is claimed when the next beat is silent: the word may lean
         // into the space after it
         assert!(lyric_extra_width(&lyrics(&["spe-cial", ""]), 0) < f32::EPSILON);
