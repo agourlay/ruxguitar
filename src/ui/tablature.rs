@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn measures_of_a_line_share_their_height() {
-        let tab = load_tablature(800.0, 400.0);
+        let tab = load_tablature(800.0, 600.0);
         // staves must align within a line, so every measure on it keeps the
         // same annotation rows
         let mut per_line: BTreeMap<u32, f32> = BTreeMap::new();
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn page_holds_still_while_being_read() {
-        let mut tab = load_tablature(800.0, 400.0);
+        let mut tab = load_tablature(800.0, 600.0);
         let visible = tab.visible_lines(1);
         assert!(visible > 2, "the view should hold several lines");
         // the page only moves once playback reaches its last line
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn page_turns_a_line_early() {
-        let mut tab = load_tablature(800.0, 400.0);
+        let mut tab = load_tablature(800.0, 600.0);
         let visible = tab.visible_lines(1);
         // reaching the last line of the page turns it, putting that line on
         // top so the whole next page is readable while it plays
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn page_turns_back_when_seeking_backwards() {
-        let mut tab = load_tablature(800.0, 400.0);
+        let mut tab = load_tablature(800.0, 600.0);
         let last = tab.measure_count() - 1;
         tab.page_scroll_offset(last).expect("the page should turn");
         // seeking back to the start turns the page back to the top

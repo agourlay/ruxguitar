@@ -1,5 +1,5 @@
 use crate::parser::song_parser::{
-    Beat, BeatStrokeDirection, BendEffect, Duration, GraceEffect, HarmonicType, Measure,
+    Beat, BeatStrokeDirection, BendEffect, Chord, Duration, GraceEffect, HarmonicType, Measure,
     MeasureHeader, Note, NoteEffect, NoteType, SlapEffect, Song, TimeSignature,
     TremoloPickingEffect, TripletFeel,
 };
@@ -28,6 +28,14 @@ const ROW_ALT_ENDING: f32 = 13.0;
 const ROW_MARKER: f32 = 15.0;
 const ROW_SIGNATURE: f32 = 11.0;
 const ROW_CHORD: f32 = 11.0;
+// A chord diagram: markers above the nut, then the fret grid, then the name.
+const CHORD_STRING_SPACING: f32 = 4.0;
+const CHORD_FRET_SPACING: f32 = 5.0;
+const CHORD_FRETS: usize = 5;
+const CHORD_MARKER_HEIGHT: f32 = 5.0;
+// Room on the left of the grid for the first-fret number.
+const CHORD_FIRST_FRET_SPACE: f32 = 6.0;
+const CHORD_DIAGRAM_HEIGHT: f32 = CHORD_MARKER_HEIGHT + CHORD_FRET_SPACING * CHORD_FRETS as f32;
 const ROW_TUPLET: f32 = 12.0;
 const ROW_EFFECT_LINE: f32 = 12.0;
 const ROW_TEXT: f32 = 11.0;
@@ -101,6 +109,14 @@ impl RowSpacing {
         let beats = &measure.voices[0].beats;
         if beats.iter().any(|beat| beat.effect.chord.is_some()) {
             spacing.chord = ROW_CHORD;
+            // a fingering shown as a grid needs the room above the name
+            if beats
+                .iter()
+                .filter_map(|beat| beat.effect.chord.as_ref())
+                .any(has_diagram)
+            {
+                spacing.chord += CHORD_DIAGRAM_HEIGHT;
+            }
         }
         if beats.iter().any(|beat| beat.duration.is_tuplet()) {
             spacing.tuplet = ROW_TUPLET;
@@ -713,6 +729,108 @@ impl canvas::Program<Message> for CanvasMeasure {
     }
 }
 
+/// Whether a chord carries a fingering worth drawing as a grid.
+fn has_diagram(chord: &Chord) -> bool {
+    chord.strings.iter().any(|&fret| fret >= 0)
+}
+
+/// Width a chord diagram occupies.
+fn chord_diagram_width(chord: &Chord) -> f32 {
+    (chord.strings.len().max(1) - 1) as f32 * CHORD_STRING_SPACING
+}
+
+/// A chord fingering, like TuxGuitar's `paintDiagram`: a grid of strings and
+/// frets, dots for the fingered frets, and above the nut a circle for an open
+/// string or a cross for a muted one.
+fn draw_chord_diagram(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    chord: &Chord,
+    x: f32,
+    y: f32,
+) {
+    let string_count = chord.strings.len();
+    if string_count == 0 {
+        return;
+    }
+    let stroke = Stroke::default()
+        .with_width(0.6)
+        .with_color(colors.string_line);
+    let width = chord_diagram_width(chord);
+    let grid_top = y + CHORD_MARKER_HEIGHT;
+    let grid_bottom = grid_top + CHORD_FRET_SPACING * CHORD_FRETS as f32;
+
+    // strings run down the grid, frets across it
+    for i in 0..string_count {
+        let string_x = x + i as f32 * CHORD_STRING_SPACING;
+        frame.stroke(
+            &Path::line(
+                Point::new(string_x, grid_top),
+                Point::new(string_x, grid_bottom),
+            ),
+            stroke,
+        );
+    }
+    for fret in 0..=CHORD_FRETS {
+        let fret_y = grid_top + fret as f32 * CHORD_FRET_SPACING;
+        frame.stroke(
+            &Path::line(Point::new(x, fret_y), Point::new(x + width, fret_y)),
+            stroke,
+        );
+    }
+
+    // frets are absolute, so the grid starts at the chord's first fret
+    let first_fret = chord.first_fret.unwrap_or(1).max(1);
+    if first_fret > 1 {
+        let first_fret_text = Text {
+            shaping: Auto,
+            content: first_fret.to_string(),
+            color: colors.foreground,
+            size: 6.0.into(),
+            position: Point::new(x - CHORD_FIRST_FRET_SPACE + 1.0, grid_top - 1.0),
+            ..Text::default()
+        };
+        frame.fill_text(first_fret_text);
+    }
+
+    // string 1 is the rightmost line of the grid
+    for (index, &fret) in chord.strings.iter().enumerate() {
+        let note_x = x + width - index as f32 * CHORD_STRING_SPACING;
+        if fret < 0 {
+            let cross = CHORD_MARKER_HEIGHT / 2.0 - 0.5;
+            let center_y = y + CHORD_MARKER_HEIGHT / 2.0;
+            frame.stroke(
+                &Path::line(
+                    Point::new(note_x - cross, center_y - cross),
+                    Point::new(note_x + cross, center_y + cross),
+                ),
+                stroke,
+            );
+            frame.stroke(
+                &Path::line(
+                    Point::new(note_x + cross, center_y - cross),
+                    Point::new(note_x - cross, center_y + cross),
+                ),
+                stroke,
+            );
+        } else if fret == 0 {
+            frame.stroke(
+                &Path::circle(Point::new(note_x, y + CHORD_MARKER_HEIGHT / 2.0), 1.3),
+                stroke,
+            );
+        } else {
+            let position = f32::from(fret) - first_fret as f32 + 1.0;
+            if position >= 1.0 && position <= CHORD_FRETS as f32 {
+                let dot_y = grid_top + (position - 0.5) * CHORD_FRET_SPACING;
+                frame.fill(
+                    &Path::circle(Point::new(note_x, dot_y), 1.5),
+                    colors.foreground,
+                );
+            }
+        }
+    }
+}
+
 /// How a change of feel reads: TuxGuitar draws note pictograms, which the
 /// tab spells out instead.
 const fn triplet_feel_label(feel: TripletFeel) -> &'static str {
@@ -859,7 +977,18 @@ fn beat_natural_width(beat: &Beat, next_beat: Option<&Beat>) -> f32 {
         .map(|b| b.movements().len() as f32 * BEND_ARROW_WIDTH)
         .fold(0.0, f32::max);
     let grace_extra = next_beat.map_or(0.0, grace_gap_width);
-    BEAT_LENGTH + bend_extra + grace_extra
+    // a diagram is wider than a beat, so it claims the room it needs
+    let chord_extra = beat
+        .effect
+        .chord
+        .as_ref()
+        .filter(|chord| has_diagram(chord))
+        .map_or(0.0, |chord| {
+            // the grid, the first-fret number on its left, and a gap after
+            let needed = chord_diagram_width(chord) + CHORD_FIRST_FRET_SPACE + CHORD_STRING_SPACING;
+            (needed - BEAT_LENGTH).max(0.0)
+        });
+    BEAT_LENGTH + bend_extra + grace_extra + chord_extra
 }
 
 /// Label of a grace note: its fret, or a cross when it is dead.
@@ -918,12 +1047,17 @@ fn draw_beat(
 ) {
     // Annotate chord effect
     if let Some(chord) = &beat.effect.chord {
+        let mut name_y = rows.chord_y();
+        if has_diagram(chord) {
+            draw_chord_diagram(frame, colors, chord, beat_position_x + 3.0, name_y);
+            name_y += CHORD_DIAGRAM_HEIGHT;
+        }
         let note_effect_text = Text {
             shaping: Auto,
             content: chord.name.clone(),
             color: colors.foreground,
             size: 8.0.into(),
-            position: Point::new(beat_position_x + 3.0, rows.chord_y()),
+            position: Point::new(beat_position_x + 3.0, name_y),
             ..Text::default()
         };
         frame.fill_text(note_effect_text);
@@ -1900,6 +2034,7 @@ fn note_value(note: &Note) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::song_parser::BeatEffects;
     use crate::parser::song_parser::QUARTER;
 
     fn beat(value: u16, enters: u8, times: u8) -> Beat {
@@ -1927,6 +2062,41 @@ mod tests {
             notes,
             ..Beat::default()
         }
+    }
+
+    #[test]
+    fn a_chord_without_a_fingering_shows_only_its_name() {
+        let named = Chord {
+            name: "C5".to_string(),
+            strings: vec![-1; 6],
+            ..Default::default()
+        };
+        assert!(!has_diagram(&named));
+
+        let fingered = Chord {
+            name: "C5".to_string(),
+            strings: vec![-1, -1, 5, 5, 3, -1],
+            ..Default::default()
+        };
+        assert!(has_diagram(&fingered));
+    }
+
+    #[test]
+    fn a_diagram_claims_the_room_it_needs() {
+        let fingered = Chord {
+            strings: vec![-1, -1, 5, 5, 3, -1],
+            ..Default::default()
+        };
+        let beat = Beat {
+            effect: BeatEffects {
+                chord: Some(fingered),
+                ..Default::default()
+            },
+            ..Beat::default()
+        };
+        // the grid is wider than a bare beat, so the beat grows for it
+        assert!(beat_natural_width(&beat, None) > BEAT_LENGTH);
+        assert!((beat_natural_width(&Beat::default(), None) - BEAT_LENGTH).abs() < f32::EPSILON);
     }
 
     #[test]
