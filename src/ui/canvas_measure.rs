@@ -327,7 +327,7 @@ impl CanvasMeasure {
             .enumerate()
             .map(|(i, beat)| {
                 beat_natural_width(beat, beats.get(i + 1), quarter_spacing)
-                    + lyric_extra_width(&lyrics, i)
+                    + lyric_extra_width(&lyrics, i, beat_base_width(beat, quarter_spacing))
             })
             .collect();
         let natural_beats_len: f32 = beat_widths.iter().sum();
@@ -466,13 +466,19 @@ impl CanvasMeasure {
             beat_x += BEAT_LENGTH;
         }
         beat_x += MEASURE_NOTES_PADDING;
+        let beats = &self.song.tracks[self.track_id].measures[self.measure_id].voices[0].beats;
         for (beat_id, width) in self.beat_widths.iter().enumerate() {
             beat_x += width * width_scale;
             if x < beat_x {
                 return beat_id;
             }
         }
-        self.beat_widths.len().saturating_sub(1)
+        // past the last beat: the nearest visible one, never the zero-width
+        // empty beat that may close the voice
+        beats
+            .iter()
+            .rposition(|beat| !beat.empty)
+            .unwrap_or_else(|| self.beat_widths.len().saturating_sub(1))
     }
 }
 
@@ -884,8 +890,9 @@ fn draw_rest(
             frame.stroke(&path, stroke);
         }
         value => {
-            // a leaning stroke, with a hook per halving below the quarter
-            let hooks = f32::from(value.max(8)).log2().round() as usize - 2;
+            // a leaning stroke, with a hook per halving below the quarter,
+            // held to the same depth as the beams on a stem
+            let hooks = (f32::from(value.max(8)).log2().round() as usize - 2).min(MAX_BEAMS);
             let top = center_y - 6.0;
             let bottom = top + 5.0 + hooks as f32 * 3.5;
             frame.stroke(
@@ -959,26 +966,32 @@ fn draw_rhythm(
         .with_color(colors.foreground);
 
     for (index, beat) in beats.iter().enumerate() {
-        if stem_beams(beat).is_none() {
+        // rests carry their own dot; empty beats carry nothing at all
+        if beat.notes.is_empty() {
             continue;
         }
         let x = stem_x(index);
-        // a half note is stemmed only half way, so it reads as the longer note
-        let stem_top = if beat.duration.value == 2 {
-            top + STEM_LENGTH / 2.0
+        if let Some(beams) = stem_beams(beat) {
+            // a half note is stemmed only half way, so it reads as the
+            // longer note
+            let stem_top = if beat.duration.value == 2 {
+                top + STEM_LENGTH / 2.0
+            } else {
+                top
+            };
+            frame.stroke(
+                &Path::line(Point::new(x, stem_top), Point::new(x, bottom)),
+                stroke,
+            );
+            // the dot clears the flag and the beams stacked up the stem,
+            // but never leaves the stem itself
+            let dot_y = (bottom - beams as f32 * BEAM_SPACING).max(stem_top);
+            draw_duration_dot(frame, colors, beat, x + FLAG_WIDTH + 2.0, dot_y);
         } else {
-            top
-        };
-        frame.stroke(
-            &Path::line(Point::new(x, stem_top), Point::new(x, bottom)),
-            stroke,
-        );
-        // above the beams, which stack up from the end of the stem
-        let beams = stem_beams(beat).unwrap_or(0) as f32;
-        // clear of the flag, and of the beams stacked up the stem, but
-        // never past the stem itself
-        let dot_y = (bottom - beams * BEAM_SPACING).max(stem_top);
-        draw_duration_dot(frame, colors, beat, x + FLAG_WIDTH + 2.0, dot_y);
+            // a dotted whole note has no stem, yet keeps its dot, as
+            // TuxGuitar draws it
+            draw_duration_dot(frame, colors, beat, x, bottom);
+        }
     }
 
     let beam_stroke = Stroke::default()
@@ -1083,28 +1096,39 @@ fn spacing_for_quarter(duration: &Duration) -> f32 {
     QUARTER_TIME as f32 / time as f32 * duration_width(duration)
 }
 
-/// Room a label needs beyond a plain beat, capped so that one long label
-/// cannot stretch its measure without limit.
-fn label_extra_width(label: &str) -> f32 {
+/// The room a beat's duration alone gives it: proportional to its length,
+/// and never narrower than the shortest note's width. A beat flagged empty
+/// carries no time, so it takes no room at all.
+fn beat_base_width(beat: &Beat, quarter_spacing: f32) -> f32 {
+    if beat.empty {
+        return 0.0;
+    }
+    let proportional = beat.duration.time() as f32 / QUARTER_TIME as f32 * quarter_spacing;
+    proportional.max(MIN_BEAT_WIDTH)
+}
+
+/// Room a label needs beyond the width its beat already has, capped so that
+/// one long label cannot stretch its measure without limit.
+fn label_extra_width(label: &str, base: f32) -> f32 {
     if label.is_empty() {
         return 0.0;
     }
     let width = label.chars().count() as f32 * LABEL_CHAR_WIDTH + LABEL_GAP;
-    (width - BEAT_LENGTH).clamp(0.0, LABEL_MAX_EXTRA)
+    (width - base).clamp(0.0, LABEL_MAX_EXTRA)
 }
 
 /// Room a beat needs for the syllable sung on it.
 ///
 /// Only claimed when the next beat sings too: with nothing beside it, a
 /// long word may lean into the space that follows.
-fn lyric_extra_width(lyrics: &[String], beat_index: usize) -> f32 {
+fn lyric_extra_width(lyrics: &[String], beat_index: usize, base: f32) -> f32 {
     let next_sings = lyrics
         .get(beat_index + 1)
         .is_some_and(|next| !next.is_empty());
     if !next_sings {
         return 0.0;
     }
-    label_extra_width(lyrics.get(beat_index).map_or("", String::as_str))
+    label_extra_width(lyrics.get(beat_index).map_or("", String::as_str), base)
 }
 
 /// Whether a chord carries a fingering worth drawing as a grid.
@@ -1360,8 +1384,9 @@ fn beat_annotations(beat: &Beat) -> Vec<&'static str> {
 /// TuxGuitar's `getEffectWidth`), and room for the grace note that the
 /// next beat draws in the gap before it.
 fn beat_natural_width(beat: &Beat, next_beat: Option<&Beat>, quarter_spacing: f32) -> f32 {
+    let base = beat_base_width(beat, quarter_spacing);
     // a beat flagged empty takes no time, so it takes no room either
-    if beat.empty {
+    if base <= 0.0 {
         return 0.0;
     }
     let bend_extra = beat
@@ -1380,7 +1405,7 @@ fn beat_natural_width(beat: &Beat, next_beat: Option<&Beat>, quarter_spacing: f3
         .map_or(0.0, |chord| {
             // the grid, the first-fret number on its left, and a gap after
             let needed = chord_diagram_width(chord) + CHORD_FIRST_FRET_SPACE + CHORD_STRING_SPACING;
-            (needed - BEAT_LENGTH).max(0.0)
+            (needed - base).max(0.0)
         });
     // the name sits under the diagram, so the wider of the two governs, and
     // only where the next beat names a chord of its own to run into
@@ -1388,16 +1413,13 @@ fn beat_natural_width(beat: &Beat, next_beat: Option<&Beat>, quarter_spacing: f3
         .and_then(|next| next.effect.chord.as_ref())
         .filter(|next| !next.name.is_empty())
         .and(beat.effect.chord.as_ref())
-        .map_or(0.0, |chord| label_extra_width(&chord.name));
+        .map_or(0.0, |chord| label_extra_width(&chord.name, base));
     let chord_extra = diagram_extra.max(name_extra);
     // beat text runs the same risk as a chord name
     let text_extra = next_beat
         .filter(|next| !next.text.is_empty())
-        .map_or(0.0, |_| label_extra_width(&beat.text));
-    // the beat is as wide as its duration asks for, and never narrower than
-    // what is drawn on it
-    let proportional = beat.duration.time() as f32 / QUARTER_TIME as f32 * quarter_spacing;
-    proportional.max(MIN_BEAT_WIDTH) + bend_extra + grace_extra + chord_extra + text_extra
+        .map_or(0.0, |_| label_extra_width(&beat.text, base));
+    base + bend_extra + grace_extra + chord_extra + text_extra
 }
 
 /// Label of a grace note: its fret, or a cross when it is dead.
@@ -2750,22 +2772,37 @@ mod tests {
     }
 
     #[test]
+    fn a_label_on_a_short_note_still_gets_its_room() {
+        // a sixteenth's base is narrower than a quarter's, so its label
+        // needs more extra, not the same: reserving against a fixed width
+        // left labels on short notes a few pixels shy
+        let label = "spe-cial";
+        let short_base = MIN_BEAT_WIDTH;
+        let needed = label.chars().count() as f32 * LABEL_CHAR_WIDTH + LABEL_GAP;
+        assert!((short_base + label_extra_width(label, short_base) - needed).abs() < f32::EPSILON);
+        // and a base already wide enough claims nothing
+        assert!(label_extra_width(label, needed) < f32::EPSILON);
+    }
+
+    #[test]
     fn a_long_syllable_widens_its_beat() {
         let lyrics =
             |words: &[&str]| -> Vec<String> { words.iter().map(|w| (*w).to_string()).collect() };
         // a short word fits the beat it is sung on
-        assert!(lyric_extra_width(&lyrics(&["How", "ma"]), 0) < f32::EPSILON);
+        assert!(lyric_extra_width(&lyrics(&["How", "ma"]), 0, BEAT_LENGTH) < f32::EPSILON);
         // a long one pushes the next word away
-        assert!(lyric_extra_width(&lyrics(&["spe-cial", "peo"]), 0) > 0.0);
+        assert!(lyric_extra_width(&lyrics(&["spe-cial", "peo"]), 0, BEAT_LENGTH) > 0.0);
         // but never past the limit, however long the word
         let very_long = lyrics(&["supercalifragilistic", "next"]);
-        assert!((lyric_extra_width(&very_long, 0) - LABEL_MAX_EXTRA).abs() < f32::EPSILON);
+        assert!(
+            (lyric_extra_width(&very_long, 0, BEAT_LENGTH) - LABEL_MAX_EXTRA).abs() < f32::EPSILON
+        );
         // nothing is claimed when the next beat is silent: the word may lean
         // into the space after it
-        assert!(lyric_extra_width(&lyrics(&["spe-cial", ""]), 0) < f32::EPSILON);
-        assert!(lyric_extra_width(&lyrics(&["spe-cial"]), 0) < f32::EPSILON);
+        assert!(lyric_extra_width(&lyrics(&["spe-cial", ""]), 0, BEAT_LENGTH) < f32::EPSILON);
+        assert!(lyric_extra_width(&lyrics(&["spe-cial"]), 0, BEAT_LENGTH) < f32::EPSILON);
         // and none at all where nothing is sung
-        assert!(lyric_extra_width(&lyrics(&["", "next"]), 0) < f32::EPSILON);
+        assert!(lyric_extra_width(&lyrics(&["", "next"]), 0, BEAT_LENGTH) < f32::EPSILON);
     }
 
     #[test]
