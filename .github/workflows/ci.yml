@@ -26,9 +26,9 @@ jobs:
       - name: Check code formatting
         run: cargo fmt --all -- --check
       - name: Build
-        run: cargo build --locked --verbose
+        run: cargo build --locked
       - name: Run tests
-        run: cargo test --locked --verbose
+        run: cargo test --locked
       - name: Check cargo clippy warnings
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
@@ -44,9 +44,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Build
-        run: cargo build --locked --verbose
+        run: cargo build --locked
       - name: Run tests
-        run: cargo test --locked --verbose
+        run: cargo test --locked
       - name: Check cargo clippy warnings
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
@@ -72,8 +72,8 @@ jobs:
           target: x86_64-pc-windows-msvc
           components: clippy
       - name: Build
-        run: cargo build --locked --verbose
+        run: cargo build --locked
       - name: Run tests
-        run: cargo test --locked --verbose
+        run: cargo test --locked
       - name: Check cargo clippy warnings
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
