@@ -814,10 +814,83 @@ impl canvas::Program<Message> for CanvasMeasure {
 /// one; and every halving below that adds a beam, as TuxGuitar does.
 fn stem_beams(beat: &Beat) -> Option<usize> {
     if beat.notes.is_empty() || beat.duration.value <= 1 {
+        // a silence is drawn as a rest on the staff instead
         return None;
     }
     let halvings = f32::from(beat.duration.value).log2().round() as usize;
     Some(halvings.saturating_sub(2))
+}
+
+/// Whether a beat is a silence: it takes its time without sounding.
+///
+/// A beat flagged empty carries no time of its own, so it is not a rest.
+const fn is_rest(beat: &Beat) -> bool {
+    beat.notes.is_empty() && !beat.empty
+}
+
+/// The rest of a silent beat, centred on the staff, as TuxGuitar places it.
+///
+/// TuxGuitar draws engraved glyphs; these are plain shapes carrying the same
+/// reading: a bar hung under the line for a whole, sitting on it for a half,
+/// a zigzag for a quarter, and a stroke with one hook per halving below that.
+fn draw_rest(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    beat: &Beat,
+    x: f32,
+    staff_top_y: f32,
+    staff_height: f32,
+) {
+    let center_y = staff_top_y + staff_height / 2.0;
+    let stroke = Stroke::default()
+        .with_width(1.4)
+        .with_color(colors.foreground);
+    match beat.duration.value {
+        // a whole rest hangs below its line, a half rest sits on it
+        1 | 2 => {
+            let width = 7.0;
+            let height = 3.0;
+            let top = if beat.duration.value == 1 {
+                center_y
+            } else {
+                center_y - height
+            };
+            frame.fill_rectangle(
+                Point::new(x, top),
+                Size::new(width, height),
+                colors.foreground,
+            );
+        }
+        4 => {
+            // the zigzag of a quarter rest, folded down the staff
+            let top = center_y - 7.0;
+            let path = Path::new(|p| {
+                p.move_to(Point::new(x, top));
+                p.line_to(Point::new(x + 5.0, top + 4.5));
+                p.line_to(Point::new(x + 1.0, top + 8.0));
+                p.line_to(Point::new(x + 6.0, top + 13.0));
+            });
+            frame.stroke(&path, stroke);
+        }
+        value => {
+            // a leaning stroke, with a hook per halving below the quarter
+            let hooks = f32::from(value.max(8)).log2().round() as usize - 2;
+            let top = center_y - 6.0;
+            let bottom = top + 5.0 + hooks as f32 * 3.5;
+            frame.stroke(
+                &Path::line(Point::new(x + 5.0, top), Point::new(x + 1.0, bottom)),
+                stroke,
+            );
+            for hook in 0..hooks {
+                let hook_y = top + hook as f32 * 3.5;
+                frame.fill(
+                    &Path::circle(Point::new(x + 4.5 - hook as f32 * 0.8, hook_y), 1.4),
+                    colors.foreground,
+                );
+            }
+        }
+    }
+    draw_duration_dot(frame, colors, beat, x + 7.0, center_y);
 }
 
 /// How long a run of short notes may be before it breaks, from TuxGuitar's
@@ -1372,6 +1445,16 @@ fn draw_beat(
             ..Text::default()
         };
         frame.fill_text(note_effect_text);
+    }
+    if is_rest(beat) {
+        draw_rest(
+            frame,
+            colors,
+            beat,
+            beat_position_x + 2.0,
+            measure_start_y,
+            vertical_measure_height,
+        );
     }
     if !beat.effect.stroke.is_empty() && !beat.notes.is_empty() {
         draw_stroke_arrow(frame, colors, beat, beat_position_x, measure_start_y);
@@ -2425,6 +2508,20 @@ mod tests {
                 beat
             })
             .collect()
+    }
+
+    #[test]
+    fn a_silence_is_a_rest_but_an_empty_beat_is_not() {
+        // no notes and time of its own: a rest
+        assert!(is_rest(&beat_of(QUARTER)));
+        // a note sounding: not a rest
+        assert!(!is_rest(&sounding(QUARTER, false)));
+        // flagged empty, so it carries no time and needs no glyph
+        let empty = Beat {
+            empty: true,
+            ..beat_of(QUARTER)
+        };
+        assert!(!is_rest(&empty));
     }
 
     #[test]
