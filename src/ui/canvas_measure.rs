@@ -1,7 +1,7 @@
 use crate::parser::song_parser::{
     Beat, BeatStrokeDirection, BendEffect, Duration, GraceEffect, HarmonicType, Measure,
     MeasureHeader, Note, NoteEffect, NoteType, SlapEffect, Song, TimeSignature,
-    TremoloPickingEffect,
+    TremoloPickingEffect, TripletFeel,
 };
 use crate::ui::application::Message;
 use crate::ui::utils::TablatureColors;
@@ -26,6 +26,7 @@ const VIBRATO: &str = "\u{301C}\u{301C}"; // 〜〜 https://unicodeplus.com/U+30
 // TGTrackSpacing). Tremolo picking slashes are drawn below the last string.
 const ROW_ALT_ENDING: f32 = 13.0;
 const ROW_MARKER: f32 = 15.0;
+const ROW_SIGNATURE: f32 = 11.0;
 const ROW_CHORD: f32 = 11.0;
 const ROW_TUPLET: f32 = 12.0;
 const ROW_EFFECT_LINE: f32 = 12.0;
@@ -49,6 +50,7 @@ const STAFF_FOOTER_WITH_TREMOLO: f32 = 19.0;
 pub struct RowSpacing {
     alt_ending: f32,
     marker: f32,
+    signature: f32,
     chord: f32,
     tuplet: f32,
     effects: f32,
@@ -63,6 +65,7 @@ impl Default for RowSpacing {
         Self {
             alt_ending: 0.0,
             marker: 0.0,
+            signature: 0.0,
             chord: 0.0,
             tuplet: 0.0,
             effects: 0.0,
@@ -79,13 +82,21 @@ impl RowSpacing {
     const ALT_ENDING_Y: f32 = 0.0;
 
     /// Which rows a measure uses, and how tall they need to be.
-    fn for_measure(measure: &Measure, header: &MeasureHeader, has_tempo_label: bool) -> Self {
+    fn for_measure(
+        measure: &Measure,
+        header: &MeasureHeader,
+        has_tempo_label: bool,
+        has_signature_label: bool,
+    ) -> Self {
         let mut spacing = Self::default();
         if header.repeat_alternative > 0 {
             spacing.alt_ending = ROW_ALT_ENDING;
         }
         if has_tempo_label || header.marker.is_some() {
             spacing.marker = ROW_MARKER;
+        }
+        if has_signature_label {
+            spacing.signature = ROW_SIGNATURE;
         }
         let beats = &measure.voices[0].beats;
         if beats.iter().any(|beat| beat.effect.chord.is_some()) {
@@ -131,6 +142,7 @@ impl RowSpacing {
     pub const fn merge(&mut self, other: Self) {
         self.alt_ending = self.alt_ending.max(other.alt_ending);
         self.marker = self.marker.max(other.marker);
+        self.signature = self.signature.max(other.signature);
         self.chord = self.chord.max(other.chord);
         self.tuplet = self.tuplet.max(other.tuplet);
         self.effects = self.effects.max(other.effects);
@@ -144,8 +156,12 @@ impl RowSpacing {
         self.alt_ending
     }
 
-    const fn chord_y(self) -> f32 {
+    const fn signature_y(self) -> f32 {
         self.marker_y() + self.marker
+    }
+
+    const fn chord_y(self) -> f32 {
+        self.signature_y() + self.signature
     }
 
     const fn tuplet_y(self) -> f32 {
@@ -217,6 +233,8 @@ pub struct CanvasMeasure {
     // colors the cached geometry was painted with
     painted_colors: Cell<Option<TablatureColors>>,
     has_tempo_label: bool,
+    has_key_signature: bool,
+    has_triplet_feel: bool,
 }
 
 impl CanvasMeasure {
@@ -253,11 +271,23 @@ impl CanvasMeasure {
             total_measure_len += BEAT_LENGTH + HALF_BEAT_LENGTH;
         }
         let string_count = track.strings.len();
-        // the tempo is shown on the first measure and whenever it changes
-        let has_tempo_label = measure_id
-            .checked_sub(1)
-            .is_none_or(|previous| measure_header.tempo != song.measure_headers[previous].tempo);
-        let row_needs = RowSpacing::for_measure(measure, measure_header, has_tempo_label);
+        // the tempo, key and feel are shown on the first measure and again
+        // wherever they change
+        let previous_header = measure_id.checked_sub(1).map(|p| &song.measure_headers[p]);
+        let has_tempo_label =
+            previous_header.is_none_or(|previous| measure_header.tempo != previous.tempo);
+        let has_key_signature = previous_header
+            .is_none_or(|previous| measure_header.key_signature != previous.key_signature);
+        let has_triplet_feel = previous_header.map_or(
+            measure_header.triplet_feel != TripletFeel::None,
+            |previous| measure_header.triplet_feel != previous.triplet_feel,
+        );
+        let row_needs = RowSpacing::for_measure(
+            measure,
+            measure_header,
+            has_tempo_label,
+            has_key_signature || has_triplet_feel,
+        );
         let vertical_measure_height = measure_height(row_needs, string_count);
         Self {
             measure_id,
@@ -277,6 +307,8 @@ impl CanvasMeasure {
             row_spacing: row_needs,
             painted_colors: Cell::new(None),
             has_tempo_label,
+            has_key_signature,
+            has_triplet_feel,
         }
     }
 
@@ -544,6 +576,26 @@ impl canvas::Program<Message> for CanvasMeasure {
                 frame.fill_text(marker_text);
             }
 
+            // key signature and feel, at the measure that establishes them
+            if self.has_key_signature || self.has_triplet_feel {
+                let mut labels = Vec::new();
+                if self.has_key_signature {
+                    labels.push(measure_header.key_signature.to_string());
+                }
+                if self.has_triplet_feel {
+                    labels.push(triplet_feel_label(measure_header.triplet_feel).to_string());
+                }
+                let signature_text = Text {
+                    shaping: Auto,
+                    content: labels.join("  "),
+                    color: colors.foreground,
+                    size: 9.0.into(),
+                    position: Point::new(measure_start_x + 2.0, rows.signature_y()),
+                    ..Text::default()
+                };
+                frame.fill_text(signature_text);
+            }
+
             // measure count label
             let measure_count_text = Text {
                 shaping: Auto,
@@ -658,6 +710,16 @@ impl canvas::Program<Message> for CanvasMeasure {
         });
 
         vec![tab]
+    }
+}
+
+/// How a change of feel reads: TuxGuitar draws note pictograms, which the
+/// tab spells out instead.
+const fn triplet_feel_label(feel: TripletFeel) -> &'static str {
+    match feel {
+        TripletFeel::None => "straight",
+        TripletFeel::Eighth => "swing 8th",
+        TripletFeel::Sixteenth => "swing 16th",
     }
 }
 
