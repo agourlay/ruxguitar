@@ -59,6 +59,15 @@ const STAFF_HEADER_WITH_BEND: f32 = 20.0;
 const STAFF_FOOTER: f32 = 10.0;
 // Tremolo picking slashes hang further below the staff.
 const STAFF_FOOTER_WITH_TREMOLO: f32 = 19.0;
+// Stems and their beams hang further still.
+const STAFF_FOOTER_WITH_STEMS: f32 = 30.0;
+
+// A stem hangs under the staff, its beams stacked up from the far end.
+const STEM_TOP: f32 = 5.0;
+const STEM_LENGTH: f32 = 21.0;
+const BEAM_SPACING: f32 = 5.0;
+const BEAM_THICKNESS: f32 = 1.8;
+const FLAG_WIDTH: f32 = 6.0;
 
 /// Height of each annotation row above the staff, zero when unused.
 ///
@@ -159,6 +168,9 @@ impl RowSpacing {
             .any(|note| note.effect.tremolo_picking.is_some())
         {
             spacing.staff_footer = STAFF_FOOTER_WITH_TREMOLO;
+        }
+        if beats.iter().any(|beat| stem_beams(beat).is_some()) {
+            spacing.staff_footer = spacing.staff_footer.max(STAFF_FOOTER_WITH_STEMS);
         }
         // the effect row grows with the tallest annotation stack of the measure
         let effect_lines = beats
@@ -785,6 +797,74 @@ impl canvas::Program<Message> for CanvasMeasure {
     }
 }
 
+/// How a beat's rhythm is drawn under the tab: `None` when it carries no
+/// stem, otherwise the number of beams the stem needs.
+///
+/// A whole note has no stem; a half note gets a short one; a quarter a full
+/// one; and every halving below that adds a beam, as TuxGuitar does.
+fn stem_beams(beat: &Beat) -> Option<usize> {
+    if beat.notes.is_empty() || beat.duration.value <= 1 {
+        return None;
+    }
+    let halvings = f32::from(beat.duration.value).log2().round() as usize;
+    Some(halvings.saturating_sub(2))
+}
+
+/// The stem under a beat, with a flag per beam and a dot for a dotted
+/// duration, like TuxGuitar's `paintTablatureBeat`.
+fn draw_stem(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    beat: &Beat,
+    x: f32,
+    tab_bottom_y: f32,
+) {
+    let Some(beams) = stem_beams(beat) else {
+        return;
+    };
+    let stroke = Stroke::default()
+        .with_width(1.0)
+        .with_color(colors.foreground);
+    let top = tab_bottom_y + STEM_TOP;
+    let bottom = top + STEM_LENGTH;
+    // a half note is stemmed only half way, so it reads as the longer note
+    let stem_top = if beat.duration.value == 2 {
+        top + STEM_LENGTH / 2.0
+    } else {
+        top
+    };
+    frame.stroke(
+        &Path::line(Point::new(x, stem_top), Point::new(x, bottom)),
+        stroke,
+    );
+
+    // flags stack up from the end of the stem
+    let flag_stroke = Stroke::default()
+        .with_width(BEAM_THICKNESS)
+        .with_color(colors.foreground);
+    for beam in 0..beams {
+        let y = bottom - beam as f32 * BEAM_SPACING;
+        frame.stroke(
+            &Path::line(Point::new(x, y), Point::new(x + FLAG_WIDTH, y)),
+            flag_stroke,
+        );
+    }
+
+    if beat.duration.dotted || beat.duration.double_dotted {
+        let dot_x = x + FLAG_WIDTH + 2.0;
+        frame.fill(
+            &Path::circle(Point::new(dot_x, bottom), 1.2),
+            colors.foreground,
+        );
+        if beat.duration.double_dotted {
+            frame.fill(
+                &Path::circle(Point::new(dot_x + 3.5, bottom), 1.2),
+                colors.foreground,
+            );
+        }
+    }
+}
+
 /// Width of one note of this duration, from the style table.
 fn duration_width(duration: &Duration) -> f32 {
     // the table runs whole, half, quarter, eighth... so the index is how
@@ -1201,6 +1281,13 @@ fn draw_beat(
             rows.pick_stroke_y(),
         );
     }
+    draw_stem(
+        frame,
+        colors,
+        beat,
+        beat_position_x + 3.0,
+        measure_start_y + vertical_measure_height,
+    );
     if beat.notes.iter().any(|n| n.effect.staccato) {
         draw_staccato_dot(frame, colors, beat, beat_position_x, measure_start_y);
     }
@@ -2215,6 +2302,37 @@ mod tests {
             },
             ..Beat::default()
         }
+    }
+
+    fn sounding(value: u16, dotted: bool) -> Beat {
+        let mut beat = Beat {
+            duration: Duration {
+                value,
+                dotted,
+                ..Default::default()
+            },
+            ..Beat::default()
+        };
+        beat.notes.push(Note::new(NoteEffect::default()));
+        beat
+    }
+
+    #[test]
+    fn a_stem_carries_one_beam_per_halving() {
+        // a whole note stands alone, everything shorter grows a stem
+        assert_eq!(stem_beams(&sounding(1, false)), None);
+        assert_eq!(stem_beams(&sounding(2, false)), Some(0));
+        assert_eq!(stem_beams(&sounding(QUARTER, false)), Some(0));
+        assert_eq!(stem_beams(&sounding(8, false)), Some(1));
+        assert_eq!(stem_beams(&sounding(16, false)), Some(2));
+        assert_eq!(stem_beams(&sounding(32, false)), Some(3));
+        assert_eq!(stem_beams(&sounding(64, false)), Some(4));
+    }
+
+    #[test]
+    fn a_silent_beat_carries_no_stem() {
+        // rests are drawn on the staff, not stemmed under it
+        assert_eq!(stem_beams(&beat_of(QUARTER)), None);
     }
 
     #[test]
