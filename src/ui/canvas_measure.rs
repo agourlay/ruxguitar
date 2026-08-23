@@ -961,7 +961,9 @@ fn draw_rhythm(
             &Path::line(Point::new(x, stem_top), Point::new(x, bottom)),
             stroke,
         );
-        draw_duration_dot(frame, colors, beat, x, bottom);
+        // above the beams, which stack up from the end of the stem
+        let beams = stem_beams(beat).unwrap_or(0) as f32;
+        draw_duration_dot(frame, colors, beat, x, bottom - beams * BEAM_SPACING);
     }
 
     let beam_stroke = Stroke::default()
@@ -995,6 +997,12 @@ fn draw_rhythm(
     }
 }
 
+/// Which way a stub over a single note points: forward for a note standing
+/// alone or opening its run, back towards the note it follows otherwise.
+const fn beam_leans_right(from: usize, run_first: usize, run_last: usize) -> bool {
+    run_first == run_last || from == run_first
+}
+
 /// One bar of a beam. A bar over a single note is a stub, leaning towards
 /// the run it belongs to.
 fn draw_beam(
@@ -1009,8 +1017,7 @@ fn draw_beam(
     let (from, to) = bar;
     let (x1, x2) = if from == to {
         let x = stem_x(from);
-        // lean back towards the note it follows, unless it opens the run
-        if from == run_first && run_last > run_first {
+        if beam_leans_right(from, run_first, run_last) {
             (x, x + FLAG_WIDTH)
         } else {
             (x - FLAG_WIDTH, x)
@@ -2508,6 +2515,17 @@ mod tests {
                 beat
             })
             .collect()
+    }
+
+    #[test]
+    fn a_lone_flag_points_forward() {
+        // a note standing alone flags forward, the way a written eighth does
+        assert!(beam_leans_right(0, 0, 0));
+        // opening a run, a partial beam also points into the run
+        assert!(beam_leans_right(0, 0, 3));
+        // but inside or closing one it points back at what it follows
+        assert!(!beam_leans_right(2, 0, 3));
+        assert!(!beam_leans_right(3, 0, 3));
     }
 
     #[test]
