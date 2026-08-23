@@ -42,6 +42,13 @@ const ROW_TEXT: f32 = 11.0;
 const ROW_PICK_STROKE: f32 = 10.0;
 // Lyrics sit under the staff, below the footer.
 const ROW_LYRIC: f32 = 11.0;
+// A syllable is drawn from its beat rightwards. Sung text is wider than a
+// beat far more often than not, so the beat carrying it claims the room:
+// roughly one character of the lyric font, plus a gap before the next word.
+const LYRIC_CHAR_WIDTH: f32 = 4.6;
+const LYRIC_GAP: f32 = 3.0;
+// One long word may not stretch its measure without limit.
+const LYRIC_MAX_EXTRA: f32 = BEAT_LENGTH * 2.0;
 // Always-present gap between the last annotation row and the staff: holds
 // the measure number, the repeat count and the focus box edge.
 const STAFF_HEADER: f32 = 16.0;
@@ -280,7 +287,9 @@ impl CanvasMeasure {
         let beat_widths: Vec<f32> = beats
             .iter()
             .enumerate()
-            .map(|(i, beat)| beat_natural_width(beat, beats.get(i + 1)))
+            .map(|(i, beat)| {
+                beat_natural_width(beat, beats.get(i + 1)) + lyric_extra_width(&lyrics, i)
+            })
             .collect();
         let natural_beats_len: f32 = beat_widths.iter().sum();
         let measure_len = MIN_MEASURE_WIDTH.max(natural_beats_len);
@@ -758,6 +767,22 @@ impl canvas::Program<Message> for CanvasMeasure {
 
         vec![tab]
     }
+}
+
+/// Room a beat needs for the syllable sung on it, beyond a plain beat.
+///
+/// Only claimed when the next beat sings too: with nothing beside it, a
+/// long word may lean into the space that follows.
+fn lyric_extra_width(lyrics: &[String], beat_index: usize) -> f32 {
+    let syllable = lyrics.get(beat_index).map_or("", String::as_str);
+    let next_sings = lyrics
+        .get(beat_index + 1)
+        .is_some_and(|next| !next.is_empty());
+    if syllable.is_empty() || !next_sings {
+        return 0.0;
+    }
+    let width = syllable.chars().count() as f32 * LYRIC_CHAR_WIDTH + LYRIC_GAP;
+    (width - BEAT_LENGTH).clamp(0.0, LYRIC_MAX_EXTRA)
 }
 
 /// Whether a chord carries a fingering worth drawing as a grid.
@@ -2105,6 +2130,25 @@ mod tests {
             notes,
             ..Beat::default()
         }
+    }
+
+    #[test]
+    fn a_long_syllable_widens_its_beat() {
+        let lyrics =
+            |words: &[&str]| -> Vec<String> { words.iter().map(|w| (*w).to_string()).collect() };
+        // a short word fits the beat it is sung on
+        assert!(lyric_extra_width(&lyrics(&["How", "ma"]), 0) < f32::EPSILON);
+        // a long one pushes the next word away
+        assert!(lyric_extra_width(&lyrics(&["spe-cial", "peo"]), 0) > 0.0);
+        // but never past the limit, however long the word
+        let very_long = lyrics(&["supercalifragilistic", "next"]);
+        assert!((lyric_extra_width(&very_long, 0) - LYRIC_MAX_EXTRA).abs() < f32::EPSILON);
+        // nothing is claimed when the next beat is silent: the word may lean
+        // into the space after it
+        assert!(lyric_extra_width(&lyrics(&["spe-cial", ""]), 0) < f32::EPSILON);
+        assert!(lyric_extra_width(&lyrics(&["spe-cial"]), 0) < f32::EPSILON);
+        // and none at all where nothing is sung
+        assert!(lyric_extra_width(&lyrics(&["", "next"]), 0) < f32::EPSILON);
     }
 
     #[test]
