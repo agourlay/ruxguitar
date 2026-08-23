@@ -1,7 +1,7 @@
 use crate::parser::song_parser::{
     Beat, BeatStrokeDirection, BendEffect, Chord, Duration, GraceEffect, HarmonicType,
-    KeySignature, Measure, MeasureHeader, Note, NoteEffect, NoteType, SlapEffect, Song,
-    TimeSignature, TremoloPickingEffect, TripletFeel,
+    KeySignature, Measure, MeasureHeader, Note, NoteEffect, NoteType, QUARTER_TIME, SlapEffect,
+    Song, TimeSignature, TremoloPickingEffect, TripletFeel,
 };
 use crate::ui::application::Message;
 use crate::ui::utils::TablatureColors;
@@ -225,8 +225,16 @@ const STRING_LINE_HEIGHT: f32 = 13.0;
 // Measure notes padding
 const MEASURE_NOTES_PADDING: f32 = 20.0;
 
-// Length of a beat
-const BEAT_LENGTH: f32 = 24.0;
+// Width given to one of each duration, from whole note down, as TuxGuitar's
+// style does. Shorter notes are not given proportionally less room, or a run
+// of sixteenths would be unreadable; each step down simply narrows a little.
+const DURATION_WIDTHS: [f32; 6] = [30.0, 25.0, 21.0, 20.0, 19.0, 18.0];
+
+// Width of a plain quarter note, the reference the layout is built on.
+const BEAT_LENGTH: f32 = DURATION_WIDTHS[2];
+// No beat is narrower than the shortest note's width, which still leaves
+// room for a two digit fret.
+const MIN_BEAT_WIDTH: f32 = DURATION_WIDTHS[DURATION_WIDTHS.len() - 1];
 
 // Width of one bend/release arrow
 const BEND_ARROW_WIDTH: f32 = 10.0;
@@ -285,11 +293,18 @@ impl CanvasMeasure {
         let measure = &track.measures[measure_id];
         let measure_header = &song.measure_headers[measure_id];
         let beats = &measure.voices[0].beats;
+        // the measure is spaced by its shortest note
+        let quarter_spacing = beats
+            .iter()
+            .map(|beat| spacing_for_quarter(&beat.duration))
+            .fold(0.0_f32, f32::max)
+            .max(MIN_BEAT_WIDTH);
         let beat_widths: Vec<f32> = beats
             .iter()
             .enumerate()
             .map(|(i, beat)| {
-                beat_natural_width(beat, beats.get(i + 1)) + lyric_extra_width(&lyrics, i)
+                beat_natural_width(beat, beats.get(i + 1), quarter_spacing)
+                    + lyric_extra_width(&lyrics, i)
             })
             .collect();
         let natural_beats_len: f32 = beat_widths.iter().sum();
@@ -770,6 +785,26 @@ impl canvas::Program<Message> for CanvasMeasure {
     }
 }
 
+/// Width of one note of this duration, from the style table.
+fn duration_width(duration: &Duration) -> f32 {
+    // the table runs whole, half, quarter, eighth... so the index is how
+    // many times the duration halves the whole note
+    let index = f32::from(duration.value.max(1)).log2().round() as usize;
+    DURATION_WIDTHS[index.min(DURATION_WIDTHS.len() - 1)]
+}
+
+/// Pixels per quarter note that give `duration` the width its style asks for.
+///
+/// A measure is spaced by its shortest note, so a run of sixteenths opens the
+/// measure out and the longer notes in it stretch to match.
+fn spacing_for_quarter(duration: &Duration) -> f32 {
+    let time = duration.time();
+    if time == 0 {
+        return BEAT_LENGTH;
+    }
+    QUARTER_TIME as f32 / time as f32 * duration_width(duration)
+}
+
 /// Room a label needs beyond a plain beat, capped so that one long label
 /// cannot stretch its measure without limit.
 fn label_extra_width(label: &str) -> f32 {
@@ -1046,7 +1081,7 @@ fn beat_annotations(beat: &Beat) -> Vec<&'static str> {
 /// Natural width of a beat: base length, room for bend arrows (like
 /// TuxGuitar's `getEffectWidth`), and room for the grace note that the
 /// next beat draws in the gap before it.
-fn beat_natural_width(beat: &Beat, next_beat: Option<&Beat>) -> f32 {
+fn beat_natural_width(beat: &Beat, next_beat: Option<&Beat>, quarter_spacing: f32) -> f32 {
     let bend_extra = beat
         .notes
         .iter()
@@ -1077,7 +1112,10 @@ fn beat_natural_width(beat: &Beat, next_beat: Option<&Beat>) -> f32 {
     let text_extra = next_beat
         .filter(|next| !next.text.is_empty())
         .map_or(0.0, |_| label_extra_width(&beat.text));
-    BEAT_LENGTH + bend_extra + grace_extra + chord_extra + text_extra
+    // the beat is as wide as its duration asks for, and never narrower than
+    // what is drawn on it
+    let proportional = beat.duration.time() as f32 / QUARTER_TIME as f32 * quarter_spacing;
+    proportional.max(MIN_BEAT_WIDTH) + bend_extra + grace_extra + chord_extra + text_extra
 }
 
 /// Label of a grace note: its fret, or a cross when it is dead.
@@ -2123,8 +2161,7 @@ fn note_value(note: &Note) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::song_parser::BeatEffects;
-    use crate::parser::song_parser::QUARTER;
+    use crate::parser::song_parser::{BeatEffects, QUARTER};
 
     fn beat(value: u16, enters: u8, times: u8) -> Beat {
         Beat {
@@ -2170,24 +2207,69 @@ mod tests {
         }
     }
 
+    fn beat_of(value: u16) -> Beat {
+        Beat {
+            duration: Duration {
+                value,
+                ..Default::default()
+            },
+            ..Beat::default()
+        }
+    }
+
+    #[test]
+    fn a_note_is_as_wide_as_it_is_long() {
+        // spaced by a measure of quarters, a half note takes twice the room
+        let spacing = spacing_for_quarter(&beat_of(QUARTER).duration);
+        let quarter = beat_natural_width(&beat_of(QUARTER), None, spacing);
+        let half = beat_natural_width(&beat_of(2), None, spacing);
+        let whole = beat_natural_width(&beat_of(1), None, spacing);
+        assert!((half - quarter * 2.0).abs() < 0.01);
+        assert!((whole - quarter * 4.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn short_notes_open_the_measure_out() {
+        // a measure of sixteenths is spaced more widely per quarter than a
+        // measure of quarters, so the sixteenths stay readable
+        let by_quarter = spacing_for_quarter(&beat_of(QUARTER).duration);
+        let by_sixteenth = spacing_for_quarter(&beat_of(16).duration);
+        assert!(by_sixteenth > by_quarter * 3.0);
+
+        // yet a single sixteenth stays narrower than a single quarter
+        let sixteenth = beat_natural_width(&beat_of(16), None, by_sixteenth);
+        let quarter = beat_natural_width(&beat_of(QUARTER), None, by_quarter);
+        assert!(sixteenth < quarter);
+    }
+
+    #[test]
+    fn a_beat_never_narrows_below_what_it_carries() {
+        // a whole note in a measure of sixteenths is wide; a sixteenth in a
+        // measure of quarters would be hair-thin, so a floor holds it
+        let by_quarter = spacing_for_quarter(&beat_of(QUARTER).duration);
+        let squeezed = beat_natural_width(&beat_of(64), None, by_quarter);
+        assert!(squeezed >= MIN_BEAT_WIDTH);
+    }
+
     #[test]
     fn a_long_chord_name_widens_its_beat() {
         // a short name fits beside the next one
         let short = beat_naming("C");
         assert!(
-            (beat_natural_width(&short, Some(&beat_naming("G"))) - BEAT_LENGTH).abs()
+            (beat_natural_width(&short, Some(&beat_naming("G")), BEAT_LENGTH) - BEAT_LENGTH).abs()
                 < f32::EPSILON
         );
 
         // a long one pushes the next chord away
         let long = beat_naming("Bbsus4add9");
-        assert!(beat_natural_width(&long, Some(&beat_naming("G"))) > BEAT_LENGTH);
+        assert!(beat_natural_width(&long, Some(&beat_naming("G")), BEAT_LENGTH) > BEAT_LENGTH);
 
         // but claims nothing where the next beat names no chord to run into
         assert!(
-            (beat_natural_width(&long, Some(&Beat::default())) - BEAT_LENGTH).abs() < f32::EPSILON
+            (beat_natural_width(&long, Some(&Beat::default()), BEAT_LENGTH) - BEAT_LENGTH).abs()
+                < f32::EPSILON
         );
-        assert!((beat_natural_width(&long, None) - BEAT_LENGTH).abs() < f32::EPSILON);
+        assert!((beat_natural_width(&long, None, BEAT_LENGTH) - BEAT_LENGTH).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -2200,9 +2282,10 @@ mod tests {
             text: "Chorus".to_string(),
             ..Beat::default()
         };
-        assert!(beat_natural_width(&verse, Some(&next)) > BEAT_LENGTH);
+        assert!(beat_natural_width(&verse, Some(&next), BEAT_LENGTH) > BEAT_LENGTH);
         assert!(
-            (beat_natural_width(&verse, Some(&Beat::default())) - BEAT_LENGTH).abs() < f32::EPSILON
+            (beat_natural_width(&verse, Some(&Beat::default()), BEAT_LENGTH) - BEAT_LENGTH).abs()
+                < f32::EPSILON
         );
     }
 
@@ -2276,8 +2359,11 @@ mod tests {
             ..Beat::default()
         };
         // the grid is wider than a bare beat, so the beat grows for it
-        assert!(beat_natural_width(&beat, None) > BEAT_LENGTH);
-        assert!((beat_natural_width(&Beat::default(), None) - BEAT_LENGTH).abs() < f32::EPSILON);
+        assert!(beat_natural_width(&beat, None, BEAT_LENGTH) > BEAT_LENGTH);
+        assert!(
+            (beat_natural_width(&Beat::default(), None, BEAT_LENGTH) - BEAT_LENGTH).abs()
+                < f32::EPSILON
+        );
     }
 
     #[test]
