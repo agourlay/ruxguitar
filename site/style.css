@@ -107,7 +107,7 @@ img { display: block; width: 100%; height: auto; }
 /* The capture is a screenshot of a window; a thin frame keeps its own dark
    chrome from bleeding into the page behind it. */
 .shot {
-  max-width: 800px;
+  max-width: 1150px;
   margin: 0 auto;
   border-radius: 10px;
   border: 1px solid var(--line);
