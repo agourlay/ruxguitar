@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ruxguitar: a guitar pro tablature player</title>
+<meta name="description" content="A desktop guitar pro tablature player written in Rust. Opens GP3 through GP7 files, plays them back through an embedded soundfont, and follows along measure by measure.">
+<meta property="og:title" content="Ruxguitar: a guitar pro tablature player">
+<meta property="og:description" content="A desktop guitar pro tablature player written in Rust. Opens GP3 through GP7 files, plays them back through an embedded soundfont, and follows along measure by measure.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://agourlay.github.io/ruxguitar/">
+<meta property="og:image" content="https://agourlay.github.io/ruxguitar/screenshot.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%F0%9F%8E%B8</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+  <h1>🎸 Ruxguitar
+    <span class="genre">a guitar pro tablature player</span></h1>
+  <p class="lede">Open a tab, press space, and watch it play.</p>
+  <p class="cta">
+    <a class="button primary" href="https://github.com/agourlay/ruxguitar/releases">Download free</a>
+    <a class="button" href="https://github.com/agourlay/ruxguitar">View the source</a>
+  </p>
+  <p class="meta">Linux · macOS · Windows · open source</p>
+  <img class="shot" src="ruxguitar.gif" width="800" height="550"
+       alt="Ruxguitar playing a tablature, the current measure boxed in red as the playhead moves" loading="eager">
+  </div>
+</header>
+
+<main>
+
+<section class="beats">
+  <div>
+    <h2>Every Guitar Pro file</h2>
+    <p>GP3, GP4 and GP5, plus the newer <code>.gpx</code> and <code>.gp</code>
+    formats. Open them from the picker or drop them on the window.</p>
+  </div>
+  <div>
+    <h2>Sound in the binary</h2>
+    <p>A soundfont ships inside the executable, so playback works on a fresh
+    machine. Point it at a bigger one when you want better tone.</p>
+  </div>
+  <div>
+    <h2>Built for practice</h2>
+    <p>Slow a passage to a quarter speed, solo the track you are learning,
+    and let repeats and alternate endings play out on their own.</p>
+  </div>
+</section>
+
+<section class="modes">
+  <h2>What it does</h2>
+  <ul>
+    <li><b>GP3-GP7</b> file support</li>
+    <li><b>MIDI playback</b> embedded soundfont</li>
+    <li><b>25-200%</b> tempo control</li>
+    <li><b>Solo mode</b> one track at a time</li>
+    <li><b>Repeats</b> with alternate endings</li>
+    <li><b>Track picker</b> per file</li>
+    <li><b>Light and dark</b> themes</li>
+    <li><b>Drag and drop</b> to open</li>
+  </ul>
+</section>
+
+<section class="keys">
+  <h2>Hands stay on the keyboard</h2>
+  <dl>
+    <div><dt><kbd>Space</kbd></dt><dd>play or pause</dd></div>
+    <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>previous or next measure</dd></div>
+    <div><dt><kbd>Ctrl</kbd>+<kbd>↑</kbd> <kbd>↓</kbd></dt><dd>tempo up or down</dd></div>
+    <div><dt><kbd>S</kbd></dt><dd>toggle solo</dd></div>
+    <div><dt><kbd>F11</kbd></dt><dd>fullscreen</dd></div>
+  </dl>
+</section>
+
+<section class="get">
+  <h2>Grab it</h2>
+  <p class="cta">
+    <a class="button primary" href="https://github.com/agourlay/ruxguitar/releases">Download for your machine</a>
+  </p>
+  <p>Or, with Rust installed: <code>cargo install ruxguitar</code></p>
+</section>
+
+</main>
+
+<footer>
+  <p>
+    <a href="https://github.com/agourlay/ruxguitar">GitHub</a> ·
+    <a href="https://crates.io/crates/ruxguitar">crates.io</a> ·
+    <a href="https://agourlay.github.io/ruxguitar-tablature-player/">How it works</a> ·
+    <a href="https://github.com/agourlay/ruxguitar/blob/master/LICENSE">Apache-2.0</a>
+  </p>
+  <p class="fineprint">
+    A read-only player: it does not edit tablatures and does not render score
+    notation. Heavily inspired by
+    <a href="https://github.com/helge17/tuxguitar">TuxGuitar</a>.
+  </p>
+</footer>
+
+</body>
+</html>

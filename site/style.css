@@ -1,0 +1,244 @@
+/* The application's own dark theme: iced's dark background and blue, and the
+   red the playhead is drawn in. */
+:root {
+  --bg: #202225;
+  --bg-lift: #2b2e33;
+  --bg-deep: #191b1d;
+  --text: #e8e8ea;
+  --text-soft: #9ca0a8;
+  --blue: #5e7ce2;
+  --blue-dark: #4055a8;
+  --red: #c83232;
+  --line: rgba(255, 255, 255, 0.1);
+  --wrap: 1000px;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg);
+}
+
+h1, h2 { line-height: 1.15; letter-spacing: -0.02em; }
+
+a { color: var(--blue); }
+
+img { display: block; width: 100%; height: auto; }
+
+/* ---- hero ---- */
+
+.hero {
+  padding: 56px 24px 0;
+  text-align: center;
+  background: linear-gradient(180deg, var(--bg-lift) 0%, var(--bg) 62%);
+}
+
+.hero-inner { max-width: var(--wrap); margin: 0 auto; }
+
+/* The name and what it is are the headline: a reader who takes in one line
+   of this page should come away knowing both. */
+.hero h1 {
+  margin: 0 0 16px;
+  font-size: clamp(2.5rem, 6.6vw, 4.2rem);
+  font-weight: 800;
+}
+
+.hero h1 .genre {
+  display: block;
+  margin-top: 10px;
+  font-size: clamp(1.2rem, 3.2vw, 1.75rem);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.lede {
+  margin: 0 auto 30px;
+  max-width: 42ch;
+  font-size: 1rem;
+  color: var(--text-soft);
+}
+
+.cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: center;
+  margin: 0 0 16px;
+}
+
+.button {
+  display: inline-block;
+  padding: 14px 30px;
+  border-radius: 8px;
+  font-size: 1.02rem;
+  font-weight: 700;
+  text-decoration: none;
+  color: var(--text);
+  background: var(--bg-lift);
+  border: 2px solid var(--line);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.button.primary {
+  color: #fff;
+  background: var(--blue);
+  border-color: var(--blue);
+  box-shadow: 0 5px 0 var(--blue-dark);
+}
+
+.button:hover { transform: translateY(-2px); }
+.button.primary:hover { box-shadow: 0 7px 0 var(--blue-dark); }
+.button.primary:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--blue-dark); }
+
+.meta {
+  margin: 0 0 44px;
+  font-size: 0.92rem;
+  color: var(--text-soft);
+}
+
+/* The capture is a screenshot of a window; a thin frame keeps its own dark
+   chrome from bleeding into the page behind it. */
+.shot {
+  max-width: 800px;
+  margin: 0 auto;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* ---- sections ---- */
+
+main > section {
+  max-width: var(--wrap);
+  margin: 0 auto;
+  padding: 72px 24px;
+}
+
+main h2 {
+  font-size: clamp(1.4rem, 3vw, 1.8rem);
+  margin: 0 0 12px;
+}
+
+/* ---- three beats ---- */
+
+.beats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 36px;
+  text-align: center;
+}
+
+.beats > div { flex: 1 1 240px; max-width: 300px; }
+
+.beats h2 { color: var(--blue); }
+.beats p { margin: 0; color: var(--text-soft); }
+
+/* ---- feature pills ---- */
+
+.modes { text-align: center; }
+
+.modes ul {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.modes li {
+  padding: 9px 18px;
+  border-radius: 999px;
+  background: var(--bg-lift);
+  font-size: 0.97rem;
+  color: var(--text-soft);
+}
+
+.modes b { color: var(--text); }
+
+/* ---- shortcuts ---- */
+
+.keys { text-align: center; border-top: 1px solid var(--line); }
+
+.keys dl {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 14px 28px;
+  margin: 24px 0 0;
+}
+
+/* Each key and its meaning stay on one line together, so a wrap never
+   separates a shortcut from what it does. */
+.keys dl > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.keys dt { font-weight: 400; }
+.keys dd { margin: 0; color: var(--text-soft); font-size: 0.97rem; }
+
+kbd {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: var(--bg-lift);
+  border: 1px solid var(--line);
+  border-bottom-width: 3px;
+  color: var(--text);
+}
+
+/* ---- get ---- */
+
+.get {
+  text-align: center;
+  border-top: 1px solid var(--line);
+}
+
+.get p:last-child { color: var(--text-soft); font-size: 0.97rem; }
+
+code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--bg-lift);
+  color: var(--text);
+}
+
+.beats code { font-size: 0.85em; padding: 2px 6px; }
+
+/* ---- footer ---- */
+
+footer {
+  padding: 34px 24px 52px;
+  text-align: center;
+  background: var(--bg-deep);
+  border-top: 1px solid var(--line);
+}
+
+footer p { margin: 0 auto 8px; max-width: 58ch; }
+
+.fineprint { font-size: 0.85rem; color: var(--text-soft); }
+
+@media (max-width: 720px) {
+  .hero { padding-top: 40px; }
+  main > section { padding: 52px 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button { transition: none; }
+  .button:hover { transform: none; }
+}
