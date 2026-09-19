@@ -5,8 +5,6 @@
 
 A guitar pro tablature player.
 
-The [landing page](https://agourlay.github.io/ruxguitar/) is built from [`site/`](site/).
-
 The design of the application is described in details in the blog article "[Playing guitar tablatures in Rust](https://agourlay.github.io/ruxguitar-tablature-player/)".
 
 ![capture](ruxguitar.gif)
