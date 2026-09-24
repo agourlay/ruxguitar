@@ -13,6 +13,7 @@
   --link: #8ea3ee;
   --red: #c83232;
   --line: rgba(255, 255, 255, 0.1);
+  --staff: rgba(255, 255, 255, 0.07);
   /* Raised surfaces: the GitHub pill, the troubleshooting card. */
   --card: rgba(255, 255, 255, 0.05);
   --card-hover: rgba(255, 255, 255, 0.1);
@@ -38,6 +39,7 @@
     --blue-dark: #3a52a8;
     --link: #3a52a8;
     --line: rgba(0, 0, 0, 0.1);
+    --staff: rgba(0, 0, 0, 0.08);
     --card: rgba(0, 0, 0, 0.03);
     --card-hover: rgba(0, 0, 0, 0.06);
     --term: #202225;
@@ -70,13 +72,54 @@ img { display: block; width: 100%; height: auto; }
   padding: 56px 24px 0;
   text-align: center;
   background: linear-gradient(180deg, var(--bg-lift) 0%, var(--bg) 62%);
+  overflow: hidden;
 }
 
-/* The GitHub link, pinned to the corner. */
-.gh {
+/* A tab staff behind the headline: six string lines fading out at both
+   ends, crossed by the red playhead the app draws. Decoration only, so it
+   sits under everything and takes no clicks. */
+.hero::before,
+.hero::after {
+  content: "";
   position: absolute;
+  top: 58px;
+  height: 91px;
+  pointer-events: none;
+}
+
+.hero::before {
+  left: 0;
+  right: 0;
+  background: repeating-linear-gradient(180deg,
+    var(--staff) 0 1px, transparent 1px 18px);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent);
+}
+
+.hero::after {
+  left: calc(50% - 300px);
+  width: 2px;
+  top: 50px;
+  height: 107px;
+  border-radius: 1px;
+  background: var(--red);
+  opacity: 0.55;
+}
+
+.hero-inner { position: relative; }
+
+/* The links pinned to the corner: sponsoring, and the repository with its
+   star count. */
+.top {
+  position: absolute;
+  z-index: 1;
   top: 16px;
   right: 16px;
+  display: flex;
+  gap: 8px;
+}
+
+.pill {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -90,7 +133,8 @@ img { display: block; width: 100%; height: auto; }
   text-decoration: none;
 }
 
-.gh:hover { background: var(--card-hover); }
+.pill:hover { background: var(--card-hover); }
+.sponsor .heart { color: var(--red); }
 .gh .stars { padding-left: 8px; border-left: 1px solid var(--line); color: var(--text-soft); }
 .gh .stars[hidden] { display: none; }
 
@@ -441,9 +485,13 @@ footer p { margin: 0 auto 8px; max-width: 58ch; }
 .fineprint { font-size: 0.85rem; color: var(--text-soft); }
 
 @media (max-width: 720px) {
-  /* Room above the title for the GitHub link, which would sit on it. */
+  /* Room above the title for the corner links, which would sit on it. The
+     staff moves down with the title, and the playhead with the narrower
+     headline. */
   .hero { padding-top: 72px; }
-  .gh { top: 14px; right: 14px; }
+  .top { top: 14px; right: 14px; }
+  .hero::before { top: 74px; height: 61px; background-size: 100% 12px; }
+  .hero::after { top: 68px; height: 73px; left: 12%; }
   main > section { padding: 56px 20px 0; }
   main > section:last-child { padding-bottom: 56px; }
 }
