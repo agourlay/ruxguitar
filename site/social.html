@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<!-- The link preview card, rendered to site/social.png by site/social.sh.
+     Not published: only the PNG is. 1200x630 is the size the platforms show
+     without cropping; it is read at thumbnail size, so the type is large. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #202225;
+    --bg-lift: #2b2e33;
+    --text: #e8e8ea;
+    --text-soft: #9ca0a8;
+    --red: #c83232;
+    --line: rgba(255, 255, 255, 0.1);
+    --staff: rgba(255, 255, 255, 0.07);
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+            "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  html, body { margin: 0; }
+
+  body {
+    position: relative;
+    width: 1200px;
+    height: 630px;
+    overflow: hidden;
+    font-family: var(--sans);
+    color: var(--text);
+    background: linear-gradient(160deg, var(--bg-lift) 0%, var(--bg) 60%);
+  }
+
+  /* The landing page's tab staff and playhead, behind the name. */
+  .staff {
+    position: absolute;
+    left: 0;
+    width: 720px;
+    top: 150px;
+    height: 136px;
+    background: repeating-linear-gradient(180deg,
+      var(--staff) 0 2px, transparent 2px 27px);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 15%, #000 70%, transparent);
+  }
+
+  .playhead {
+    position: absolute;
+    left: 64px;
+    top: 138px;
+    width: 3px;
+    height: 160px;
+    border-radius: 2px;
+    background: var(--red);
+    opacity: 0.7;
+  }
+
+  .text {
+    position: absolute;
+    left: 92px;
+    top: 150px;
+    width: 560px;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 116px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+  }
+
+  .tagline {
+    margin: 26px 0 0;
+    font-size: 42px;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .formats {
+    display: flex;
+    gap: 12px;
+    margin: 40px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .formats li {
+    padding: 4px 14px;
+    border-radius: 8px;
+    border: 2px solid var(--line);
+    font-family: var(--mono);
+    font-size: 26px;
+    color: var(--text-soft);
+  }
+
+  .platforms {
+    margin: 36px 0 0;
+    font-size: 26px;
+    color: var(--text-soft);
+  }
+
+  /* The app itself, running off the right and bottom edges. */
+  .shot {
+    position: absolute;
+    left: 710px;
+    top: 96px;
+    width: 900px;
+    border-radius: 14px;
+    border: 2px solid var(--line);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  }
+</style>
+</head>
+<body>
+  <div class="staff"></div>
+  <div class="playhead"></div>
+  <div class="text">
+    <h1>Ruxguitar</h1>
+    <p class="tagline">a guitar pro<br>tablature player</p>
+    <ul class="formats">
+      <li>.gp3</li><li>.gp4</li><li>.gp5</li><li>.gpx</li><li>.gp</li>
+    </ul>
+    <p class="platforms">Linux · macOS · Windows · free &amp; open source</p>
+  </div>
+  <img class="shot" src="screenshot.png" alt="">
+</body>
+</html>

@@ -5,6 +5,9 @@
 # it, and is copied in so the published site has its own copy at a path that
 # does not climb out of the site root.
 #
+# The link preview card is site/social.png, rendered from site/social.html by
+# site/social.sh; only the PNG is published.
+#
 # Used by .github/workflows/pages.yml and by hand:
 #
 #   site/build.sh && python3 -m http.server -d _site
@@ -16,7 +19,7 @@ out="$root/_site"
 rm -rf "$out"
 mkdir -p "$out"
 
-cp "$root/site/index.html" "$root/site/style.css" "$root/site/screenshot.png" \
+cp "$root/site/index.html" "$root/site/style.css" "$root/site/social.png" \
    "$root/site/install.sh" "$root/site/install.ps1" "$out/"
 cp "$root/ruxguitar.gif" "$out/"
 
