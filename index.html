@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ruxguitar: a guitar pro tablature player</title>
+<meta name="description" content="A desktop guitar pro tablature player written in Rust. Opens GP3 through GP7 files, plays them back through an embedded soundfont, and follows along measure by measure.">
+<meta property="og:title" content="Ruxguitar: a guitar pro tablature player">
+<meta property="og:description" content="A desktop guitar pro tablature player written in Rust. Opens GP3 through GP7 files, plays them back through an embedded soundfont, and follows along measure by measure.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://agourlay.github.io/ruxguitar/">
+<meta property="og:image" content="https://agourlay.github.io/ruxguitar/social.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Ruxguitar, a guitar pro tablature player, next to the app playing a tab">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%F0%9F%8E%B8</text></svg>">
+<link rel="stylesheet" href="style.css?v=3154127021">
+</head>
+<body>
+
+<header class="hero">
+  <nav class="top">
+  <a class="pill sponsor" href="https://github.com/sponsors/agourlay">
+    <span class="heart" aria-hidden="true">♥</span>
+    <span>Sponsor</span>
+  </a>
+  <a class="pill gh" href="https://github.com/agourlay/ruxguitar" aria-label="Ruxguitar on GitHub">
+    <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+    <span>GitHub</span>
+    <span class="stars" hidden>★ <span class="stars-n"></span></span>
+  </a>
+  </nav>
+  <div class="hero-inner">
+  <h1>🎸 Ruxguitar
+    <span class="genre">a guitar pro tablature player</span></h1>
+  <p class="lede">Open a tab, press space, and watch it play. Slow down the
+    hard part, solo your track, and follow along measure by measure.</p>
+  <ul class="formats" aria-label="Supported files">
+    <li>.gp3</li><li>.gp4</li><li>.gp5</li><li>.gpx</li><li>.gp</li>
+  </ul>
+  <!-- Without script both commands show, each under its own label; with
+       it, the labels become tabs and the visitor's own system is picked. -->
+  <div class="install" id="install">
+    <div class="install-tabs" role="tablist" hidden>
+      <button type="button" role="tab" data-os="unix">macOS · Linux</button>
+      <button type="button" role="tab" data-os="windows">Windows</button>
+    </div>
+    <div class="install-cmd" data-os="unix" role="tabpanel">
+      <p class="install-label">macOS · Linux</p>
+      <div class="install-line">
+        <code>curl -fsSL https://agourlay.github.io/ruxguitar/install.sh | sh</code>
+        <button type="button" class="copy" hidden>Copy</button>
+      </div>
+      <p class="install-note">Installs <span class="ver"></span>to <code>~/.local/bin</code> ·
+        <a href="install.sh">Read the script</a></p>
+    </div>
+    <div class="install-cmd" data-os="windows" role="tabpanel">
+      <p class="install-label">Windows (PowerShell)</p>
+      <div class="install-line">
+        <code>irm https://raw.githubusercontent.com/agourlay/ruxguitar/master/site/install.ps1 | iex</code>
+        <button type="button" class="copy" hidden>Copy</button>
+      </div>
+      <p class="install-note">Installs <span class="ver"></span>to <code>%LOCALAPPDATA%\Programs</code> and adds it to your PATH ·
+        <a href="install.ps1">Read the script</a></p>
+    </div>
+  </div>
+  <p class="alt">
+    Or <a href="https://github.com/agourlay/ruxguitar/releases">download a release</a>,
+    or with Rust: <code>cargo install --locked ruxguitar</code>
+  </p>
+  <details class="trouble">
+    <summary>Trouble installing?</summary>
+    <dl>
+      <dt>Linux</dt>
+      <dd>The prebuilt player needs glibc 2.39 or newer (Ubuntu 24.04,
+        Debian 13, Fedora 40 or later) and ALSA (<code>libasound2</code>).
+        On an older system <code>cargo install</code> builds one that fits,
+        with <code>libasound2-dev</code> installed. No sound under PulseAudio
+        or PipeWire? Install <code>pulseaudio-alsa</code> or
+        <code>pipewire-alsa</code>. File picker not opening? Install the
+        <a href="https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces">XDG
+        Desktop Portal</a> for your desktop.</dd>
+      <dt>macOS</dt>
+      <dd>The player is not signed, so a copy downloaded in the browser is
+        blocked on first launch. Allow it under System Settings, Privacy
+        &amp; Security, Open Anyway, or run
+        <code>xattr -d com.apple.quarantine ruxguitar</code>.
+        The curl command avoids this.</dd>
+      <dt>Windows</dt>
+      <dd>SmartScreen may warn about a downloaded copy: choose More info,
+        then Run anyway. The PowerShell command avoids this. Windows 7 and 8
+        stop at <a href="https://github.com/agourlay/ruxguitar/releases/tag/v0.6.3">v0.6.3</a>.</dd>
+    </dl>
+  </details>
+  <img class="shot" src="ruxguitar.gif" width="1150" height="768"
+       alt="Ruxguitar playing a tablature, the measure being played outlined as the playhead advances" loading="eager">
+  </div>
+</header>
+
+<main>
+
+<!-- Measured on the release build with the largest file in test-files, a
+     610 KB Guitar Pro 5 tab: window up and tab parsed in about 50 ms each,
+     about 117 MB proportional set size. The download is the Linux archive. -->
+<section class="stats">
+  <p>Native Rust. No Electron, no Java.</p>
+  <ul>
+    <li><b>13 MB</b> one download, sound included</li>
+    <li><b>~50 ms</b> to open a tab</li>
+    <li><b>~100 MB</b> of memory</li>
+    <li><b>0</b> accounts, fully offline</li>
+  </ul>
+</section>
+
+<section class="beats">
+  <div>
+    <h2>Every Guitar Pro file</h2>
+    <p>GP3, GP4 and GP5, plus the newer <code>.gpx</code> and <code>.gp</code>
+    formats. Open them from the picker or drop them on the window.</p>
+  </div>
+  <div>
+    <h2>Sound in the binary</h2>
+    <p>A soundfont ships inside the executable, so playback works on a fresh
+    machine. Point it at a bigger one when you want better tone.</p>
+  </div>
+  <div>
+    <h2>Built for practice</h2>
+    <p>Slow a passage to a quarter speed, solo the track you are learning,
+    and let repeats and alternate endings play out on their own.</p>
+  </div>
+</section>
+
+<section class="keys">
+  <h2>Everything is one key away</h2>
+  <dl>
+    <div><dt><kbd>Space</kbd></dt><dd>play or pause</dd></div>
+    <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>previous or next measure</dd></div>
+    <div><dt><kbd>Ctrl</kbd>+<kbd>↑</kbd> <kbd>↓</kbd></dt><dd>tempo up or down</dd></div>
+    <div><dt><kbd>S</kbd></dt><dd>solo the track</dd></div>
+    <div><dt><kbd>M</kbd></dt><dd>mute the track</dd></div>
+    <div><dt><kbd>F11</kbd></dt><dd>fullscreen</dd></div>
+  </dl>
+</section>
+
+</main>
+
+<footer>
+  <p>
+    <a href="https://github.com/agourlay/ruxguitar">GitHub</a> ·
+    <a href="https://crates.io/crates/ruxguitar">crates.io</a> ·
+    <a href="https://agourlay.github.io/ruxguitar-tablature-player/">How it works</a> ·
+    <a href="https://github.com/agourlay/ruxguitar/blob/master/LICENSE">Apache-2.0</a>
+  </p>
+  <p class="fineprint">
+    A read-only player: it does not edit tablatures and does not render score
+    notation. Heavily inspired by
+    <a href="https://github.com/helge17/tuxguitar">TuxGuitar</a>.
+  </p>
+</footer>
+
+<script>
+// Turn the two install commands into tabs, opened on the visitor's system,
+// and give each a copy button. Without this the page still shows both.
+(function () {
+  var box = document.querySelector(".install");
+  var tabs = box.querySelectorAll("[role=tab]");
+  var panels = box.querySelectorAll(".install-cmd");
+  function show(os) {
+    tabs.forEach(function (t) { t.setAttribute("aria-selected", t.dataset.os === os); });
+    panels.forEach(function (p) { p.hidden = p.dataset.os !== os; });
+  }
+  tabs.forEach(function (t) { t.onclick = function () { show(t.dataset.os); }; });
+  box.querySelector(".install-tabs").hidden = false;
+  box.classList.add("tabbed");
+  var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.userAgent;
+  show(/^win|windows/i.test(ua) ? "windows" : "unix");
+
+  if (!navigator.clipboard) return;
+  box.querySelectorAll(".copy").forEach(function (b) {
+    b.hidden = false;
+    b.onclick = function () {
+      navigator.clipboard.writeText(b.previousElementSibling.textContent).then(function () {
+        b.textContent = "Copied";
+        setTimeout(function () { b.textContent = "Copy"; }, 1600);
+      });
+    };
+  });
+})();
+
+// The version the install commands fetch, named in each install note with
+// its release date on hover. Silent when GitHub does not answer, like the
+// star count below.
+fetch("https://api.github.com/repos/agourlay/ruxguitar/releases/latest")
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (rel) {
+    if (!rel || !rel.tag_name || !rel.published_at) return;
+    var when = new Date(rel.published_at).toLocaleDateString("en-GB",
+      { day: "numeric", month: "long", year: "numeric" });
+    document.querySelectorAll(".install-note .ver").forEach(function (v) {
+      v.textContent = rel.tag_name + " ";
+      v.title = "Released " + when;
+    });
+  })
+  .catch(function () {});
+
+// The star count, filled in when GitHub answers; the link stands on its
+// own when it does not.
+fetch("https://api.github.com/repos/agourlay/ruxguitar")
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (repo) {
+    if (!repo || typeof repo.stargazers_count !== "number") return;
+    document.querySelector(".gh .stars-n").textContent = repo.stargazers_count;
+    document.querySelector(".gh .stars").hidden = false;
+  })
+  .catch(function () {});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,497 @@
+/* The application's own dark theme: iced's dark background and blue, and the
+   red the playhead is drawn in. Every colour on the page is one of these, so
+   the light set below is the whole of light mode. */
+:root {
+  color-scheme: dark light;
+  --bg: #202225;
+  --bg-lift: #2b2e33;
+  --bg-deep: #191b1d;
+  --text: #e8e8ea;
+  --text-soft: #9ca0a8;
+  --blue: #5e7ce2;
+  --blue-dark: #4055a8;
+  --link: #8ea3ee;
+  --red: #c83232;
+  --line: rgba(255, 255, 255, 0.1);
+  --staff: rgba(255, 255, 255, 0.07);
+  /* Raised surfaces: the GitHub pill, the troubleshooting card. */
+  --card: rgba(255, 255, 255, 0.05);
+  --card-hover: rgba(255, 255, 255, 0.1);
+  /* The install line is a terminal in both themes. */
+  --term: #141517;
+  --term-ink: #e8e8ea;
+  --shadow: rgba(0, 0, 0, 0.5);
+  --wrap: 1000px;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* The application's light theme, for visitors who asked for one. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --bg-lift: #eef0f4;
+    --bg-deep: #f5f6f8;
+    --text: #1d1f23;
+    --text-soft: #5c616b;
+    --blue: #4a67d0;
+    --blue-dark: #3a52a8;
+    --link: #3a52a8;
+    --line: rgba(0, 0, 0, 0.1);
+    --staff: rgba(0, 0, 0, 0.08);
+    --card: rgba(0, 0, 0, 0.03);
+    --card-hover: rgba(0, 0, 0, 0.06);
+    --term: #202225;
+    --term-ink: #e8e8ea;
+    --shadow: rgba(20, 24, 40, 0.18);
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg);
+}
+
+h1, h2 { line-height: 1.15; letter-spacing: -0.02em; }
+
+a { color: var(--link); }
+
+img { display: block; width: 100%; height: auto; }
+
+/* ---- hero ---- */
+
+.hero {
+  position: relative;
+  padding: 56px 24px 0;
+  text-align: center;
+  background: linear-gradient(180deg, var(--bg-lift) 0%, var(--bg) 62%);
+  overflow: hidden;
+}
+
+/* A tab staff behind the headline: six string lines fading out at both
+   ends, crossed by the red playhead the app draws. Decoration only, so it
+   sits under everything and takes no clicks. */
+.hero::before,
+.hero::after {
+  content: "";
+  position: absolute;
+  top: 58px;
+  height: 91px;
+  pointer-events: none;
+}
+
+.hero::before {
+  left: 0;
+  right: 0;
+  background: repeating-linear-gradient(180deg,
+    var(--staff) 0 1px, transparent 1px 18px);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent);
+}
+
+.hero::after {
+  left: calc(50% - 300px);
+  width: 2px;
+  top: 50px;
+  height: 107px;
+  border-radius: 1px;
+  background: var(--red);
+  opacity: 0.55;
+}
+
+.hero-inner { position: relative; }
+
+/* The links pinned to the corner: sponsoring, and the repository with its
+   star count. */
+.top {
+  position: absolute;
+  z-index: 1;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 8px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.pill:hover { background: var(--card-hover); }
+.sponsor .heart { color: var(--red); }
+.gh .stars { padding-left: 8px; border-left: 1px solid var(--line); color: var(--text-soft); }
+.gh .stars[hidden] { display: none; }
+
+.hero-inner { max-width: var(--wrap); margin: 0 auto; }
+
+/* The name and what it is are the headline: a reader who takes in one line
+   of this page should come away knowing both. */
+.hero h1 {
+  margin: 0 0 16px;
+  font-size: clamp(2.5rem, 6.6vw, 4.2rem);
+  font-weight: 800;
+}
+
+.hero h1 .genre {
+  display: block;
+  margin-top: 10px;
+  font-size: clamp(1.2rem, 3.2vw, 1.75rem);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+/* A short red rule under the headline: the colour the app draws its
+   playhead in, repeated above each card title and nowhere else. */
+.hero h1::after {
+  content: "";
+  display: block;
+  width: 56px;
+  height: 3px;
+  margin: 20px auto 0;
+  border-radius: 2px;
+  background: var(--red);
+}
+
+.lede {
+  margin: 0 auto 18px;
+  max-width: 56ch;
+  font-size: 1rem;
+  color: var(--text-soft);
+}
+
+/* What it opens, as the extensions a visitor has on disk. */
+.formats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 0 0 30px;
+  padding: 0;
+  list-style: none;
+}
+
+.formats li {
+  padding: 2px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--text-soft);
+}
+
+/* The capture is a screenshot of a window; a thin frame keeps its own dark
+   chrome from bleeding into the page behind it. */
+.shot {
+  max-width: 1150px;
+  margin: 0 auto;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  box-shadow: 0 16px 40px var(--shadow);
+}
+
+/* ---- install, in the hero ---- */
+
+.install {
+  max-width: 760px;
+  margin: 0 auto 18px;
+  text-align: left;
+}
+
+.install-tabs { display: flex; justify-content: center; gap: 6px; margin-bottom: 10px; }
+.install-tabs[hidden] { display: none; }
+
+.install-tabs button {
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 700;
+  padding: 6px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+
+.install-tabs button[aria-selected="true"] {
+  color: #fff;
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.install-cmd + .install-cmd { margin-top: 22px; }
+.install-cmd[hidden] { display: none; }
+.install.tabbed .install-cmd + .install-cmd { margin-top: 0; }
+/* The tab already names the system. */
+.install.tabbed .install-label { display: none; }
+
+.install-label { margin: 0 0 6px; font-weight: 700; font-size: 0.95rem; }
+
+/* A terminal line: dark, one row, scrolling sideways on a narrow screen
+   rather than wrapping a command someone is about to paste. */
+.install-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px 10px 18px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--term);
+}
+
+.install-line code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: 4px 0;
+  background: none;
+  color: var(--term-ink);
+  font-size: 0.9rem;
+}
+
+.install-line .copy {
+  flex: none;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--blue);
+  color: #fff;
+  cursor: pointer;
+}
+
+.install-line .copy:hover { background: var(--blue-dark); }
+.install-line .copy[hidden] { display: none; }
+
+.install-note {
+  margin: 8px 0 0;
+  text-align: center;
+  font-size: 0.88rem;
+  color: var(--text-soft);
+}
+
+.install-note code { font-size: 0.85em; }
+
+.alt {
+  margin: 0 0 10px;
+  font-size: 0.92rem;
+  color: var(--text-soft);
+}
+
+.alt code { font-size: 0.85em; white-space: nowrap; }
+
+/* Closed by default: most visitors never need it, and the capture below
+   should stay near the top. */
+.trouble {
+  max-width: 640px;
+  margin: 0 auto 44px;
+  font-size: 0.9rem;
+  color: var(--text-soft);
+}
+
+.trouble summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--link);
+}
+
+.trouble dl {
+  margin: 14px 0 0;
+  padding: 16px 20px;
+  text-align: left;
+  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+
+.trouble dt { font-weight: 700; color: var(--text); }
+.trouble dd { margin: 2px 0 12px; }
+.trouble dd:last-child { margin-bottom: 0; }
+.trouble code { font-size: 0.85em; }
+
+/* ---- sections ---- */
+
+/* Top padding only, so the gap between two sections is one padding, not
+   two; the last one closes the page. */
+main > section {
+  max-width: var(--wrap);
+  margin: 0 auto;
+  padding: 80px 24px 0;
+}
+
+main > section:last-child { padding-bottom: 80px; }
+
+main h2 {
+  font-size: clamp(1.4rem, 3vw, 1.8rem);
+  margin: 0 0 12px;
+}
+
+/* ---- numbers ---- */
+
+/* A band across the whole page, like a spec sheet: the numbers in the text
+   colour, so the only blue in view stays the install button above. */
+main > section.stats {
+  max-width: none;
+  margin-top: 80px;
+  padding: 36px 24px 40px;
+  background: var(--bg-deep);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.stats > p {
+  margin: 0 0 24px;
+  text-align: center;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-soft);
+}
+
+.stats ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 24px;
+  max-width: var(--wrap);
+  margin: 0 auto;
+  padding: 0;
+  list-style: none;
+  text-align: center;
+}
+
+.stats li { font-size: 0.92rem; color: var(--text-soft); }
+
+.stats b {
+  display: block;
+  font-size: clamp(1.9rem, 4.2vw, 2.4rem);
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+/* ---- three beats ---- */
+
+.beats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 20px;
+}
+
+.beats > div {
+  padding: 24px 26px;
+  border-radius: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+
+.beats h2 { font-size: 1.2rem; margin-bottom: 8px; }
+
+.beats h2::before {
+  content: "";
+  display: block;
+  width: 28px;
+  height: 3px;
+  margin-bottom: 14px;
+  border-radius: 2px;
+  background: var(--red);
+}
+.beats p { margin: 0; font-size: 0.97rem; color: var(--text-soft); }
+.beats code { font-size: 0.85em; padding: 2px 6px; }
+
+/* ---- shortcuts ---- */
+
+.keys { text-align: center; }
+
+/* A cheat sheet: three columns of two, keys right-aligned against their
+   meaning, so no shortcut is left alone on a line. */
+.keys dl {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  justify-content: center;
+  gap: 16px 48px;
+  margin: 28px 0 0;
+}
+
+.keys dl > div {
+  display: grid;
+  grid-template-columns: 7.5em auto;
+  align-items: baseline;
+  gap: 12px;
+  text-align: left;
+}
+
+.keys dt { text-align: right; white-space: nowrap; }
+.keys dd { white-space: nowrap; }
+
+@media (max-width: 820px) {
+  .keys dl { grid-template-columns: auto; }
+}
+
+.keys dt { font-weight: 400; }
+
+.keys dd { margin: 0; color: var(--text-soft); font-size: 0.97rem; }
+
+kbd {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: var(--bg-lift);
+  border: 1px solid var(--line);
+  border-bottom-width: 3px;
+  color: var(--text);
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--bg-lift);
+  color: var(--text);
+}
+
+/* ---- footer ---- */
+
+footer {
+  padding: 34px 24px 52px;
+  text-align: center;
+  background: var(--bg-deep);
+  border-top: 1px solid var(--line);
+}
+
+footer p { margin: 0 auto 8px; max-width: 58ch; }
+
+.fineprint { font-size: 0.85rem; color: var(--text-soft); }
+
+@media (max-width: 720px) {
+  /* Room above the title for the corner links, which would sit on it. The
+     staff moves down with the title, and the playhead with the narrower
+     headline. */
+  .hero { padding-top: 72px; }
+  .top { top: 14px; right: 14px; }
+  .hero::before { top: 74px; height: 61px; background-size: 100% 12px; }
+  .hero::after { top: 68px; height: 73px; left: 12%; }
+  main > section { padding: 56px 20px 0; }
+  main > section:last-child { padding-bottom: 56px; }
+}
