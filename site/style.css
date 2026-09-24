@@ -276,6 +276,29 @@ main h2 {
   margin: 0 0 12px;
 }
 
+/* ---- numbers ---- */
+
+.stats ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  text-align: center;
+}
+
+.stats li { font-size: 0.95rem; color: var(--text-soft); }
+
+.stats b {
+  display: block;
+  font-size: clamp(2rem, 4.5vw, 2.6rem);
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--blue);
+}
+
 /* ---- three beats ---- */
 
 .beats {
@@ -336,6 +359,16 @@ code {
   border-radius: 6px;
   background: var(--bg-lift);
   color: var(--text);
+}
+
+/* ---- native ---- */
+
+.native p {
+  margin: 0;
+  text-align: center;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-soft);
 }
 
 /* ---- footer ---- */
