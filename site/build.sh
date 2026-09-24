@@ -16,7 +16,8 @@ out="$root/_site"
 rm -rf "$out"
 mkdir -p "$out"
 
-cp "$root/site/index.html" "$root/site/style.css" "$root/site/screenshot.png" "$out/"
+cp "$root/site/index.html" "$root/site/style.css" "$root/site/screenshot.png" \
+   "$root/site/install.sh" "$root/site/install.ps1" "$out/"
 cp "$root/ruxguitar.gif" "$out/"
 
 # Stamp the stylesheet link with a digest of the stylesheet.

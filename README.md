@@ -89,6 +89,18 @@ For instance I like to use `FluidR3_GM.sf2` which is present on most systems and
 
 Using the provided binaries in https://github.com/agourlay/ruxguitar/releases
 
+Or with the install script, which fetches the latest release for your machine:
+
+```bash
+# macOS / Linux
+curl -fsSL https://agourlay.github.io/ruxguitar/install.sh | sh
+```
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/agourlay/ruxguitar/master/site/install.ps1 | iex
+```
+
 ### Crates.io
 
 Using Cargo via [crates.io](https://crates.io/crates/ruxguitar).
