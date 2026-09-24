@@ -27,6 +27,9 @@
     <span class="genre">a guitar pro tablature player</span></h1>
   <p class="lede">Open a tab, press space, and watch it play. Slow down the
     hard part, solo your track, and follow along measure by measure.</p>
+  <ul class="formats" aria-label="Supported files">
+    <li>.gp3</li><li>.gp4</li><li>.gp5</li><li>.gpx</li><li>.gp</li>
+  </ul>
   <!-- Without script both commands show, each under its own label; with
        it, the labels become tabs and the visitor's own system is picked. -->
   <div class="install" id="install">
@@ -40,7 +43,7 @@
         <code>curl -fsSL https://agourlay.github.io/ruxguitar/install.sh | sh</code>
         <button type="button" class="copy" hidden>Copy</button>
       </div>
-      <p class="install-note">Installs to <code>~/.local/bin</code> ·
+      <p class="install-note">Installs <span class="ver"></span>to <code>~/.local/bin</code> ·
         <a href="install.sh">Read the script</a></p>
     </div>
     <div class="install-cmd" data-os="windows" role="tabpanel">
@@ -49,11 +52,10 @@
         <code>irm https://raw.githubusercontent.com/agourlay/ruxguitar/master/site/install.ps1 | iex</code>
         <button type="button" class="copy" hidden>Copy</button>
       </div>
-      <p class="install-note">Installs to <code>%LOCALAPPDATA%\Programs</code> and adds it to your PATH ·
+      <p class="install-note">Installs <span class="ver"></span>to <code>%LOCALAPPDATA%\Programs</code> and adds it to your PATH ·
         <a href="install.ps1">Read the script</a></p>
     </div>
   </div>
-  <p class="release" hidden></p>
   <p class="alt">
     Or <a href="https://github.com/agourlay/ruxguitar/releases">download a release</a>,
     or with Rust: <code>cargo install --locked ruxguitar</code>
@@ -93,6 +95,7 @@
      610 KB Guitar Pro 5 tab: window up and tab parsed in about 50 ms each,
      about 117 MB proportional set size. The download is the Linux archive. -->
 <section class="stats">
+  <p>Native Rust. No Electron, no Java.</p>
   <ul>
     <li><b>13 MB</b> one download, sound included</li>
     <li><b>~50 ms</b> to open a tab</li>
@@ -125,13 +128,10 @@
     <div><dt><kbd>Space</kbd></dt><dd>play or pause</dd></div>
     <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>previous or next measure</dd></div>
     <div><dt><kbd>Ctrl</kbd>+<kbd>↑</kbd> <kbd>↓</kbd></dt><dd>tempo up or down</dd></div>
-    <div><dt><kbd>S</kbd></dt><dd>toggle solo</dd></div>
+    <div><dt><kbd>S</kbd></dt><dd>solo the track</dd></div>
+    <div><dt><kbd>M</kbd></dt><dd>mute the track</dd></div>
     <div><dt><kbd>F11</kbd></dt><dd>fullscreen</dd></div>
   </dl>
-</section>
-
-<section class="native">
-  <p>Native Rust. No Electron, no Java.</p>
 </section>
 
 </main>
@@ -179,18 +179,19 @@
   });
 })();
 
-// The version the install commands fetch, so a visitor knows what they
-// are about to get and that it is recent. Silent when GitHub does not
-// answer, like the star count below.
+// The version the install commands fetch, named in each install note with
+// its release date on hover. Silent when GitHub does not answer, like the
+// star count below.
 fetch("https://api.github.com/repos/agourlay/ruxguitar/releases/latest")
   .then(function (r) { return r.ok ? r.json() : null; })
   .then(function (rel) {
     if (!rel || !rel.tag_name || !rel.published_at) return;
     var when = new Date(rel.published_at).toLocaleDateString("en-GB",
       { day: "numeric", month: "long", year: "numeric" });
-    var line = document.querySelector(".release");
-    line.textContent = "Latest: " + rel.tag_name + ", released " + when;
-    line.hidden = false;
+    document.querySelectorAll(".install-note .ver").forEach(function (v) {
+      v.textContent = rel.tag_name + " ";
+      v.title = "Released " + when;
+    });
   })
   .catch(function () {});
 
