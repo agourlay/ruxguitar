@@ -1,10 +1,13 @@
-use super::beat::{next_note_on_string, tied_from_note_x};
+use super::beat::{
+    beat_annotations, multiple_bend_conflicts, next_note_on_string, note_value, tied_from_note_x,
+};
+use super::canvas_measure::CanvasMeasure;
 use super::canvas_measure::shows_key_signature;
 use super::chord::has_diagram;
 use super::layout::{
-    BEAT_LENGTH, DURATION_WIDTHS, LABEL_CHAR_WIDTH, LABEL_GAP, LABEL_MAX_EXTRA, MIN_BEAT_WIDTH,
-    ROW_MARKER, RowSpacing, beat_natural_width, label_extra_width, lyric_extra_width,
-    spacing_for_quarter,
+    BEAT_LENGTH, DURATION_WIDTHS, LABEL_CHAR_WIDTH, LABEL_GAP, LABEL_MAX_EXTRA,
+    MEASURE_NOTES_PADDING, MIN_BEAT_WIDTH, ROW_CHORD, ROW_LYRIC, ROW_MARKER, RowSpacing,
+    beat_natural_width, grace_gap_width, label_extra_width, lyric_extra_width, spacing_for_quarter,
 };
 use super::rhythm::{
     MAX_BEAMS, beam_leans_right, beam_runs, division_length, is_rest, stem_beams, tuplet_runs,
@@ -13,7 +16,10 @@ use super::staff::{BarEnd, BarStart, CANVAS_MARGIN, focus_box_top};
 use crate::parser::song_parser::{
     Beat, Chord, Duration, KeySignature, MeasureHeader, Note, NoteEffect, QUARTER_TIME,
 };
-use crate::parser::song_parser::{BeatEffects, QUARTER};
+use crate::parser::song_parser::{
+    BeatEffects, BendEffect, BendPoint, GraceEffect, Measure, NoteType, QUARTER, Song, Track, Voice,
+};
+use std::rc::Rc;
 
 fn beat(value: u16, enters: u8, times: u8) -> Beat {
     Beat {
@@ -536,4 +542,196 @@ fn the_last_measure_closes_the_song_unless_it_repeats() {
         ..Default::default()
     };
     assert_eq!(BarEnd::of(&repeated, true), BarEnd::Repeat(2));
+}
+
+/// A song of one six-string track with a single measure of these beats.
+fn one_measure_song(beats: Vec<Beat>) -> Rc<Song> {
+    Rc::new(Song {
+        tracks: vec![Track {
+            strings: (1..=6).map(|string| (string, 40)).collect(),
+            measures: vec![Measure {
+                voices: vec![Voice {
+                    measure_index: 0,
+                    beats,
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+        measure_headers: vec![MeasureHeader::default()],
+        ..Default::default()
+    })
+}
+
+fn four_quarters() -> Vec<Beat> {
+    (0..4).map(|_| beat_with(vec![note_on(1, 0)])).collect()
+}
+
+#[test]
+fn a_click_selects_the_beat_under_it() {
+    let measure = CanvasMeasure::new(
+        0,
+        0,
+        one_measure_song(four_quarters()),
+        false,
+        false,
+        vec![],
+    );
+    let width = measure.total_measure_len;
+    let beat_width = (width - MEASURE_NOTES_PADDING * 2.0) / 4.0;
+    // the leading padding belongs to the first beat
+    assert_eq!(measure.beat_at_x(0.0, width), 0);
+    assert_eq!(
+        measure.beat_at_x(MEASURE_NOTES_PADDING + 1.5 * beat_width, width),
+        1
+    );
+    assert_eq!(measure.beat_at_x(width, width), 3);
+}
+
+#[test]
+fn a_click_follows_a_stretched_measure() {
+    let measure = CanvasMeasure::new(
+        0,
+        0,
+        one_measure_song(four_quarters()),
+        false,
+        false,
+        vec![],
+    );
+    let width = measure.total_measure_len;
+    let beat_width = (width - MEASURE_NOTES_PADDING * 2.0) / 4.0;
+    // twice as wide: the beats take the extra room, the padding does not
+    let stretched = width * 2.0;
+    let x = MEASURE_NOTES_PADDING + 2.5 * (beat_width + width / 4.0);
+    assert_eq!(measure.beat_at_x(x, stretched), 2);
+}
+
+#[test]
+fn a_click_past_the_end_skips_the_closing_empty_beat() {
+    let mut beats = four_quarters();
+    beats.push(Beat {
+        empty: true,
+        ..Beat::default()
+    });
+    let measure = CanvasMeasure::new(0, 0, one_measure_song(beats), false, false, vec![]);
+    let width = measure.total_measure_len;
+    assert_eq!(measure.beat_at_x(width * 2.0, width), 3);
+}
+
+#[test]
+fn a_plain_measure_needs_no_row_above_the_staff() {
+    let song = one_measure_song(four_quarters());
+    let header = &song.measure_headers[0];
+    let measure = &song.tracks[0].measures[0];
+    let rows = RowSpacing::for_measure(measure, header, false, false, false);
+    assert_eq!(rows.first_string_y(), RowSpacing::default().first_string_y());
+    // the stems hang below it
+    assert!(rows.staff_footer > RowSpacing::default().staff_footer);
+}
+
+#[test]
+fn each_annotation_claims_its_row() {
+    let mut beats = four_quarters();
+    beats[1].effect.chord = Some(chord_named("Am"));
+    let song = one_measure_song(beats);
+    let header = &song.measure_headers[0];
+    let measure = &song.tracks[0].measures[0];
+    let rows = RowSpacing::for_measure(measure, header, true, false, true);
+    assert_eq!(rows.marker, ROW_MARKER);
+    assert_eq!(rows.chord, ROW_CHORD);
+    assert_eq!(rows.lyric, ROW_LYRIC);
+    assert_eq!(rows.signature, 0.0);
+    // the staff starts below the rows above it
+    let plain = RowSpacing::default();
+    assert_eq!(
+        rows.first_string_y(),
+        plain.first_string_y() + ROW_MARKER + ROW_CHORD
+    );
+}
+
+#[test]
+fn a_line_keeps_the_tallest_of_each_row() {
+    let mut line = RowSpacing {
+        marker: ROW_MARKER,
+        ..RowSpacing::default()
+    };
+    line.merge(RowSpacing {
+        chord: ROW_CHORD,
+        ..RowSpacing::default()
+    });
+    assert_eq!(line.marker, ROW_MARKER);
+    assert_eq!(line.chord, ROW_CHORD);
+}
+
+#[test]
+fn shared_annotations_are_listed_once_in_order() {
+    let mut muted = note_on(1, 0);
+    muted.effect.palm_mute = true;
+    let mut ringing = note_on(2, 0);
+    ringing.effect.palm_mute = true;
+    ringing.effect.let_ring = true;
+    assert_eq!(
+        beat_annotations(&beat_with(vec![muted, ringing])),
+        ["L.R", "P.M"]
+    );
+}
+
+#[test]
+fn a_note_reads_as_its_fret_and_kind() {
+    let mut note = note_on(1, 3);
+    note.kind = NoteType::Normal;
+    assert_eq!(note_value(&note), "3");
+    note.effect.ghost_note = true;
+    assert_eq!(note_value(&note), "(3)");
+    note.kind = NoteType::Dead;
+    assert_eq!(note_value(&note), "x");
+    // a tie draws an arc instead
+    note.kind = NoteType::Tie;
+    assert_eq!(note_value(&note), "");
+}
+
+#[test]
+fn a_dead_grace_note_takes_less_room_than_a_two_digit_one() {
+    assert_eq!(grace_gap_width(&beat_with(vec![note_on(1, 0)])), 0.0);
+    let graced = |fret: i8, is_dead: bool| {
+        let mut note = note_on(1, 0);
+        note.effect.grace = Some(GraceEffect {
+            fret,
+            is_dead,
+            ..Default::default()
+        });
+        beat_with(vec![note])
+    };
+    assert!(grace_gap_width(&graced(0, true)) < grace_gap_width(&graced(12, false)));
+}
+
+fn bent(string: i8, from: i8, to: i8) -> Note {
+    let mut note = note_on(string, 5);
+    note.effect.bend = Some(BendEffect {
+        points: vec![
+            BendPoint {
+                position: 0,
+                value: from,
+            },
+            BendPoint {
+                position: 12,
+                value: to,
+            },
+        ],
+    });
+    note
+}
+
+#[test]
+fn only_the_highest_string_labels_bends_moving_together() {
+    let beat = beat_with(vec![bent(1, 0, 4), bent(2, 0, 4)]);
+    let movements = [4];
+    assert!(!multiple_bend_conflicts(&beat, &beat.notes[0], &movements));
+    assert!(multiple_bend_conflicts(&beat, &beat.notes[1], &movements));
+}
+
+#[test]
+fn bends_moving_apart_label_none() {
+    let beat = beat_with(vec![bent(1, 0, 4), bent(2, 4, 0)]);
+    assert!(multiple_bend_conflicts(&beat, &beat.notes[0], &[4]));
 }

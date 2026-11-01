@@ -229,7 +229,7 @@ impl CanvasMeasure {
     /// The beat under the given x position, mirroring the layout used by
     /// `draw` (clicks in the leading padding select the first beat, clicks
     /// past the last beat the last one).
-    fn beat_at_x(&self, x: f32, actual_width: f32) -> usize {
+    pub(super) fn beat_at_x(&self, x: f32, actual_width: f32) -> usize {
         let measure_header = &self.song.measure_headers[self.measure_id];
         let actual_measure_len = actual_width - self.overhead_width();
         let width_scale = if self.natural_beats_len > 0.0 {

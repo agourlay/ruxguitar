@@ -16,13 +16,13 @@ use crate::parser::song_parser::{
 const ROW_ALT_ENDING: f32 = 13.0;
 pub(super) const ROW_MARKER: f32 = 15.0;
 const ROW_SIGNATURE: f32 = 11.0;
-const ROW_CHORD: f32 = 11.0;
+pub(super) const ROW_CHORD: f32 = 11.0;
 const ROW_TUPLET: f32 = 12.0;
 const ROW_EFFECT_LINE: f32 = 12.0;
 const ROW_TEXT: f32 = 11.0;
 const ROW_PICK_STROKE: f32 = 10.0;
 // Lyrics sit under the staff, below the footer.
-const ROW_LYRIC: f32 = 11.0;
+pub(super) const ROW_LYRIC: f32 = 11.0;
 // Labels drawn from their beat rightwards - sung words, chord names, beat
 // text - all share a size, and are wider than a beat often enough that the
 // beat carrying one claims the room: roughly a character of that font, plus

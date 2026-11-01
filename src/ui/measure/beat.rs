@@ -87,7 +87,7 @@ pub(super) fn grace_label(grace: &GraceEffect) -> String {
 /// Like TuxGuitar's `multipleBendConflicts`: with several bent notes in a
 /// beat, only the lowest-string one keeps its amplitude label, and only
 /// when all the bends start with the same movement.
-fn multiple_bend_conflicts(beat: &Beat, note: &Note, movements: &[i32]) -> bool {
+pub(super) fn multiple_bend_conflicts(beat: &Beat, note: &Note, movements: &[i32]) -> bool {
     beat.notes.iter().any(|other| {
         other.effect.bend.as_ref().is_some_and(|other_bend| {
             if other.string < note.string {
@@ -335,7 +335,7 @@ fn draw_note(
 }
 
 // Similar to `https://www.tuxguitar.app/files/1.6.0/desktop/help/edit_effects.html`
-fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<&'static str> {
+pub(super) fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<&'static str> {
     let mut annotations: Vec<&'static str> = vec![];
     if note_effect.accentuated_note {
         annotations.push(">");
@@ -379,7 +379,7 @@ fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<&'static str> {
     annotations
 }
 
-fn note_value(note: &Note) -> String {
+pub(super) fn note_value(note: &Note) -> String {
     match note.kind {
         NoteType::Rest => {
             log::debug!("NoteType Rest");
