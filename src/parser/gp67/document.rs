@@ -81,31 +81,105 @@ pub struct GpxVoice {
     pub beat_ids: Vec<i32>,
 }
 
+/// A bend or whammy bar curve: a value at the origin, an optional middle
+/// held between two offsets, and a destination. GPX stores the bend of a note
+/// and the whammy bar of a beat with the same properties.
+#[derive(Debug, Default)]
+pub struct GpxBendCurve {
+    pub enabled: bool,
+    pub origin_value: Option<i32>,
+    pub middle_value: Option<i32>,
+    pub destination_value: Option<i32>,
+    pub origin_offset: Option<i32>,
+    pub middle_offset_1: Option<i32>,
+    pub middle_offset_2: Option<i32>,
+    pub destination_offset: Option<i32>,
+}
+
+/// Direction of a brush or a pick stroke.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpxDirection {
+    Up,
+    Down,
+}
+
+impl GpxDirection {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "Up" => Some(Self::Up),
+            "Down" => Some(Self::Down),
+            _ => None,
+        }
+    }
+}
+
+/// Dynamic marking of a beat, softest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum GpxDynamic {
+    Pianississimo,
+    Pianissimo,
+    Piano,
+    MezzoPiano,
+    MezzoForte,
+    Forte,
+    Fortissimo,
+    Fortississimo,
+}
+
+impl GpxDynamic {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "PPP" => Some(Self::Pianississimo),
+            "PP" => Some(Self::Pianissimo),
+            "P" => Some(Self::Piano),
+            "MP" => Some(Self::MezzoPiano),
+            "MF" => Some(Self::MezzoForte),
+            "F" => Some(Self::Forte),
+            "FF" => Some(Self::Fortissimo),
+            "FFF" => Some(Self::Fortississimo),
+            _ => None,
+        }
+    }
+}
+
+/// Harmonic kind of a note. An unknown kind is read as natural, like TuxGuitar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpxHarmonicType {
+    Natural,
+    Artificial,
+    Pinch,
+}
+
+impl GpxHarmonicType {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "" => None,
+            "Artificial" => Some(Self::Artificial),
+            "Pinch" => Some(Self::Pinch),
+            _ => Some(Self::Natural),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct GpxBeat {
     pub id: i32,
     pub rhythm_id: i32,
     pub note_ids: Option<Vec<i32>>,
-    pub dynamic: Option<String>,
+    pub dynamic: Option<GpxDynamic>,
     pub slapped: bool,
     pub popped: bool,
-    /// Brush (strum) direction: "Up" / "Down" / "" (none).
-    pub brush: String,
-    /// Pick-stroke direction: "Up" / "Down" / "" (none).
-    pub pick_stroke: String,
+    /// Brush (strum) direction, `None` without a brush.
+    pub brush: Option<GpxDirection>,
+    /// Pick-stroke direction, `None` without a pick stroke.
+    pub pick_stroke: Option<GpxDirection>,
     pub tremolo: Option<Vec<i32>>,
-    pub fadding: Option<String>,
+    /// `Fadding` is `FadeIn`; the other fades are not supported, as in TuxGuitar.
+    pub fade_in: bool,
     pub text: String,
     pub chord_id: Option<i32>,
     pub grace_notes: Option<String>,
-    pub whammy_bar_enabled: bool,
-    pub whammy_bar_origin_value: Option<i32>,
-    pub whammy_bar_middle_value: Option<i32>,
-    pub whammy_bar_destination_value: Option<i32>,
-    pub whammy_bar_origin_offset: Option<i32>,
-    pub whammy_bar_middle_offset_1: Option<i32>,
-    pub whammy_bar_middle_offset_2: Option<i32>,
-    pub whammy_bar_destination_offset: Option<i32>,
+    pub whammy_bar: GpxBendCurve,
 }
 
 #[derive(Debug)]
@@ -123,15 +197,8 @@ pub struct GpxNote {
     pub accent: i32,
     pub slide_flags: i32,
     pub harmonic_fret: i32,
-    pub harmonic_type: String,
-    pub bend_enabled: bool,
-    pub bend_origin_value: Option<i32>,
-    pub bend_middle_value: Option<i32>,
-    pub bend_destination_value: Option<i32>,
-    pub bend_origin_offset: Option<i32>,
-    pub bend_middle_offset_1: Option<i32>,
-    pub bend_middle_offset_2: Option<i32>,
-    pub bend_destination_offset: Option<i32>,
+    pub harmonic_type: Option<GpxHarmonicType>,
+    pub bend: GpxBendCurve,
     pub hammer: bool,
     pub ghost: bool,
     pub slide: bool,
@@ -159,15 +226,8 @@ impl Default for GpxNote {
             accent: 0,
             slide_flags: 0,
             harmonic_fret: -1,
-            harmonic_type: String::new(),
-            bend_enabled: false,
-            bend_origin_value: None,
-            bend_middle_value: None,
-            bend_destination_value: None,
-            bend_origin_offset: None,
-            bend_middle_offset_1: None,
-            bend_middle_offset_2: None,
-            bend_destination_offset: None,
+            harmonic_type: None,
+            bend: GpxBendCurve::default(),
             hammer: false,
             ghost: false,
             slide: false,

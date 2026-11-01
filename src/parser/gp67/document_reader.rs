@@ -6,8 +6,9 @@
 
 use crate::RuxError;
 use crate::parser::gp67::document::{
-    DEFAULT_PERCUSSION_CHANNEL, GpxAutomation, GpxBar, GpxBeat, GpxChord, GpxDocument,
-    GpxMasterBar, GpxNote, GpxRhythm, GpxTrack, GpxVoice,
+    DEFAULT_PERCUSSION_CHANNEL, GpxAutomation, GpxBar, GpxBeat, GpxBendCurve, GpxChord,
+    GpxDirection, GpxDocument, GpxDynamic, GpxHarmonicType, GpxMasterBar, GpxNote, GpxRhythm,
+    GpxTrack, GpxVoice,
 };
 use roxmltree::{Document, Node};
 
@@ -330,7 +331,7 @@ fn read_beats(root: Node, gpx: &mut GpxDocument) {
     for node in element_children(beats, "Beat") {
         let mut beat = GpxBeat {
             id: attr_int(node, "id"),
-            dynamic: child_text(node, "Dynamic"),
+            dynamic: child_text(node, "Dynamic").and_then(|d| GpxDynamic::parse(&d)),
             text: child_text(node, "FreeText").unwrap_or_default(),
             rhythm_id: child(node, "Rhythm")
                 .and_then(|r| attr_int_opt(r, "ref"))
@@ -338,7 +339,7 @@ fn read_beats(root: Node, gpx: &mut GpxDocument) {
             tremolo: child_int_array(node, "Tremolo", '/'),
             note_ids: child_int_array(node, "Notes", ' '),
             chord_id: child_int_opt(node, "Chord"),
-            fadding: child_text(node, "Fadding"),
+            fade_in: child_text(node, "Fadding").as_deref() == Some("FadeIn"),
             grace_notes: child_text(node, "GraceNotes"),
             ..Default::default()
         };
@@ -347,36 +348,18 @@ fn read_beats(root: Node, gpx: &mut GpxDocument) {
             for property in element_children(properties, "Property") {
                 match attr(property, "name") {
                     Some("PickStroke") => {
-                        beat.pick_stroke = child_text(property, "Direction").unwrap_or_default();
+                        beat.pick_stroke = direction_of(property);
                     }
                     Some("Brush") => {
-                        beat.brush = child_text(property, "Direction").unwrap_or_default();
+                        beat.brush = direction_of(property);
                     }
                     Some("Slapped") => beat.slapped = child(property, "Enable").is_some(),
                     Some("Popped") => beat.popped = child(property, "Enable").is_some(),
                     Some("WhammyBar") => {
-                        beat.whammy_bar_enabled = child(property, "Enable").is_some();
+                        beat.whammy_bar.enabled = child(property, "Enable").is_some();
                     }
-                    Some("WhammyBarOriginValue") => {
-                        beat.whammy_bar_origin_value = child_int_opt(property, "Float");
-                    }
-                    Some("WhammyBarMiddleValue") => {
-                        beat.whammy_bar_middle_value = child_int_opt(property, "Float");
-                    }
-                    Some("WhammyBarDestinationValue") => {
-                        beat.whammy_bar_destination_value = child_int_opt(property, "Float");
-                    }
-                    Some("WhammyBarOriginOffset") => {
-                        beat.whammy_bar_origin_offset = child_int_opt(property, "Float");
-                    }
-                    Some("WhammyBarMiddleOffset1") => {
-                        beat.whammy_bar_middle_offset_1 = child_int_opt(property, "Float");
-                    }
-                    Some("WhammyBarMiddleOffset2") => {
-                        beat.whammy_bar_middle_offset_2 = child_int_opt(property, "Float");
-                    }
-                    Some("WhammyBarDestinationOffset") => {
-                        beat.whammy_bar_destination_offset = child_int_opt(property, "Float");
+                    Some(name) if let Some(point) = name.strip_prefix("WhammyBar") => {
+                        read_curve_point(&mut beat.whammy_bar, point, property);
                     }
                     _ => {}
                 }
@@ -426,32 +409,15 @@ fn read_notes(root: Node, gpx: &mut GpxDocument) {
                         note.slide_flags = child_int(property, "Flags", 0);
                     }
                     Some("Tapped") => note.tapped = child(property, "Enable").is_some(),
-                    Some("Bended") => note.bend_enabled = child(property, "Enable").is_some(),
-                    Some("BendOriginValue") => {
-                        note.bend_origin_value = child_int_opt(property, "Float");
-                    }
-                    Some("BendMiddleValue") => {
-                        note.bend_middle_value = child_int_opt(property, "Float");
-                    }
-                    Some("BendDestinationValue") => {
-                        note.bend_destination_value = child_int_opt(property, "Float");
-                    }
-                    Some("BendOriginOffset") => {
-                        note.bend_origin_offset = child_int_opt(property, "Float");
-                    }
-                    Some("BendMiddleOffset1") => {
-                        note.bend_middle_offset_1 = child_int_opt(property, "Float");
-                    }
-                    Some("BendMiddleOffset2") => {
-                        note.bend_middle_offset_2 = child_int_opt(property, "Float");
-                    }
-                    Some("BendDestinationOffset") => {
-                        note.bend_destination_offset = child_int_opt(property, "Float");
+                    Some("Bended") => note.bend.enabled = child(property, "Enable").is_some(),
+                    Some(name) if let Some(point) = name.strip_prefix("Bend") => {
+                        read_curve_point(&mut note.bend, point, property);
                     }
                     Some("HopoOrigin") => note.hammer = true,
                     Some("HarmonicFret") => note.harmonic_fret = child_int(property, "HFret", 0),
                     Some("HarmonicType") => {
-                        note.harmonic_type = child_text(property, "HType").unwrap_or_default();
+                        note.harmonic_type = child_text(property, "HType")
+                            .and_then(|kind| GpxHarmonicType::parse(&kind));
                     }
                     _ => {}
                 }
@@ -469,6 +435,27 @@ fn read_notes(root: Node, gpx: &mut GpxDocument) {
 
         gpx.notes.push(note);
     }
+}
+
+/// Direction of a `PickStroke` or `Brush` property.
+fn direction_of(property: Node) -> Option<GpxDirection> {
+    child_text(property, "Direction").and_then(|d| GpxDirection::parse(&d))
+}
+
+/// One point of a bend or whammy bar curve, from the property name without
+/// its `Bend` or `WhammyBar` prefix.
+fn read_curve_point(curve: &mut GpxBendCurve, point: &str, property: Node) {
+    let slot = match point {
+        "OriginValue" => &mut curve.origin_value,
+        "MiddleValue" => &mut curve.middle_value,
+        "DestinationValue" => &mut curve.destination_value,
+        "OriginOffset" => &mut curve.origin_offset,
+        "MiddleOffset1" => &mut curve.middle_offset_1,
+        "MiddleOffset2" => &mut curve.middle_offset_2,
+        "DestinationOffset" => &mut curve.destination_offset,
+        _ => return,
+    };
+    *slot = child_int_opt(property, "Float");
 }
 
 fn read_rhythms(root: Node, gpx: &mut GpxDocument) {

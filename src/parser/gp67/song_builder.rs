@@ -7,7 +7,8 @@
 use crate::RuxError;
 use crate::parser::gp67::archive::read_gp7_gpif;
 use crate::parser::gp67::document::{
-    DEFAULT_PERCUSSION_CHANNEL, GpxBar, GpxBeat, GpxDocument, GpxMasterBar, GpxNote, GpxRhythm,
+    DEFAULT_PERCUSSION_CHANNEL, GpxBar, GpxBeat, GpxBendCurve, GpxDirection, GpxDocument,
+    GpxDynamic, GpxHarmonicType, GpxMasterBar, GpxNote, GpxRhythm,
 };
 use crate::parser::gp67::document_reader::{GpifVersion, read_document};
 use crate::parser::gp67::file_system::GpxFileSystem;
@@ -414,18 +415,14 @@ fn build_voice(
             text: gp_beat.text.trim().to_string(),
             effect: BeatEffects {
                 stroke: stroke_of(gp_beat),
-                pick_stroke: match gp_beat.pick_stroke.as_str() {
-                    "Up" => BeatStrokeDirection::Up,
-                    "Down" => BeatStrokeDirection::Down,
-                    _ => BeatStrokeDirection::None,
-                },
+                pick_stroke: stroke_direction(gp_beat.pick_stroke),
                 chord: chord_of(doc, gp_beat),
             },
             notes: Vec::new(),
         };
 
         if let Some(note_ids) = &gp_beat.note_ids {
-            let velocity = dynamic_velocity(gp_beat.dynamic.as_deref());
+            let velocity = dynamic_velocity(gp_beat.dynamic);
             // drums claim their kit position in order, so that when two
             // sounds want the same string the higher one on the staff wins
             // it, like TuxGuitar's allocatePercussionNotesToStrings
@@ -487,17 +484,21 @@ fn rhythm_to_duration(rhythm: Option<&GpxRhythm>) -> Duration {
     duration
 }
 
+fn stroke_direction(direction: Option<GpxDirection>) -> BeatStrokeDirection {
+    match direction {
+        Some(GpxDirection::Up) => BeatStrokeDirection::Up,
+        Some(GpxDirection::Down) => BeatStrokeDirection::Down,
+        None => BeatStrokeDirection::None,
+    }
+}
+
 fn stroke_of(gp_beat: &GpxBeat) -> BeatStroke {
-    match gp_beat.brush.as_str() {
-        "Down" => BeatStroke {
-            direction: BeatStrokeDirection::Down,
-            value: BRUSH_STROKE_VALUE,
-        },
-        "Up" => BeatStroke {
-            direction: BeatStrokeDirection::Up,
-            value: BRUSH_STROKE_VALUE,
-        },
-        _ => BeatStroke::default(),
+    if gp_beat.brush.is_none() {
+        return BeatStroke::default();
+    }
+    BeatStroke {
+        direction: stroke_direction(gp_beat.brush),
+        value: BRUSH_STROKE_VALUE,
     }
 }
 
@@ -522,17 +523,17 @@ fn chord_of(doc: &GpxDocument, gp_beat: &GpxBeat) -> Option<Chord> {
     Some(chord)
 }
 
-fn dynamic_velocity(dynamic: Option<&str>) -> i16 {
+fn dynamic_velocity(dynamic: Option<GpxDynamic>) -> i16 {
     let level = match dynamic {
-        Some("PPP") => 1,
-        Some("PP") => 2,
-        Some("P") => 3,
-        Some("MP") => 4,
-        Some("MF") => 5,
-        Some("F") => 6,
-        Some("FF") => 7,
-        Some("FFF") => 8,
-        _ => return DEFAULT_VELOCITY,
+        Some(GpxDynamic::Pianississimo) => 1,
+        Some(GpxDynamic::Pianissimo) => 2,
+        Some(GpxDynamic::Piano) => 3,
+        Some(GpxDynamic::MezzoPiano) => 4,
+        Some(GpxDynamic::MezzoForte) => 5,
+        Some(GpxDynamic::Forte) => 6,
+        Some(GpxDynamic::Fortissimo) => 7,
+        Some(GpxDynamic::Fortississimo) => 8,
+        None => return DEFAULT_VELOCITY,
     };
     convert_velocity(level)
 }
@@ -587,7 +588,7 @@ fn build_note(
     effect.staccato = gp_note.accent == 1;
     effect.heavy_accentuated_note = gp_note.accent == 4;
     effect.accentuated_note = gp_note.accent == 8;
-    effect.fade_in = gp_beat.fadding.as_deref() == Some("FadeIn");
+    effect.fade_in = gp_beat.fade_in;
     effect.slap = if gp_beat.slapped {
         SlapEffect::Slapping
     } else if gp_beat.popped {
@@ -740,13 +741,10 @@ fn tremolo_picking_of(gp_beat: &GpxBeat) -> Option<TremoloPickingEffect> {
 }
 
 fn harmonic_of(gp_note: &GpxNote) -> Option<HarmonicEffect> {
-    if gp_note.harmonic_type.is_empty() {
-        return None;
-    }
-    let kind = match gp_note.harmonic_type.as_str() {
-        "Artificial" => HarmonicType::Artificial,
-        "Pinch" => HarmonicType::Pinch,
-        _ => HarmonicType::Natural,
+    let kind = match gp_note.harmonic_type? {
+        GpxHarmonicType::Natural => HarmonicType::Natural,
+        GpxHarmonicType::Artificial => HarmonicType::Artificial,
+        GpxHarmonicType::Pinch => HarmonicType::Pinch,
     };
     // map the harmonic fret onto the frequency table, like TuxGuitar
     let data = NATURAL_FREQUENCIES
@@ -768,56 +766,65 @@ fn bend_position(gp_offset: i32) -> u8 {
     (gp_offset as f32 * BEND_EFFECT_MAX_POSITION_LENGTH / GP_POSITION_GPX).round() as u8
 }
 
-fn bend_of(gp_note: &GpxNote) -> Option<BendEffect> {
-    if !gp_note.bend_enabled {
+/// Points of a bend or whammy bar curve, like TuxGuitar: the origin, the
+/// middle points `middle_offsets` keeps, then the destination, ordered by
+/// position since the MIDI builder walks them in order.
+fn curve_points(
+    curve: &GpxBendCurve,
+    value_of: fn(i32) -> i8,
+    middle_offsets: impl FnOnce(&GpxBendCurve, i32) -> Vec<i32>,
+) -> Option<Vec<BendPoint>> {
+    if !curve.enabled {
         return None;
     }
-    let origin = gp_note.bend_origin_value?;
-    let destination = gp_note.bend_destination_value?;
+    let origin = value_of(curve.origin_value?);
+    let destination = value_of(curve.destination_value?);
 
-    let mut bend = BendEffect::default();
-    bend.points.push(BendPoint {
+    let mut points = vec![BendPoint {
         position: 0,
-        value: bend_value(origin),
-    });
-    if let Some(offset) = gp_note.bend_origin_offset {
-        bend.points.push(BendPoint {
+        value: origin,
+    }];
+    if let Some(offset) = curve.origin_offset {
+        points.push(BendPoint {
             position: bend_position(offset),
-            value: bend_value(origin),
+            value: origin,
         });
     }
-    if let Some(middle) = gp_note.bend_middle_value {
+    if let Some(middle) = curve.middle_value {
         let default_offset = (GP_POSITION_GPX / 2.0).round() as i32;
-        if gp_note.bend_middle_offset_1 != Some(12) {
-            let offset = gp_note.bend_middle_offset_1.unwrap_or(default_offset);
-            bend.points.push(BendPoint {
+        for offset in middle_offsets(curve, default_offset) {
+            points.push(BendPoint {
                 position: bend_position(offset),
-                value: bend_value(middle),
-            });
-        }
-        if gp_note.bend_middle_offset_2 != Some(12) {
-            let offset = gp_note.bend_middle_offset_2.unwrap_or(default_offset);
-            bend.points.push(BendPoint {
-                position: bend_position(offset),
-                value: bend_value(middle),
+                value: value_of(middle),
             });
         }
     }
-    if let Some(offset) = gp_note.bend_destination_offset
+    if let Some(offset) = curve.destination_offset
         && (offset as f32) < GP_POSITION_GPX
     {
-        bend.points.push(BendPoint {
+        points.push(BendPoint {
             position: bend_position(offset),
-            value: bend_value(destination),
+            value: destination,
         });
     }
-    bend.points.push(BendPoint {
+    points.push(BendPoint {
         position: BEND_EFFECT_MAX_POSITION_LENGTH as u8,
-        value: bend_value(destination),
+        value: destination,
     });
-    // The MIDI builder walks points in order and assumes monotonic positions.
-    bend.points.sort_by_key(|p| p.position);
-    Some(bend)
+    points.sort_by_key(|p| p.position);
+    Some(points)
+}
+
+fn bend_of(gp_note: &GpxNote) -> Option<BendEffect> {
+    // a middle offset of 12 marks a point the bend skips
+    let points = curve_points(&gp_note.bend, bend_value, |curve, default_offset| {
+        [curve.middle_offset_1, curve.middle_offset_2]
+            .into_iter()
+            .filter(|offset| *offset != Some(12))
+            .map(|offset| offset.unwrap_or(default_offset))
+            .collect()
+    })?;
+    Some(BendEffect { points })
 }
 
 fn tremolo_bar_value(gp_value: i32) -> i8 {
@@ -829,55 +836,25 @@ fn tremolo_bar_value(gp_value: i32) -> i8 {
 }
 
 fn tremolo_bar_of(gp_beat: &GpxBeat) -> Option<TremoloBarEffect> {
-    if !gp_beat.whammy_bar_enabled {
-        return None;
-    }
-    let origin = gp_beat.whammy_bar_origin_value?;
-    let destination = gp_beat.whammy_bar_destination_value?;
-
-    let mut tremolo = TremoloBarEffect::default();
-    tremolo.points.push(BendPoint {
-        position: 0,
-        value: tremolo_bar_value(origin),
-    });
-    if let Some(offset) = gp_beat.whammy_bar_origin_offset {
-        tremolo.points.push(BendPoint {
-            position: bend_position(offset),
-            value: tremolo_bar_value(origin),
-        });
-    }
-    if let Some(middle) = gp_beat.whammy_bar_middle_value {
-        let default_offset = (GP_POSITION_GPX / 2.0).round() as i32;
-        let origin_offset = gp_beat.whammy_bar_origin_offset;
-        let offset1 = gp_beat.whammy_bar_middle_offset_1.unwrap_or(default_offset);
-        if origin_offset.is_none_or(|o| offset1 >= o) {
-            tremolo.points.push(BendPoint {
-                position: bend_position(offset1),
-                value: tremolo_bar_value(middle),
-            });
-        }
-        let offset2 = gp_beat.whammy_bar_middle_offset_2.unwrap_or(default_offset);
-        if origin_offset.is_none_or(|o| offset1 >= o && offset2 > offset1) {
-            tremolo.points.push(BendPoint {
-                position: bend_position(offset2),
-                value: tremolo_bar_value(middle),
-            });
-        }
-    }
-    if let Some(offset) = gp_beat.whammy_bar_destination_offset
-        && (offset as f32) < GP_POSITION_GPX
-    {
-        tremolo.points.push(BendPoint {
-            position: bend_position(offset),
-            value: tremolo_bar_value(destination),
-        });
-    }
-    tremolo.points.push(BendPoint {
-        position: BEND_EFFECT_MAX_POSITION_LENGTH as u8,
-        value: tremolo_bar_value(destination),
-    });
-    tremolo.points.sort_by_key(|p| p.position);
-    Some(tremolo)
+    // the middle points are kept only while they follow the origin in order
+    let points = curve_points(
+        &gp_beat.whammy_bar,
+        tremolo_bar_value,
+        |curve, default_offset| {
+            let origin_offset = curve.origin_offset;
+            let offset1 = curve.middle_offset_1.unwrap_or(default_offset);
+            let offset2 = curve.middle_offset_2.unwrap_or(default_offset);
+            let mut offsets = Vec::with_capacity(2);
+            if origin_offset.is_none_or(|o| offset1 >= o) {
+                offsets.push(offset1);
+            }
+            if origin_offset.is_none_or(|o| offset1 >= o && offset2 > offset1) {
+                offsets.push(offset2);
+            }
+            offsets
+        },
+    )?;
+    Some(TremoloBarEffect { points })
 }
 
 fn grace_of(
@@ -899,7 +876,7 @@ fn grace_of(
         _ => 1,
     };
 
-    let transition = if grace_note.bend_enabled {
+    let transition = if grace_note.bend.enabled {
         GraceEffectTransition::Bend
     } else if grace_note.slide {
         GraceEffectTransition::Slide
@@ -915,7 +892,7 @@ fn grace_of(
         is_dead: grace_note.muted_enabled,
         is_on_beat: grace_type == "OnBeat",
         transition,
-        velocity: dynamic_velocity(previous_beat.dynamic.as_deref()),
+        velocity: dynamic_velocity(previous_beat.dynamic),
     })
 }
 
@@ -988,5 +965,156 @@ mod tests {
         let strings = drum_strings();
         let taken: Vec<Note> = (1..=6).map(note_on_string).collect();
         assert!(drum_string_for(&strings, &taken, 38).is_none());
+    }
+
+    fn points(points: &[BendPoint]) -> Vec<(u8, i8)> {
+        points.iter().map(|p| (p.position, p.value)).collect()
+    }
+
+    fn curve(origin: i32, middle: Option<i32>, destination: i32) -> GpxBendCurve {
+        GpxBendCurve {
+            enabled: true,
+            origin_value: Some(origin),
+            middle_value: middle,
+            destination_value: Some(destination),
+            ..Default::default()
+        }
+    }
+
+    fn bent(bend: GpxBendCurve) -> GpxNote {
+        GpxNote {
+            bend,
+            ..Default::default()
+        }
+    }
+
+    fn whammy(whammy_bar: GpxBendCurve) -> GpxBeat {
+        GpxBeat {
+            whammy_bar,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_bend_needs_to_be_enabled_and_complete() {
+        let mut disabled = curve(0, None, 100);
+        disabled.enabled = false;
+        assert!(bend_of(&bent(disabled)).is_none());
+        let mut open = curve(0, None, 100);
+        open.destination_value = None;
+        assert!(bend_of(&bent(open)).is_none());
+    }
+
+    #[test]
+    fn a_bend_runs_from_origin_to_destination() {
+        let bend = bend_of(&bent(curve(0, None, 100))).unwrap();
+        assert_eq!(points(&bend.points), [(0, 0), (12, 4)]);
+    }
+
+    #[test]
+    fn a_bend_middle_defaults_to_the_halfway_point() {
+        let bend = bend_of(&bent(curve(0, Some(50), 100))).unwrap();
+        assert_eq!(points(&bend.points), [(0, 0), (6, 2), (6, 2), (12, 4)]);
+    }
+
+    #[test]
+    fn a_bend_middle_offset_of_twelve_is_skipped() {
+        let mut held = curve(0, Some(50), 0);
+        held.middle_offset_1 = Some(12);
+        held.middle_offset_2 = Some(75);
+        let bend = bend_of(&bent(held)).unwrap();
+        assert_eq!(points(&bend.points), [(0, 0), (9, 2), (12, 0)]);
+    }
+
+    #[test]
+    fn bend_points_are_ordered_by_position() {
+        let mut late = curve(100, None, 0);
+        late.origin_offset = Some(80);
+        late.destination_offset = Some(20);
+        let bend = bend_of(&bent(late)).unwrap();
+        assert_eq!(points(&bend.points), [(0, 4), (2, 0), (10, 4), (12, 0)]);
+    }
+
+    #[test]
+    fn a_whammy_dive_keeps_middle_points_in_order() {
+        let mut dive = curve(0, Some(-50), -100);
+        dive.origin_offset = Some(30);
+        dive.middle_offset_1 = Some(40);
+        dive.middle_offset_2 = Some(80);
+        let tremolo = tremolo_bar_of(&whammy(dive)).unwrap();
+        assert_eq!(
+            points(&tremolo.points),
+            [(0, 0), (4, 0), (5, -1), (10, -1), (12, -2)]
+        );
+    }
+
+    #[test]
+    fn a_whammy_middle_before_its_origin_is_dropped() {
+        let mut dive = curve(0, Some(-50), -100);
+        dive.origin_offset = Some(30);
+        dive.middle_offset_1 = Some(20);
+        dive.middle_offset_2 = Some(60);
+        let tremolo = tremolo_bar_of(&whammy(dive)).unwrap();
+        assert_eq!(points(&tremolo.points), [(0, 0), (4, 0), (12, -2)]);
+    }
+
+    #[test]
+    fn a_whammy_value_is_clamped() {
+        let tremolo = tremolo_bar_of(&whammy(curve(0, None, 10_000))).unwrap();
+        let last = tremolo.points.last().unwrap();
+        assert_eq!(last.value, TREMOLO_BAR_MAX_VALUE);
+    }
+
+    #[test]
+    fn an_unknown_harmonic_is_natural() {
+        assert_eq!(GpxHarmonicType::parse(""), None);
+        assert_eq!(
+            GpxHarmonicType::parse("Pinch"),
+            Some(GpxHarmonicType::Pinch)
+        );
+        assert_eq!(
+            GpxHarmonicType::parse("Feedback"),
+            Some(GpxHarmonicType::Natural)
+        );
+        let note = GpxNote {
+            harmonic_type: Some(GpxHarmonicType::Artificial),
+            ..Default::default()
+        };
+        assert_eq!(harmonic_of(&note).unwrap().kind, HarmonicType::Artificial);
+        assert!(harmonic_of(&GpxNote::default()).is_none());
+    }
+
+    #[test]
+    fn louder_dynamics_play_harder() {
+        let dynamics = ["PPP", "PP", "P", "MP", "MF", "F", "FF", "FFF"]
+            .map(|text| dynamic_velocity(GpxDynamic::parse(text)));
+        assert!(dynamics.is_sorted_by(|a, b| a < b), "{dynamics:?}");
+        assert_eq!(
+            dynamic_velocity(GpxDynamic::parse("loud")),
+            DEFAULT_VELOCITY
+        );
+    }
+
+    #[test]
+    fn a_brush_strokes_in_its_direction() {
+        assert_eq!(stroke_of(&GpxBeat::default()), BeatStroke::default());
+        let brushed = GpxBeat {
+            brush: GpxDirection::parse("Down"),
+            ..Default::default()
+        };
+        let stroke = stroke_of(&brushed);
+        assert_eq!(stroke.direction, BeatStrokeDirection::Down);
+        assert_eq!(stroke.value, BRUSH_STROKE_VALUE);
+        assert_eq!(GpxDirection::parse("Sideways"), None);
+    }
+
+    #[test]
+    fn slide_flags_pick_the_slide_kind() {
+        assert_eq!(slide_type_of(0x01), SlideType::ShiftSlideTo);
+        assert_eq!(slide_type_of(0x02), SlideType::LegatoSlideTo);
+        assert_eq!(slide_type_of(0x04), SlideType::OutDownwards);
+        assert_eq!(slide_type_of(0x08), SlideType::OutUpWards);
+        assert_eq!(slide_type_of(0x10), SlideType::IntoFromBelow);
+        assert_eq!(slide_type_of(0x20), SlideType::IntoFromAbove);
     }
 }
