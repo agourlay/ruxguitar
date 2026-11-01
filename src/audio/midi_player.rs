@@ -1,7 +1,7 @@
 use crate::audio::midi_builder::{
     METRONOME_KEYS, METRONOME_TRACK, METRONOME_VELOCITY, MidiBuilder,
 };
-use crate::audio::midi_event::{FIRST_TICK, MidiEventType};
+use crate::audio::midi_event::{FIRST_TICK, MidiEvent, MidiEventType};
 use crate::audio::midi_player_params::MidiPlayerParams;
 use crate::audio::midi_sequencer::{MidiSequencer, tick_increase};
 use crate::audio::playback_order::{first_playback_ticks, measure_loop_tick_range};
@@ -285,6 +285,83 @@ impl AudioPlayer {
     }
 }
 
+/// Send the events of one playback step to the synthesizer.
+fn play_events(
+    events: &[MidiEvent],
+    tick: u32,
+    synthesizer_guard: &mut Synthesizer,
+    player_params: &MidiPlayerParams,
+    current_tick: &AtomicU32,
+    beat_notify: &Notify,
+) {
+    if !events.is_empty() {
+        // debug level: runs on the real-time audio thread
+        log::debug!("---> tick {tick} ({} events)", events.len());
+    }
+    if events.iter().any(MidiEvent::is_note_event) {
+        current_tick.store(tick, Ordering::Release);
+        beat_notify.notify_one();
+    }
+    for midi_event in events {
+        // mute/solo filtering, like TuxGuitar's shouldSend: new
+        // notes and channel messages of inaudible tracks are
+        // skipped, note-offs always pass so nothing gets stuck,
+        // and the setup events at FIRST_TICK are never filtered;
+        // metronome clicks are gated solely on their toggle
+        let audible = if midi_event.track == Some(METRONOME_TRACK) {
+            player_params.metronome_enabled()
+        } else {
+            midi_event.tick == FIRST_TICK
+                || midi_event
+                    .track
+                    .is_none_or(|t| player_params.is_track_audible(usize::from(t)))
+        };
+        match midi_event.event {
+            MidiEventType::NoteOn(channel, key, velocity) => {
+                if !audible {
+                    continue;
+                }
+                log::debug!(
+                    "[{}] Note on: channel={}, key={}, velocity={}",
+                    midi_event.tick,
+                    channel,
+                    key,
+                    velocity
+                );
+                synthesizer_guard.note_on(channel, key, i32::from(velocity));
+            }
+            MidiEventType::NoteOff(channel, key) => {
+                log::debug!(
+                    "[{}] Note off: channel={}, key={}",
+                    midi_event.tick,
+                    channel,
+                    key
+                );
+                synthesizer_guard.note_off(channel, key);
+            }
+            MidiEventType::TempoChange(tempo) => {
+                // debug level: runs on the real-time audio thread
+                log::debug!("Tempo changed to {tempo}");
+                player_params.set_tempo(tempo);
+            }
+            MidiEventType::MidiMessage(channel, command, data1, data2) => {
+                if !audible {
+                    continue;
+                }
+                log::debug!(
+                    "[{}] Midi message: channel={}, command={}, data1={}, data2={}",
+                    midi_event.tick,
+                    channel,
+                    command,
+                    data1,
+                    data2
+                );
+                synthesizer_guard.process_midi_message(channel, command, data1, data2);
+            }
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AudioPlayerError {
     #[error("audio device not found")]
@@ -389,10 +466,13 @@ fn new_output_stream(
                 count_in_next_click = 0.0;
             }
             let counting_in = count_in_left > 0.0;
-            let loop_end = player_params
-                .loop_enabled()
-                .then(|| player_params.loop_end_tick());
-            if counting_in {
+            let loop_range = player_params.loop_enabled().then(|| {
+                (
+                    player_params.loop_start_tick(),
+                    player_params.loop_end_tick(),
+                )
+            });
+            let step = if counting_in {
                 if count_in_next_click <= 0.0 {
                     // same layered click as the metronome
                     for key in METRONOME_KEYS {
@@ -403,109 +483,42 @@ fn new_output_stream(
                 let ticks = tick_increase(player_params.adjusted_tempo(), elapsed_secs);
                 count_in_left -= ticks;
                 count_in_next_click -= ticks;
+                sequencer_guard.pending_step()
             } else {
-                sequencer_guard.advance(player_params.adjusted_tempo(), elapsed_secs);
-                // hold at the loop end: the events before it still play below
-                if let Some(loop_end) = loop_end {
-                    sequencer_guard.clamp_tick(loop_end.saturating_sub(1));
-                }
-            }
-            // process midi events for current tick
-            let next_events = sequencer_guard.get_next_events();
-            let exhausted = next_events.is_none();
+                sequencer_guard.step(player_params.adjusted_tempo(), elapsed_secs, loop_range)
+            };
             // the sequence is exhausted: wake the UI once to stop the transport
-            if exhausted && loop_end.is_none() && !player_params.is_finished() {
+            if step.events.is_none() && loop_range.is_none() && !player_params.is_finished() {
                 player_params.set_finished(true);
                 beat_notify.notify_one();
             }
-            if let Some(events) = next_events.filter(|_| !counting_in) {
-                let tick = sequencer_guard.get_tick();
-                let last_tick = sequencer_guard.get_last_tick();
-                if !events.is_empty() {
-                    log::debug!(
-                        "---> Increase {} ticks [{} -> {}] ({} events)",
-                        tick - last_tick,
-                        last_tick,
-                        tick,
-                        events.len()
+            if !counting_in {
+                let events = sequencer_guard.events();
+                if let Some(range) = step.events {
+                    play_events(
+                        &events[range],
+                        step.tick,
+                        &mut synthesizer_guard,
+                        &player_params,
+                        &current_tick,
+                        &beat_notify,
                     );
                 }
-                if events
-                    .iter()
-                    .any(super::midi_event::MidiEvent::is_note_event)
-                {
-                    current_tick.store(tick, Ordering::Release);
-                    beat_notify.notify_one();
+                // the loop end was crossed: the next pass starts right away
+                if let Some(range) = step.restart {
+                    synthesizer_guard.note_off_all(false);
+                    synthesizer_guard.reset_all_controllers();
+                    player_params.set_tempo(player_params.loop_start_tempo());
+                    player_params.set_finished(false);
+                    play_events(
+                        &events[range],
+                        sequencer_guard.get_tick(),
+                        &mut synthesizer_guard,
+                        &player_params,
+                        &current_tick,
+                        &beat_notify,
+                    );
                 }
-                for midi_event in events {
-                    // mute/solo filtering, like TuxGuitar's shouldSend: new
-                    // notes and channel messages of inaudible tracks are
-                    // skipped, note-offs always pass so nothing gets stuck,
-                    // and the setup events at FIRST_TICK are never filtered;
-                    // metronome clicks are gated solely on their toggle
-                    let audible = if midi_event.track == Some(METRONOME_TRACK) {
-                        player_params.metronome_enabled()
-                    } else {
-                        midi_event.tick == FIRST_TICK
-                            || midi_event
-                                .track
-                                .is_none_or(|t| player_params.is_track_audible(usize::from(t)))
-                    };
-                    match midi_event.event {
-                        MidiEventType::NoteOn(channel, key, velocity) => {
-                            if !audible {
-                                continue;
-                            }
-                            log::debug!(
-                                "[{}] Note on: channel={}, key={}, velocity={}",
-                                midi_event.tick,
-                                channel,
-                                key,
-                                velocity
-                            );
-                            synthesizer_guard.note_on(channel, key, i32::from(velocity));
-                        }
-                        MidiEventType::NoteOff(channel, key) => {
-                            log::debug!(
-                                "[{}] Note off: channel={}, key={}",
-                                midi_event.tick,
-                                channel,
-                                key
-                            );
-                            synthesizer_guard.note_off(channel, key);
-                        }
-                        MidiEventType::TempoChange(tempo) => {
-                            // debug level: runs on the real-time audio thread
-                            log::debug!("Tempo changed to {tempo}");
-                            player_params.set_tempo(tempo);
-                        }
-                        MidiEventType::MidiMessage(channel, command, data1, data2) => {
-                            if !audible {
-                                continue;
-                            }
-                            log::debug!(
-                                "[{}] Midi message: channel={}, command={}, data1={}, data2={}",
-                                midi_event.tick,
-                                channel,
-                                command,
-                                data1,
-                                data2
-                            );
-                            synthesizer_guard.process_midi_message(channel, command, data1, data2);
-                        }
-                    }
-                }
-            }
-            // every event before the loop end was sent: start the next pass
-            if !counting_in
-                && let Some(loop_end) = loop_end
-                && (exhausted || sequencer_guard.get_tick().saturating_add(1) >= loop_end)
-            {
-                sequencer_guard.set_tick(player_params.loop_start_tick());
-                synthesizer_guard.note_off_all(false);
-                synthesizer_guard.reset_all_controllers();
-                player_params.set_tempo(player_params.loop_start_tempo());
-                player_params.set_finished(false);
             }
             if render_len < frame_count {
                 // debug level: runs on the real-time audio thread
