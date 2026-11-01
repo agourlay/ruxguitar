@@ -54,6 +54,39 @@ pub struct MidiBuilder {
     events: Vec<MidiEvent>,
 }
 
+/// Where events go: the track they belong to, and the MIDI channel it plays on.
+#[derive(Debug, Clone, Copy)]
+struct Output {
+    track_id: usize,
+    channel_id: i32,
+    /// Whether the channel plays drums, which take no pitch effects.
+    percussion: bool,
+}
+
+/// When a note sounds, in ticks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Span {
+    start: u32,
+    duration: u32,
+}
+
+impl Span {
+    const fn end(self) -> u32 {
+        self.start + self.duration
+    }
+}
+
+/// A measure of a track being turned into events, and where it sits in
+/// the playback order.
+struct MeasureContext<'a> {
+    track_id: usize,
+    track: &'a Track,
+    header: &'a MeasureHeader,
+    midi_channel: &'a MidiChannel,
+    playback_order: &'a [(usize, i64)],
+    playback_index: usize,
+}
+
 impl MidiBuilder {
     pub const fn new() -> Self {
         Self { events: Vec::new() }
@@ -121,6 +154,11 @@ impl MidiBuilder {
         measure_headers: &[MeasureHeader],
         playback_order: &[(usize, i64)],
     ) {
+        let output = Output {
+            track_id: usize::from(METRONOME_TRACK),
+            channel_id: METRONOME_CHANNEL,
+            percussion: true,
+        };
         for (measure_index, tick_offset) in playback_order {
             let header = &measure_headers[*measure_index];
             let length = header.time_signature.denominator.time();
@@ -128,14 +166,11 @@ impl MidiBuilder {
             for _ in 1..=header.time_signature.numerator {
                 let tick = playback_tick(start, *tick_offset);
                 for key in METRONOME_KEYS {
-                    self.add_note(
-                        usize::from(METRONOME_TRACK),
-                        key,
-                        tick,
-                        length,
-                        METRONOME_VELOCITY,
-                        METRONOME_CHANNEL,
-                    );
+                    let span = Span {
+                        start: tick,
+                        duration: length,
+                    };
+                    self.add_note(output, key, span, METRONOME_VELOCITY);
                 }
                 start += length;
             }
@@ -154,19 +189,18 @@ impl MidiBuilder {
         // add MIDI control events for the track channel
         self.add_track_channel_midi_control(track_id, midi_channel);
 
-        let strings = &track.strings;
         let mut prev_tempo = song_tempo;
         assert_eq!(track.measures.len(), measure_headers.len());
         for (playback_index, (measure_index, tick_offset)) in playback_order.iter().enumerate() {
             let measure = &track.measures[*measure_index];
-            let measure_header = &measure_headers[*measure_index];
+            let header = &measure_headers[*measure_index];
 
             // add song info events once for all tracks
             if track_id == 0 {
                 // change tempo if necessary
-                let measure_tempo = measure_header.tempo.value;
+                let measure_tempo = header.tempo.value;
                 if measure_tempo != prev_tempo {
-                    let tick = playback_tick(measure_header.start, *tick_offset);
+                    let tick = playback_tick(header.start, *tick_offset);
                     self.add_tempo_change(tick, measure_tempo);
                     prev_tempo = measure_tempo;
                 }
@@ -174,16 +208,15 @@ impl MidiBuilder {
 
             // record event count to shift new events by tick_offset
             let event_start = self.events.len();
-            self.add_beat_events(
+            let context = MeasureContext {
                 track_id,
                 track,
-                measure,
-                measure_header,
+                header,
                 midi_channel,
-                strings,
                 playback_order,
                 playback_index,
-            );
+            };
+            self.add_beat_events(&context, measure);
             // shift events generated for this measure by tick_offset
             if *tick_offset != 0 {
                 for event in &mut self.events[event_start..] {
@@ -193,18 +226,7 @@ impl MidiBuilder {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn add_beat_events(
-        &mut self,
-        track_id: usize,
-        track: &Track,
-        measure: &Measure,
-        measure_header: &MeasureHeader,
-        midi_channel: &MidiChannel,
-        strings: &[(i32, i32)],
-        playback_order: &[(usize, i64)],
-        playback_index: usize,
-    ) {
+    fn add_beat_events(&mut self, context: &MeasureContext, measure: &Measure) {
         for (voice_id, voice) in measure.voices.iter().enumerate() {
             let beats = &voice.beats;
             for (beat_id, beat) in beats.iter().enumerate() {
@@ -219,7 +241,8 @@ impl MidiBuilder {
                 };
                 let next_beat = beats.get(beat_id + 1).or_else(|| {
                     // check the same voice in the next measure if it was the last beat
-                    track
+                    context
+                        .track
                         .measures
                         .get(voice.measure_index as usize + 1)
                         .and_then(|next_measure| next_measure.voices.get(voice_id))
@@ -227,43 +250,36 @@ impl MidiBuilder {
                 });
                 // apply triplet feel adjustment to beat timing
                 let triplet_adj =
-                    apply_triplet_feel(beat, previous_beat, next_beat, measure_header.triplet_feel);
-                self.add_notes(
-                    track_id,
-                    track,
-                    playback_order,
-                    playback_index,
-                    voice_id,
-                    measure_header,
-                    midi_channel,
-                    beat_id,
-                    beat,
-                    strings,
-                    triplet_adj,
-                );
+                    apply_triplet_feel(beat, previous_beat, next_beat, context.header.triplet_feel);
+                self.add_notes(context, voice_id, beat_id, beat, triplet_adj);
             }
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn add_notes(
         &mut self,
-        track_id: usize,
-        track: &Track,
-        playback_order: &[(usize, i64)],
-        playback_index: usize,
+        context: &MeasureContext,
         voice_id: usize,
-        measure_header: &MeasureHeader,
-        midi_channel: &MidiChannel,
         beat_id: usize,
         beat: &Beat,
-        strings: &[(i32, i32)],
         triplet_adj: TripletAdjustment,
     ) {
+        let MeasureContext {
+            track_id,
+            track,
+            header,
+            midi_channel,
+            playback_order,
+            playback_index,
+        } = *context;
         // GP files define an effect channel per track, but TuxGuitar doesn't use it for playback.
-        let channel_id = midi_channel.channel_id;
-        let tempo = measure_header.tempo.value;
-        let track_offset = track.offset;
+        let output = Output {
+            track_id,
+            channel_id: i32::from(midi_channel.channel_id),
+            percussion: midi_channel.is_percussion(),
+        };
+        let strings = &track.strings;
+        let tempo = header.tempo.value;
         let beat_duration = triplet_adj.duration;
         let stroke = &beat.effect.stroke;
         let stroke_increment = stroke.increment_for_duration(beat_duration);
@@ -281,9 +297,6 @@ impl MidiBuilder {
                     continue;
                 };
 
-                // note starts on beat (adjusted for triplet feel)
-                let mut note_start = triplet_adj.start;
-
                 // apply effects on duration
                 let duration = apply_duration_effect(
                     track,
@@ -292,28 +305,32 @@ impl MidiBuilder {
                     voice_id,
                     beat_id,
                     note,
-                    measure_header.repeat_close > 0,
+                    header.repeat_close > 0,
                     tempo,
                     beat_duration,
                 );
-                // degenerate durations (e.g. corrupt tuplet ratios) would emit
-                // a NoteOn without NoteOff
-                let mut duration = duration.max(1);
+                // note starts on beat (adjusted for triplet feel); degenerate
+                // durations (e.g. corrupt tuplet ratios) would emit a NoteOn
+                // without NoteOff
+                let mut span = Span {
+                    start: triplet_adj.start,
+                    duration: duration.max(1),
+                };
 
                 // apply stroke effect: stagger note start times across strings
                 let stroke_offset = stroke_offsets[note.string as usize - 1];
                 if stroke_offset > 0 {
-                    note_start += stroke_offset;
+                    span.start += stroke_offset;
                     // like TuxGuitar, keep the full duration when the offset would
                     // consume it: a zero duration emits a NoteOn without NoteOff
-                    if duration > stroke_offset {
-                        duration -= stroke_offset;
+                    if span.duration > stroke_offset {
+                        span.duration -= stroke_offset;
                     }
                 }
 
                 // previous note played on the same string (crossing barlines
                 // and repeats), for the hammer-on velocity attenuation
-                let previous_note = if midi_channel.is_percussion() {
+                let previous_note = if output.percussion {
                     None
                 } else {
                     previous_note_on_string(
@@ -351,156 +368,119 @@ impl MidiBuilder {
                 let velocity = apply_velocity_effect(note, previous_note, midi_channel);
 
                 // apply effects on key
+                let base_key = track.offset + string_tuning;
                 if let Some(key) = self.add_key_effect(
-                    track_id,
-                    track_offset,
-                    string_tuning,
-                    &mut note_start,
-                    &mut duration,
+                    output,
+                    base_key,
+                    &mut span,
                     tempo,
                     note,
                     slide_target,
                     velocity,
-                    midi_channel,
                 ) {
-                    self.add_note(
-                        track_id,
-                        key,
-                        note_start,
-                        duration,
-                        velocity,
-                        i32::from(channel_id),
-                    );
+                    self.add_note(output, key, span, velocity);
                 }
             }
         }
     }
 
     /// Play the effects that change a note's key or timing, and the extra
-    /// notes they bring. Returns the key the note itself sounds at, or `None`
-    /// when an effect already played it as repeated notes.
+    /// notes they bring. `base_key` is the key of the open string. Returns
+    /// the key the note itself sounds at, or `None` when an effect already
+    /// played it as repeated notes.
     #[allow(clippy::too_many_arguments)]
     fn add_key_effect(
         &mut self,
-        track_id: usize,
-        track_offset: i32,
-        string_tuning: i32,
-        note_start: &mut u32,
-        duration: &mut u32,
+        output: Output,
+        base_key: i32,
+        span: &mut Span,
         tempo: u32,
         note: &Note,
         slide_target: Option<(u32, i16)>,
         velocity: i16,
-        midi_channel: &MidiChannel,
     ) -> Option<i32> {
-        let channel_id = i32::from(midi_channel.channel_id);
-        let is_percussion = midi_channel.is_percussion();
-        let fret_key = |fret: i32| track_offset + fret + string_tuning;
+        let fret_key = |fret: i8| base_key + i32::from(fret);
         // the fretted key, before any effect
-        let initial_key = fret_key(i32::from(note.value));
+        let initial_key = base_key + i32::from(note.value);
 
         if note.effect.fade_in {
-            self.add_fade_in(track_id, channel_id, *note_start, *duration);
+            self.add_fade_in(output, *span);
         }
 
         if let Some(grace) = &note.effect.grace {
-            let grace_key = fret_key(i32::from(grace.fret));
-            self.add_grace_note(
-                track_id, channel_id, grace, grace_key, tempo, note_start, duration,
-            );
+            self.add_grace_note(output, grace, fret_key(grace.fret), tempo, span);
         }
 
         // a trill or tremolo picking plays the note itself, as repeated notes
         if let Some(trill) = &note.effect.trill
-            && !is_percussion
+            && !output.percussion
         {
-            let trill_key = fret_key(i32::from(trill.fret));
             // the real fretted note sounds first, then alternates with the trill fret
-            self.add_repeated_notes(
-                track_id,
-                channel_id,
-                [initial_key, trill_key],
-                trill.duration.time(),
-                *note_start,
-                *duration,
-                velocity,
-            );
+            let keys = [initial_key, fret_key(trill.fret)];
+            self.add_repeated_notes(output, keys, trill.duration.time(), *span, velocity);
             return None;
         }
         if let Some(tremolo_picking) = &note.effect.tremolo_picking {
+            let keys = [initial_key, initial_key];
             self.add_repeated_notes(
-                track_id,
-                channel_id,
-                [initial_key, initial_key],
+                output,
+                keys,
                 tremolo_picking.duration.time(),
-                *note_start,
-                *duration,
+                *span,
                 velocity,
             );
             return None;
         }
 
-        if is_percussion {
+        if output.percussion {
             return Some(initial_key);
         }
 
         // pitch-modulating effects share the channel pitch wheel and are
         // mutually exclusive: bend > tremolo bar > slide > vibrato
         if let Some(bend_effect) = &note.effect.bend {
-            self.add_bend(track_id, *note_start, *duration, channel_id, bend_effect);
+            self.add_bend(output, *span, bend_effect);
         } else if let Some(tremolo_bar) = &note.effect.tremolo_bar {
-            self.add_tremolo_bar(track_id, *note_start, *duration, channel_id, tremolo_bar);
+            self.add_tremolo_bar(output, *span, tremolo_bar);
         } else if note.effect.slide.is_some() {
             // the target must lie after the (triplet-adjusted) note start
-            if let Some(target) = slide_target.filter(|(tick, _)| *tick > *note_start) {
-                self.add_slide(track_id, channel_id, *note_start, note.value, target);
+            if let Some(target) = slide_target.filter(|(tick, _)| *tick > span.start) {
+                self.add_slide(output, span.start, note.value, target);
             }
         } else if note.effect.vibrato {
-            self.add_vibrato(track_id, *note_start, *duration, channel_id);
+            self.add_vibrato(output, *span);
         }
 
         let Some(harmonic) = &note.effect.harmonic else {
             return Some(initial_key);
         };
-        Some(self.add_harmonic(
-            track_id,
-            channel_id,
-            harmonic,
-            note.value,
-            initial_key,
-            *note_start,
-            *duration,
-            velocity,
-        ))
+        Some(self.add_harmonic(output, harmonic, note.value, initial_key, *span, velocity))
     }
 
     /// Raise the channel expression over the note, then restore it.
-    fn add_fade_in(&mut self, track_id: usize, channel_id: i32, start: u32, duration: u32) {
+    fn add_fade_in(&mut self, output: Output, span: Span) {
         let mut expression = 31;
         let expression_increment = 1;
-        let mut tick = start;
-        let tick_increment = duration / ((127 - expression) / expression_increment);
-        while tick < (start + duration) && expression < 127 {
-            self.add_control_change(tick, track_id, channel_id, CC_EXPRESSION, expression as i32);
+        let mut tick = span.start;
+        let tick_increment = span.duration / ((127 - expression) / expression_increment);
+        while tick < span.end() && expression < 127 {
+            self.add_control_change(output, tick, CC_EXPRESSION, expression as i32);
             tick += tick_increment;
             expression += expression_increment;
         }
         // normalize the expression
-        self.add_control_change(start + duration, track_id, channel_id, CC_EXPRESSION, 127);
+        self.add_control_change(output, span.end(), CC_EXPRESSION, 127);
     }
 
     /// Play the grace note before the note. A grace note on the beat, or one
     /// with too little room before the note, delays the note instead.
-    #[allow(clippy::too_many_arguments)]
     fn add_grace_note(
         &mut self,
-        track_id: usize,
-        channel_id: i32,
+        output: Output,
         grace: &GraceEffect,
         grace_key: i32,
         tempo: u32,
-        note_start: &mut u32,
-        duration: &mut u32,
+        span: &mut Span,
     ) {
         let grace_length = grace.duration_time() as u32;
         let grace_duration = if grace.is_dead {
@@ -508,42 +488,40 @@ impl MidiBuilder {
         } else {
             grace_length
         };
-        let on_beat_duration = *note_start - grace_length;
+        let on_beat_duration = span.start - grace_length;
         if grace.is_on_beat || on_beat_duration < QUARTER_TIME {
-            *note_start = note_start.saturating_add(grace_length);
-            *duration = duration.saturating_sub(grace_length);
+            span.start = span.start.saturating_add(grace_length);
+            span.duration = span.duration.saturating_sub(grace_length);
         }
-        self.add_note(
-            track_id,
-            grace_key,
-            *note_start - grace_length,
-            grace_duration,
-            grace.velocity,
-            channel_id,
-        );
+        let grace_span = Span {
+            start: span.start - grace_length,
+            duration: grace_duration,
+        };
+        self.add_note(output, grace_key, grace_span, grace.velocity);
     }
 
     /// Fill the note's span with notes of `step` ticks, alternating between
     /// the two keys. Like TuxGuitar, a span too short plays nothing.
-    #[allow(clippy::too_many_arguments)]
     fn add_repeated_notes(
         &mut self,
-        track_id: usize,
-        channel_id: i32,
+        output: Output,
         keys: [i32; 2],
         mut step: u32,
-        start: u32,
-        duration: u32,
+        span: Span,
         velocity: i16,
     ) {
-        let tick_limit = start + duration;
-        let mut tick = start;
+        let tick_limit = span.end();
+        let mut tick = span.start;
         let mut key_index = 0;
         while tick + 10 < tick_limit {
             if tick + step >= tick_limit {
                 step = tick_limit - tick - 1;
             }
-            self.add_note(track_id, keys[key_index], tick, step, velocity, channel_id);
+            let note = Span {
+                start: tick,
+                duration: step,
+            };
+            self.add_note(output, keys[key_index], note, velocity);
             key_index = 1 - key_index;
             tick += step;
         }
@@ -552,8 +530,7 @@ impl MidiBuilder {
     /// Glide the pitch wheel from the note to the next one on its string.
     fn add_slide(
         &mut self,
-        track_id: usize,
-        channel_id: i32,
+        output: Output,
         start: u32,
         from_value: i16,
         (target_tick, target_value): (u32, i16),
@@ -565,48 +542,45 @@ impl MidiBuilder {
             let tone = ((length / points) * p_offset * distance) as f32 / length as f32;
             let bend = DEFAULT_BEND as i32 + (tone * DEFAULT_BEND_SEMI_TONE * 2.0) as i32;
             let bend_tick = start as i32 + (length / points) * p_offset;
-            self.add_pitch_bend(bend_tick as u32, track_id, channel_id, bend);
+            self.add_pitch_bend(output, bend_tick as u32, bend);
         }
         // normalise the bend
-        self.add_pitch_bend(target_tick, track_id, channel_id, DEFAULT_BEND as i32);
+        self.add_pitch_bend(output, target_tick, DEFAULT_BEND as i32);
     }
 
     /// Play a harmonic: its octave below, softer, and for a semi harmonic the
     /// fretted note too. Returns the key the harmonic itself sounds at.
-    #[allow(clippy::too_many_arguments)]
     fn add_harmonic(
         &mut self,
-        track_id: usize,
-        channel_id: i32,
+        output: Output,
         harmonic: &HarmonicEffect,
         note_value: i16,
         initial_key: i32,
-        start: u32,
-        duration: u32,
+        span: Span,
         velocity: i16,
     ) -> i32 {
         if harmonic.kind == HarmonicType::Semi {
             let velocity = MIN_VELOCITY.max(velocity - VELOCITY_INCREMENT * 3);
-            self.add_note(track_id, initial_key, start, duration, velocity, channel_id);
+            self.add_note(output, initial_key, span, velocity);
         }
         let key = harmonic_key(harmonic, note_value, initial_key);
         if key - 12 > 0 {
             let velocity = MIN_VELOCITY.max(velocity - VELOCITY_INCREMENT * 4);
-            self.add_note(track_id, key - 12, start, duration, velocity, channel_id);
+            self.add_note(output, key - 12, span, velocity);
         }
         key
     }
 
-    fn add_vibrato(&mut self, track_id: usize, start: u32, duration: u32, channel_id: i32) {
-        let end = start + duration;
-        let mut next_start = start;
+    fn add_vibrato(&mut self, output: Output, span: Span) {
+        let end = span.end();
+        let mut next_start = span.start;
         while next_start < end {
             next_start = if next_start + 160 > end {
                 end
             } else {
                 next_start + 160
             };
-            self.add_pitch_bend(next_start, track_id, channel_id, DEFAULT_BEND as i32);
+            self.add_pitch_bend(output, next_start, DEFAULT_BEND as i32);
 
             next_start = if next_start + 160 > end {
                 end
@@ -614,59 +588,48 @@ impl MidiBuilder {
                 next_start + 160
             };
             let value = DEFAULT_BEND + DEFAULT_BEND_SEMI_TONE / 2.0;
-            self.add_pitch_bend(next_start, track_id, channel_id, value as i32);
+            self.add_pitch_bend(output, next_start, value as i32);
         }
-        self.add_pitch_bend(next_start, track_id, channel_id, DEFAULT_BEND as i32);
+        self.add_pitch_bend(output, next_start, DEFAULT_BEND as i32);
     }
 
-    fn add_bend(
-        &mut self,
-        track_id: usize,
-        start: u32,
-        duration: u32,
-        channel_id: i32,
-        bend: &BendEffect,
-    ) {
+    fn add_bend(&mut self, output: Output, span: Span, bend: &BendEffect) {
         for (point_id, point) in bend.points.iter().enumerate() {
             let value =
                 DEFAULT_BEND + (f32::from(point.value) * DEFAULT_BEND_SEMI_TONE / SEMITONE_LENGTH);
             let value = value.clamp(0.0, 127.0) as i32;
-            let bend_start = start + point.get_time(duration);
-            self.add_pitch_bend(bend_start, track_id, channel_id, value);
+            let bend_start = span.start + point.get_time(span.duration);
+            self.add_pitch_bend(output, bend_start, value);
 
             // look ahead to next bend point
             if let Some(next_point) = bend.points.get(point_id + 1) {
                 let next_value = DEFAULT_BEND
                     + (f32::from(next_point.value) * DEFAULT_BEND_SEMI_TONE / SEMITONE_LENGTH);
                 self.process_next_bend_values(
-                    track_id,
-                    channel_id,
+                    output,
                     value,
                     next_value as i32,
                     bend_start,
-                    start,
+                    span,
                     next_point,
-                    duration,
                 );
             }
         }
-        self.add_pitch_bend(start + duration, track_id, channel_id, DEFAULT_BEND as i32);
+        self.add_pitch_bend(output, span.end(), DEFAULT_BEND as i32);
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Step the pitch wheel one value at a time from a bend point to the next.
     fn process_next_bend_values(
         &mut self,
-        track_id: usize,
-        channel_id: i32,
+        output: Output,
         mut value: i32,
         next_value: i32,
         mut bend_start: u32,
-        start: u32,
+        span: Span,
         next_point: &BendPoint,
-        duration: u32,
     ) {
         if value != next_value {
-            let next_bend_start = start + next_point.get_time(duration);
+            let next_bend_start = span.start + next_point.get_time(span.duration);
             let width = (next_bend_start - bend_start) as f32 / (next_value - value).abs() as f32;
             let width = width as u32;
             // ascending
@@ -676,7 +639,7 @@ impl MidiBuilder {
                     bend_start += width;
                     // clamp to 127
                     let value = value.min(127);
-                    self.add_pitch_bend(bend_start, track_id, channel_id, value);
+                    self.add_pitch_bend(output, bend_start, value);
                 }
             }
             // descending
@@ -686,62 +649,50 @@ impl MidiBuilder {
                     bend_start += width;
                     // clamp to 0
                     let value = value.max(0);
-                    self.add_pitch_bend(bend_start, track_id, channel_id, value);
+                    self.add_pitch_bend(output, bend_start, value);
                 }
             }
         }
     }
 
-    fn add_tremolo_bar(
-        &mut self,
-        track_id: usize,
-        start: u32,
-        duration: u32,
-        channel_id: i32,
-        tremolo_bar: &TremoloBarEffect,
-    ) {
+    fn add_tremolo_bar(&mut self, output: Output, span: Span, tremolo_bar: &TremoloBarEffect) {
         for (point_id, point) in tremolo_bar.points.iter().enumerate() {
             // truncate the offset before adding, like TuxGuitar: adding first
             // rounds negative dips one unit lower
             let value = DEFAULT_BEND as i32
                 + (f32::from(point.value) * DEFAULT_BEND_SEMI_TONE * 2.0) as i32;
-            let bend_start = start + point.get_time(duration);
-            self.add_pitch_bend(bend_start, track_id, channel_id, value);
+            let bend_start = span.start + point.get_time(span.duration);
+            self.add_pitch_bend(output, bend_start, value);
 
             // look ahead to next bend point
             if let Some(next_point) = tremolo_bar.points.get(point_id + 1) {
                 let next_value = DEFAULT_BEND as i32
                     + (f32::from(next_point.value) * DEFAULT_BEND_SEMI_TONE * 2.0) as i32;
                 self.process_next_bend_values(
-                    track_id, channel_id, value, next_value, bend_start, start, next_point,
-                    duration,
+                    output, value, next_value, bend_start, span, next_point,
                 );
             }
         }
-        self.add_pitch_bend(start + duration, track_id, channel_id, DEFAULT_BEND as i32);
+        self.add_pitch_bend(output, span.end(), DEFAULT_BEND as i32);
     }
 
-    fn add_note(
-        &mut self,
-        track_id: usize,
-        key: i32,
-        start: u32,
-        duration: u32,
-        velocity: i16,
-        channel: i32,
-    ) {
+    fn add_note(&mut self, output: Output, key: i32, span: Span, velocity: i16) {
         // clamp like TuxGuitar: harmonics can push the key past the MIDI
         // range, and the synthesizer silently drops out-of-range keys
         let key = key.clamp(0, 127);
         self.add_event(MidiEvent::new_note_on(
-            start, track_id, key, velocity, channel,
+            span.start,
+            output.track_id,
+            key,
+            velocity,
+            output.channel_id,
         ));
-        if duration > 0 {
+        if span.duration > 0 {
             self.add_event(MidiEvent::new_note_off(
-                start + duration,
-                track_id,
+                span.end(),
+                output.track_id,
                 key,
-                channel,
+                output.channel_id,
             ));
         }
     }
@@ -751,20 +702,18 @@ impl MidiBuilder {
     }
 
     /// Emit a control change (0xB0) for the given controller number.
-    fn add_control_change(
-        &mut self,
-        tick: u32,
-        track_id: usize,
-        channel: i32,
-        controller: i32,
-        value: i32,
-    ) {
+    fn add_control_change(&mut self, output: Output, tick: u32, controller: i32, value: i32) {
         self.add_event(MidiEvent::new_midi_message(
-            tick, track_id, channel, 0xB0, controller, value,
+            tick,
+            output.track_id,
+            output.channel_id,
+            0xB0,
+            controller,
+            value,
         ));
     }
 
-    fn add_pitch_bend(&mut self, tick: u32, track_id: usize, channel: i32, value: i32) {
+    fn add_pitch_bend(&mut self, output: Output, tick: u32, value: i32) {
         // clamp to a valid MIDI data byte, like TuxGuitar's fix():
         // steep slides can otherwise overshoot the wheel range
         let value = value.clamp(0, 127);
@@ -776,34 +725,48 @@ impl MidiBuilder {
         let data1 = midi_value & 0x7F;
         let data2 = midi_value >> 7;
         self.add_event(MidiEvent::new_midi_message(
-            tick, track_id, channel, 0xE0, data1, data2,
+            tick,
+            output.track_id,
+            output.channel_id,
+            0xE0,
+            data1,
+            data2,
         ));
     }
 
-    fn add_program_selection(&mut self, tick: u32, track_id: usize, channel: i32, program: i32) {
+    fn add_program_selection(&mut self, output: Output, tick: u32, program: i32) {
         self.add_event(MidiEvent::new_midi_message(
-            tick, track_id, channel, 0xC0, program, 0,
+            tick,
+            output.track_id,
+            output.channel_id,
+            0xC0,
+            program,
+            0,
         ));
     }
 
     /// Set the pitch bend range to 12 semitones through RPN 0/0.
-    fn add_pitch_bend_range(&mut self, tick: u32, track_id: usize, channel: i32) {
+    fn add_pitch_bend_range(&mut self, output: Output, tick: u32) {
         // RPN MSB: select RPN group (usually 0)
-        self.add_control_change(tick, track_id, channel, 0x65, 0);
+        self.add_control_change(output, tick, 0x65, 0);
         // RPN LSB: select RPN 0/0 (pitch bend sensitivity)
-        self.add_control_change(tick, track_id, channel, 0x64, 0);
+        self.add_control_change(output, tick, 0x64, 0);
         // Data entry MSB: the range in semitones
-        self.add_control_change(tick, track_id, channel, 0x06, 12);
+        self.add_control_change(output, tick, 0x06, 12);
         // Data entry LSB: cents (usually 0)
-        self.add_control_change(tick, track_id, channel, 0x26, 0);
+        self.add_control_change(output, tick, 0x26, 0);
     }
 
     fn add_track_channel_midi_control(&mut self, track_id: usize, midi_channel: &MidiChannel) {
         // publish MIDI control messages for the track channel at the start
         let tick = FIRST_TICK;
-        let channel = i32::from(midi_channel.channel_id);
+        let output = Output {
+            track_id,
+            channel_id: i32::from(midi_channel.channel_id),
+            percussion: midi_channel.is_percussion(),
+        };
         let mut control = |controller, value| {
-            self.add_control_change(tick, track_id, channel, controller, value);
+            self.add_control_change(output, tick, controller, value);
         };
         control(CC_VOLUME, to_channel_short(midi_channel.volume));
         control(CC_PAN, to_channel_short(midi_channel.balance));
@@ -813,8 +776,8 @@ impl MidiBuilder {
         control(CC_PHASER, to_channel_short(midi_channel.phaser));
         control(CC_TREMOLO, to_channel_short(midi_channel.tremolo));
         control(CC_BANK_SELECT, i32::from(midi_channel.bank));
-        self.add_program_selection(tick, track_id, channel, midi_channel.instrument);
-        self.add_pitch_bend_range(tick, track_id, channel);
+        self.add_program_selection(output, tick, midi_channel.instrument);
+        self.add_pitch_bend_range(output, tick);
     }
 
     fn add_event(&mut self, event: MidiEvent) {
@@ -857,8 +820,15 @@ mod tests {
     use crate::audio::midi_event::MidiEventType;
     use crate::parser::song_parser::DEFAULT_VELOCITY;
 
-    const TRACK: usize = 0;
-    const CHANNEL: i32 = 0;
+    const OUTPUT: Output = Output {
+        track_id: 0,
+        channel_id: 0,
+        percussion: false,
+    };
+
+    const fn span(start: u32, duration: u32) -> Span {
+        Span { start, duration }
+    }
 
     fn harmonic(kind: HarmonicType) -> HarmonicEffect {
         HarmonicEffect {
@@ -933,13 +903,11 @@ mod tests {
     fn a_semi_harmonic_also_plays_the_fretted_note() {
         let mut builder = MidiBuilder::new();
         let key = builder.add_harmonic(
-            TRACK,
-            CHANNEL,
+            OUTPUT,
             &harmonic(HarmonicType::Semi),
             2,
             42,
-            0,
-            100,
+            span(0, 100),
             DEFAULT_VELOCITY,
         );
         assert_eq!(key, 54);
@@ -950,7 +918,7 @@ mod tests {
     #[test]
     fn repeated_notes_alternate_and_stop_at_the_note_end() {
         let mut builder = MidiBuilder::new();
-        builder.add_repeated_notes(TRACK, CHANNEL, [40, 42], 100, 100, 400, DEFAULT_VELOCITY);
+        builder.add_repeated_notes(OUTPUT, [40, 42], 100, span(100, 400), DEFAULT_VELOCITY);
         assert_eq!(
             notes_played(&builder.events),
             [
@@ -965,7 +933,7 @@ mod tests {
     #[test]
     fn repeated_notes_need_room_to_play() {
         let mut builder = MidiBuilder::new();
-        builder.add_repeated_notes(TRACK, CHANNEL, [40, 40], 100, 100, 10, DEFAULT_VELOCITY);
+        builder.add_repeated_notes(OUTPUT, [40, 40], 100, span(100, 10), DEFAULT_VELOCITY);
         assert!(builder.events.is_empty());
     }
 
@@ -977,12 +945,10 @@ mod tests {
             ..Default::default()
         };
         let length = grace.duration_time() as u32;
-        let mut start = QUARTER_TIME * 4;
-        let mut duration = QUARTER_TIME;
+        let mut note = span(QUARTER_TIME * 4, QUARTER_TIME);
         let mut builder = MidiBuilder::new();
-        builder.add_grace_note(TRACK, CHANNEL, &grace, 44, 120, &mut start, &mut duration);
-        assert_eq!(start, QUARTER_TIME * 4 + length);
-        assert_eq!(duration, QUARTER_TIME - length);
+        builder.add_grace_note(OUTPUT, &grace, 44, 120, &mut note);
+        assert_eq!(note, span(QUARTER_TIME * 4 + length, QUARTER_TIME - length));
         assert_eq!(
             notes_played(&builder.events),
             [(QUARTER_TIME * 4, 44, length)]
@@ -996,11 +962,10 @@ mod tests {
             ..Default::default()
         };
         let length = grace.duration_time() as u32;
-        let mut start = QUARTER_TIME * 4;
-        let mut duration = QUARTER_TIME;
+        let mut note = span(QUARTER_TIME * 4, QUARTER_TIME);
         let mut builder = MidiBuilder::new();
-        builder.add_grace_note(TRACK, CHANNEL, &grace, 44, 120, &mut start, &mut duration);
-        assert_eq!((start, duration), (QUARTER_TIME * 4, QUARTER_TIME));
+        builder.add_grace_note(OUTPUT, &grace, 44, 120, &mut note);
+        assert_eq!(note, span(QUARTER_TIME * 4, QUARTER_TIME));
         assert_eq!(
             notes_played(&builder.events),
             [(QUARTER_TIME * 4 - length, 44, length)]
@@ -1010,7 +975,7 @@ mod tests {
     #[test]
     fn a_fade_in_ends_at_full_expression() {
         let mut builder = MidiBuilder::new();
-        builder.add_fade_in(TRACK, CHANNEL, 0, QUARTER_TIME);
+        builder.add_fade_in(OUTPUT, span(0, QUARTER_TIME));
         let expressions: Vec<(u32, i32)> = builder
             .events
             .iter()
@@ -1029,7 +994,7 @@ mod tests {
     #[test]
     fn a_slide_glides_to_the_target_then_resets_the_wheel() {
         let mut builder = MidiBuilder::new();
-        builder.add_slide(TRACK, CHANNEL, 0, 5, (QUARTER_TIME, 7));
+        builder.add_slide(OUTPUT, 0, 5, (QUARTER_TIME, 7));
         let bends = pitch_bends(&builder.events);
         // a point every 32nd note, ending two semitones up before the reset
         assert_eq!(bends.len(), 9);
