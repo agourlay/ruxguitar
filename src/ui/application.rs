@@ -79,6 +79,25 @@ enum SessionRestore {
     OnLayout(SessionState),
 }
 
+impl SessionRestore {
+    /// Take the session waiting for its file to load, leaving any other.
+    fn take_on_load(slot: &mut Option<Self>) -> Option<SessionState> {
+        match slot.take_if(|restore| matches!(restore, Self::OnLoad(_))) {
+            Some(Self::OnLoad(session)) => Some(session),
+            _ => None,
+        }
+    }
+
+    /// Take the session waiting for the layout, leaving any other: a
+    /// layout pass that runs while the file still loads must not drop it.
+    fn take_on_layout(slot: &mut Option<Self>) -> Option<SessionState> {
+        match slot.take_if(|restore| matches!(restore, Self::OnLayout(_))) {
+            Some(Self::OnLayout(session)) => Some(session),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     OpenFileDialog,
@@ -334,13 +353,7 @@ impl RuxApplication {
         self.audio_player = None;
         // a startup restore only applies to the file it reopened,
         // whether or not that load succeeds
-        let restore_session = match self.session_restore.take() {
-            Some(SessionRestore::OnLoad(session)) => Some(session),
-            other => {
-                self.session_restore = other;
-                None
-            }
-        };
+        let restore_session = SessionRestore::take_on_load(&mut self.session_restore);
         let (contents, parent_folder, file_name, tab_path) = match result {
             Ok(file) => file,
             Err(err) => {
@@ -648,7 +661,7 @@ impl RuxApplication {
                     );
                 }
                 if tablature_container_size.width > 0.0
-                    && let Some(SessionRestore::OnLayout(session)) = self.session_restore.take()
+                    && let Some(session) = SessionRestore::take_on_layout(&mut self.session_restore)
                 {
                     return self.apply_session_restore(&session);
                 }
@@ -722,4 +735,26 @@ fn resolve_theme(choice: Option<ThemeChoice>) -> Option<Theme> {
     choice
         .map(Theme::from)
         .or_else(|| cfg!(target_os = "linux").then_some(Theme::Dark))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_layout_pass_while_loading_keeps_the_startup_restore() {
+        let mut slot = Some(SessionRestore::OnLoad(SessionState::default()));
+        assert!(SessionRestore::take_on_layout(&mut slot).is_none());
+        assert!(matches!(slot, Some(SessionRestore::OnLoad(_))));
+        assert!(SessionRestore::take_on_load(&mut slot).is_some());
+        assert!(slot.is_none());
+    }
+
+    #[test]
+    fn a_load_keeps_a_restore_waiting_for_the_layout() {
+        let mut slot = Some(SessionRestore::OnLayout(SessionState::default()));
+        assert!(SessionRestore::take_on_load(&mut slot).is_none());
+        assert!(SessionRestore::take_on_layout(&mut slot).is_some());
+        assert!(slot.is_none());
+    }
 }
