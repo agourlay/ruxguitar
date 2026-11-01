@@ -1,7 +1,7 @@
 use crate::audio::playback_order::playback_tick;
 use crate::parser::song_parser::Song;
 use crate::ui::application::Message;
-use crate::ui::canvas_measure::{CanvasMeasure, RowSpacing};
+use crate::ui::measure::{CanvasMeasure, RowSpacing};
 use iced::widget::{Id, Row, column, scrollable};
 use iced::{Element, Length};
 use std::collections::BTreeMap;

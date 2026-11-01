@@ -1,6 +1,6 @@
 pub mod application;
-mod canvas_measure;
 mod icons;
+mod measure;
 mod picker;
 mod tablature;
 mod tuning;
