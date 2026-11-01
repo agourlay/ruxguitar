@@ -333,56 +333,9 @@ pub fn parse_beat_effects<'a>(
         log::debug!("Parsing beat effects");
         let mut i = i;
 
-        // GP3 stores beat effects in a single flags byte and places harmonics here
-        // (instead of at the note level like GP4+).
+        // GP3 stores beat effects in a single flags byte
         if version == GpVersion::GP3 {
-            let (inner, flags) = parse_u8(i)?;
-            i = inner;
-            note_effect.vibrato = (flags & 0x01) != 0 || (flags & 0x02) != 0;
-            note_effect.fade_in = (flags & 0x10) != 0;
-
-            if flags & 0x20 != 0 {
-                let (inner, effect_type) = parse_u8(i)?;
-                i = inner;
-                if effect_type == 0 {
-                    let (inner, tremolo_bar) = parse_tremolo_bar_gp3(i)?;
-                    i = inner;
-                    note_effect.tremolo_bar = Some(tremolo_bar);
-                } else {
-                    note_effect.slap = match effect_type {
-                        1 => SlapEffect::Tapping,
-                        2 => SlapEffect::Slapping,
-                        3 => SlapEffect::Popping,
-                        _ => SlapEffect::None,
-                    };
-                    i = skip(i, 4); // trailing int value
-                }
-            }
-
-            if flags & 0x40 != 0 {
-                // GP3 stores the down stroke first, then the up stroke.
-                let (inner, (stroke_down, stroke_up)) = (parse_i8, parse_i8).parse(i)?;
-                i = inner;
-                if stroke_down > 0 {
-                    beat.effect.stroke.value = to_stroke_value(stroke_down);
-                    beat.effect.stroke.direction = BeatStrokeDirection::Down;
-                } else if stroke_up > 0 {
-                    beat.effect.stroke.value = to_stroke_value(stroke_up);
-                    beat.effect.stroke.direction = BeatStrokeDirection::Up;
-                }
-            }
-
-            if flags & 0x04 != 0 {
-                note_effect.harmonic = Some(HarmonicEffect::default()); // natural
-            }
-            if flags & 0x08 != 0 {
-                note_effect.harmonic = Some(HarmonicEffect {
-                    kind: HarmonicType::Artificial,
-                    ..Default::default()
-                });
-            }
-
-            return Ok((i, ()));
+            return parse_gp3_beat_effects(i, beat, note_effect);
         }
 
         let (inner, (flags1, flags2)) = (parse_u8, parse_u8).parse(i)?;
@@ -395,12 +348,7 @@ pub fn parse_beat_effects<'a>(
             let (inner, effect) = parse_u8(i)?;
             i = inner;
             log::debug!("Parsing tapping effect {effect}");
-            note_effect.slap = match effect {
-                1 => SlapEffect::Tapping,
-                2 => SlapEffect::Slapping,
-                3 => SlapEffect::Popping,
-                _ => SlapEffect::None,
-            };
+            note_effect.slap = slap_effect(effect);
         }
 
         if flags2 & 0x04 != 0 {
@@ -442,6 +390,65 @@ pub fn parse_beat_effects<'a>(
         }
 
         Ok((i, ()))
+    }
+}
+
+/// GP3 beat effects: one flags byte, and the harmonics GP4 moved to the notes.
+fn parse_gp3_beat_effects<'a>(
+    mut i: &'a [u8],
+    beat: &mut Beat,
+    note_effect: &mut NoteEffect,
+) -> IResult<&'a [u8], ()> {
+    let (inner, flags) = parse_u8(i)?;
+    i = inner;
+    note_effect.vibrato = (flags & 0x01) != 0 || (flags & 0x02) != 0;
+    note_effect.fade_in = (flags & 0x10) != 0;
+
+    if flags & 0x20 != 0 {
+        let (inner, effect_type) = parse_u8(i)?;
+        i = inner;
+        if effect_type == 0 {
+            let (inner, tremolo_bar) = parse_tremolo_bar_gp3(i)?;
+            i = inner;
+            note_effect.tremolo_bar = Some(tremolo_bar);
+        } else {
+            note_effect.slap = slap_effect(effect_type);
+            i = skip(i, 4); // trailing int value
+        }
+    }
+
+    if flags & 0x40 != 0 {
+        // GP3 stores the down stroke first, then the up stroke.
+        let (inner, (stroke_down, stroke_up)) = (parse_i8, parse_i8).parse(i)?;
+        i = inner;
+        if stroke_down > 0 {
+            beat.effect.stroke.value = to_stroke_value(stroke_down);
+            beat.effect.stroke.direction = BeatStrokeDirection::Down;
+        } else if stroke_up > 0 {
+            beat.effect.stroke.value = to_stroke_value(stroke_up);
+            beat.effect.stroke.direction = BeatStrokeDirection::Up;
+        }
+    }
+
+    if flags & 0x04 != 0 {
+        note_effect.harmonic = Some(HarmonicEffect::default()); // natural
+    }
+    if flags & 0x08 != 0 {
+        note_effect.harmonic = Some(HarmonicEffect {
+            kind: HarmonicType::Artificial,
+            ..Default::default()
+        });
+    }
+    Ok((i, ()))
+}
+
+/// The tapping, slapping or popping of a beat.
+const fn slap_effect(value: u8) -> SlapEffect {
+    match value {
+        1 => SlapEffect::Tapping,
+        2 => SlapEffect::Slapping,
+        3 => SlapEffect::Popping,
+        _ => SlapEffect::None,
     }
 }
 

@@ -136,94 +136,110 @@ pub fn parse_measure_header(
         }
 
         if song_version >= GpVersion::GP5 {
-            // Beginning of repeat
-            if (flags & 0x08) != 0 {
-                log::debug!("Parsing repeat close");
-                let (inner, repeat_close) = parse_i8(i)?;
-                i = inner;
-                mh.repeat_close = repeat_close - 1; // GP5 specific logic
-            }
-
-            // Presence of a marker
-            if (flags & 0x20) != 0 {
-                let (inner, marker) = parse_marker(i)?;
-                i = inner;
-                mh.marker = Some(marker);
-            }
-
-            // Tonality of the measure
-            if (flags & 0x40) != 0 {
-                log::debug!("Parsing key signature");
-                let (inner, key_signature) = parse_i8(i)?;
-                mh.key_signature.key = key_signature;
-                i = inner;
-                let (inner, is_minor) = parse_i8(i)?;
-                i = inner;
-                mh.key_signature.is_minor = is_minor != 0;
-            }
-
-            if (flags & 0x01) != 0 || (flags & 0x02) != 0 {
-                log::debug!("Skip 4");
-                i = skip(i, 4);
-            }
-
-            // Number of alternate ending
-            if (flags & 0x10) != 0 {
-                log::debug!("Parsing repeat alternative");
-                let (inner, alternative) = parse_u8(i)?;
-                i = inner;
-                mh.repeat_alternative = alternative;
-            }
-
-            if (flags & 0x10) == 0 {
-                log::debug!("Skip one");
-                i = skip(i, 1);
-            }
-
-            // Triplet feel
-            let (inner, triplet_feel) = parse_triplet_feel(i)?;
-            i = inner;
-            mh.triplet_feel = triplet_feel;
+            i = parse_gp5_measure_fields(i, flags, &mut mh)?.0;
         } else if song_version <= GpVersion::GP4_06 {
-            // Beginning of repeat
-            if (flags & 0x08) != 0 {
-                log::debug!("Parsing repeat close");
-                let (inner, repeat_close) = parse_i8(i)?;
-                i = inner;
-                mh.repeat_close = repeat_close;
-            }
-
-            // Number of alternate ending
-            if (flags & 0x10) != 0 {
-                log::debug!("Parsing repeat alternative");
-                let (inner, alternative) = parse_u8(i)?;
-                i = inner;
-                mh.repeat_alternative = alternative;
-            }
-
-            // Presence of a marker
-            if (flags & 0x20) != 0 {
-                let (inner, marker) = parse_marker(i)?;
-                i = inner;
-                mh.marker = Some(marker);
-            }
-
-            // Tonality of the measure
-            if (flags & 0x40) != 0 {
-                log::debug!("Parsing key signature");
-                let (inner, key_signature) = parse_i8(i)?;
-                mh.key_signature.key = key_signature;
-                i = inner;
-                let (inner, is_minor) = parse_i8(i)?;
-                i = inner;
-                mh.key_signature.is_minor = is_minor != 0;
-            }
+            i = parse_gp4_measure_fields(i, flags, &mut mh)?.0;
         }
 
         log::debug!("{mh:?}");
 
         Ok((i, mh))
     }
+}
+
+/// The rest of a GP5 measure header, after its time signature.
+fn parse_gp5_measure_fields<'a>(
+    mut i: &'a [u8],
+    flags: u8,
+    mh: &mut MeasureHeader,
+) -> IResult<&'a [u8], ()> {
+    // End of repeat, stored as the number of plays
+    if (flags & 0x08) != 0 {
+        log::debug!("Parsing repeat close");
+        let (inner, repeat_close) = parse_i8(i)?;
+        i = inner;
+        mh.repeat_close = repeat_close - 1;
+    }
+
+    // Presence of a marker
+    if (flags & 0x20) != 0 {
+        let (inner, marker) = parse_marker(i)?;
+        i = inner;
+        mh.marker = Some(marker);
+    }
+
+    // Tonality of the measure
+    if (flags & 0x40) != 0 {
+        let (inner, key_signature) = parse_tonality(i)?;
+        i = inner;
+        mh.key_signature = key_signature;
+    }
+
+    // a time signature change is followed by its beaming
+    if (flags & 0x01) != 0 || (flags & 0x02) != 0 {
+        i = skip(i, 4);
+    }
+
+    // Number of alternate ending, or a blank byte in its place
+    if (flags & 0x10) != 0 {
+        log::debug!("Parsing repeat alternative");
+        let (inner, alternative) = parse_u8(i)?;
+        i = inner;
+        mh.repeat_alternative = alternative;
+    } else {
+        i = skip(i, 1);
+    }
+
+    let (i, triplet_feel) = parse_triplet_feel(i)?;
+    mh.triplet_feel = triplet_feel;
+    Ok((i, ()))
+}
+
+/// The rest of a GP3 or GP4 measure header, after its time signature.
+fn parse_gp4_measure_fields<'a>(
+    mut i: &'a [u8],
+    flags: u8,
+    mh: &mut MeasureHeader,
+) -> IResult<&'a [u8], ()> {
+    // End of repeat, stored as the number of repeats
+    if (flags & 0x08) != 0 {
+        log::debug!("Parsing repeat close");
+        let (inner, repeat_close) = parse_i8(i)?;
+        i = inner;
+        mh.repeat_close = repeat_close;
+    }
+
+    // Number of alternate ending
+    if (flags & 0x10) != 0 {
+        log::debug!("Parsing repeat alternative");
+        let (inner, alternative) = parse_u8(i)?;
+        i = inner;
+        mh.repeat_alternative = alternative;
+    }
+
+    // Presence of a marker
+    if (flags & 0x20) != 0 {
+        let (inner, marker) = parse_marker(i)?;
+        i = inner;
+        mh.marker = Some(marker);
+    }
+
+    // Tonality of the measure
+    if (flags & 0x40) != 0 {
+        let (inner, key_signature) = parse_tonality(i)?;
+        i = inner;
+        mh.key_signature = key_signature;
+    }
+    Ok((i, ()))
+}
+
+/// A tonality change: the key, then whether it is minor.
+fn parse_tonality(i: &[u8]) -> IResult<&[u8], KeySignature> {
+    log::debug!("Parsing key signature");
+    map((parse_i8, parse_i8), |(key, is_minor)| {
+        KeySignature::new(key, is_minor != 0)
+    })
+    .parse(i)
 }
 
 /// Convert a GP3/GP4 alternate-ending number into an ending bitmask.
@@ -613,6 +629,39 @@ mod tests {
         assert!(GpVersion::GP5 >= GpVersion::GP5);
         assert!(GpVersion::GP3 < GpVersion::GP4);
         assert!(GpVersion::GP3 < GpVersion::GP5);
+    }
+
+    fn header(version: GpVersion, bytes: &[u8]) -> MeasureHeader {
+        let previous_key = KeySignature::new(0, false);
+        let (rest, header) =
+            parse_measure_header(TimeSignature::default(), previous_key, 120, version)(bytes)
+                .unwrap();
+        assert!(rest.is_empty(), "{} bytes left", rest.len());
+        header
+    }
+
+    #[test]
+    fn a_gp5_measure_header_reads_its_signature_repeat_and_key() {
+        // time signature, repeat close and tonality, then the beaming of the
+        // new signature, a blank alternative byte and the triplet feel
+        let flags = 0x01 | 0x02 | 0x08 | 0x40;
+        let mh = header(GpVersion::GP5, &[flags, 3, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(mh.time_signature.numerator, 3);
+        assert_eq!(mh.time_signature.denominator.value, 4);
+        // GP5 stores the number of plays
+        assert_eq!(mh.repeat_close, 2);
+        assert_eq!(mh.key_signature, KeySignature::new(2, true));
+        assert_eq!(mh.tempo.value, 120);
+    }
+
+    #[test]
+    fn a_gp4_measure_header_reads_its_repeat_and_ending() {
+        let mh = header(GpVersion::GP4, &[0x04 | 0x08 | 0x10, 2, 1]);
+        assert!(mh.repeat_open);
+        assert_eq!(mh.repeat_close, 2);
+        assert_eq!(mh.repeat_alternative, 1);
+        // nothing changed: the signature carries over
+        assert_eq!(mh.time_signature, TimeSignature::default());
     }
 
     #[test]
