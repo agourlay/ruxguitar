@@ -585,6 +585,7 @@ impl canvas::Program<Message> for CanvasMeasure {
             if self.is_selected {
                 draw_selection_fill(
                     frame,
+                    colors,
                     actual_width,
                     vertical_measure_height,
                     measure_start_x,
@@ -1314,6 +1315,7 @@ fn focus_box_top(rows: RowSpacing, measure_start_y: f32) -> f32 {
 
 fn draw_selection_fill(
     frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
     total_measure_len: f32,
     vertical_measure_height: f32,
     measure_start_x: f32,
@@ -1328,11 +1330,7 @@ fn draw_selection_fill(
         total_measure_len - BOX_SIDE * 2.0,
         vertical_measure_height + top + bottom,
     );
-    frame.fill_rectangle(
-        top_left,
-        rectangle_size,
-        Color::from_rgba(1.0, 1.0, 0.0, 0.35),
-    );
+    frame.fill_rectangle(top_left, rectangle_size, colors.selection);
 }
 
 fn draw_focused_box(

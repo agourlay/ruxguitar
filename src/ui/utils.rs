@@ -17,6 +17,8 @@ pub struct TablatureColors {
     pub string_line: Color,
     /// Measure numbers and the beat being played.
     pub accent: Color,
+    /// Background of the measures selected for looping.
+    pub selection: Color,
 }
 
 impl TablatureColors {
@@ -28,6 +30,8 @@ impl TablatureColors {
             // enough text mixed in to stay visible on either tone
             string_line: mix(palette.background, palette.text, 0.35),
             accent: COLOR_DARK_RED,
+            // a faint tint: the selection must not compete with the notes
+            selection: mix(palette.background, palette.primary, 0.15),
         }
     }
 }
