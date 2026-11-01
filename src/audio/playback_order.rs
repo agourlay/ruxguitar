@@ -90,12 +90,12 @@ pub fn playback_tick(original_tick: u32, tick_offset: i64) -> u32 {
     (i64::from(original_tick) + tick_offset) as u32
 }
 
-/// First playback tick of each measure, used for seeking.
-///
-/// Measures the playback never reaches (e.g. an alternative ending whose
-/// repetition never occurs) fall back to the first playback tick of the
-/// closest preceding played measure.
-pub fn first_playback_ticks(headers: &[MeasureHeader], order: &[(usize, i64)]) -> Vec<u32> {
+/// First playback tick of each measure, `None` for measures the playback
+/// never reaches (e.g. an alternative ending whose repetition never occurs).
+pub fn first_occurrence_ticks(
+    headers: &[MeasureHeader],
+    order: &[(usize, i64)],
+) -> Vec<Option<u32>> {
     let mut first_ticks: Vec<Option<u32>> = vec![None; headers.len()];
     for &(measure_index, tick_offset) in order {
         let slot = &mut first_ticks[measure_index];
@@ -103,9 +103,18 @@ pub fn first_playback_ticks(headers: &[MeasureHeader], order: &[(usize, i64)]) -
             *slot = Some(playback_tick(headers[measure_index].start, tick_offset));
         }
     }
+    first_ticks
+}
+
+/// First playback tick of each measure, used for seeking.
+///
+/// Measures the playback never reaches (e.g. an alternative ending whose
+/// repetition never occurs) fall back to the first playback tick of the
+/// closest preceding played measure.
+pub fn first_playback_ticks(headers: &[MeasureHeader], order: &[(usize, i64)]) -> Vec<u32> {
     // carry forward over never-played measures
     let mut carried = 0;
-    first_ticks
+    first_occurrence_ticks(headers, order)
         .into_iter()
         .map(|tick| {
             if let Some(tick) = tick {
@@ -116,24 +125,46 @@ pub fn first_playback_ticks(headers: &[MeasureHeader], order: &[(usize, i64)]) -
         .collect()
 }
 
+/// A loop over a measure selection, on the playback timeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MeasureLoop {
+    /// First selected measure the playback reaches, where each pass starts.
+    pub first_measure: usize,
+    pub start_tick: u32,
+    /// Exclusive end tick.
+    pub end_tick: u32,
+}
+
 /// Playback tick range `[start, end)` for an inclusive measure index range.
 ///
-/// The range covers the first playthrough of the selected measures: it
-/// ends with the first occurrence of `end_measure`, so repeats and jumps
-/// that follow the selection are never pulled into the loop.
-/// Returns `None` when the range would be empty (e.g. measures the
-/// playback never reaches).
+/// The range covers the first playthrough of the selected measures that
+/// the playback reaches: measures it never reaches (e.g. an unused
+/// alternative ending) are skipped at either edge, and it ends with the
+/// first occurrence of the last reached measure, so repeats and jumps that
+/// follow the selection are never pulled into the loop.
+/// Returns `None` when no selected measure is ever played.
 pub fn measure_loop_tick_range(
     headers: &[MeasureHeader],
-    first_playback_ticks: &[u32],
+    first_occurrence_ticks: &[Option<u32>],
     start_measure: usize,
     end_measure: usize,
-) -> Option<(u32, u32)> {
-    let start = *first_playback_ticks.get(start_measure)?;
-    let end = first_playback_ticks
-        .get(end_measure)?
-        .saturating_add(headers.get(end_measure)?.length());
-    (end > start).then_some((start, end))
+) -> Option<MeasureLoop> {
+    let selected = first_occurrence_ticks.get(start_measure..=end_measure)?;
+    let (first_offset, start) = selected
+        .iter()
+        .enumerate()
+        .find_map(|(offset, tick)| tick.map(|tick| (offset, tick)))?;
+    let (last_offset, last_tick) = selected
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(offset, tick)| tick.map(|tick| (offset, tick)))?;
+    let end = last_tick.saturating_add(headers[start_measure + last_offset].length());
+    (end > start).then_some(MeasureLoop {
+        first_measure: start_measure + first_offset,
+        start_tick: start,
+        end_tick: end,
+    })
 }
 
 /// Bit for the given repetition in an alternative ending bitmask.
@@ -495,15 +526,23 @@ mod tests {
             .map(|i| make_header(960 + measure_len * i, false, 0))
             .collect();
         let order = compute_playback_order(&headers);
-        let first_ticks = first_playback_ticks(&headers, &order);
+        let first_ticks = first_occurrence_ticks(&headers, &order);
         assert_eq!(
             measure_loop_tick_range(&headers, &first_ticks, 1, 2),
-            Some((960 + measure_len, 960 + measure_len * 3))
+            Some(MeasureLoop {
+                first_measure: 1,
+                start_tick: 960 + measure_len,
+                end_tick: 960 + measure_len * 3
+            })
         );
         // last measure: ends with the song
         assert_eq!(
             measure_loop_tick_range(&headers, &first_ticks, 3, 3),
-            Some((960 + measure_len * 3, 960 + measure_len * 4))
+            Some(MeasureLoop {
+                first_measure: 3,
+                start_tick: 960 + measure_len * 3,
+                end_tick: 960 + measure_len * 4
+            })
         );
         // out of range
         assert_eq!(measure_loop_tick_range(&headers, &first_ticks, 2, 4), None);
@@ -530,11 +569,65 @@ mod tests {
             make_header(960 + measure_len * 3, false, 0),
         ];
         let order = compute_playback_order(&headers);
-        let first_ticks = first_playback_ticks(&headers, &order);
+        let first_ticks = first_occurrence_ticks(&headers, &order);
         // looping the first ending alone must not replay M0
         assert_eq!(
             measure_loop_tick_range(&headers, &first_ticks, 1, 1),
-            Some((960 + measure_len, 960 + measure_len * 2))
+            Some(MeasureLoop {
+                first_measure: 1,
+                start_tick: 960 + measure_len,
+                end_tick: 960 + measure_len * 2
+            })
         );
+    }
+
+    #[test]
+    fn measure_loop_tick_range_skips_never_played_measures() {
+        // |: M0 | M1[1.] :| M2[3.] :| M3
+        // One repeat only: ending "3." never plays.
+        // Plays: M0 M1 M0 M3
+        let measure_len = 3840_u32;
+        let headers = vec![
+            make_header(960, true, 0),
+            MeasureHeader {
+                start: 960 + measure_len,
+                repeat_alternative: 0b001,
+                repeat_close: 1,
+                ..MeasureHeader::default()
+            },
+            MeasureHeader {
+                start: 960 + measure_len * 2,
+                repeat_alternative: 0b100,
+                repeat_close: 1,
+                ..MeasureHeader::default()
+            },
+            make_header(960 + measure_len * 3, false, 0),
+        ];
+        let order = compute_playback_order(&headers);
+        let first_ticks = first_occurrence_ticks(&headers, &order);
+        assert_eq!(first_ticks[2], None);
+        let m1 = first_ticks[1].unwrap();
+        let m3 = first_ticks[3].unwrap();
+        // unplayed measure at the end: the loop stops after M1
+        assert_eq!(
+            measure_loop_tick_range(&headers, &first_ticks, 1, 2),
+            Some(MeasureLoop {
+                first_measure: 1,
+                start_tick: m1,
+                end_tick: m1 + measure_len
+            })
+        );
+        // unplayed measure at the start: the loop starts on M3, not on
+        // the M1 tick it would borrow for seeking
+        assert_eq!(
+            measure_loop_tick_range(&headers, &first_ticks, 2, 3),
+            Some(MeasureLoop {
+                first_measure: 3,
+                start_tick: m3,
+                end_tick: m3 + measure_len
+            })
+        );
+        // nothing selected is ever played
+        assert_eq!(measure_loop_tick_range(&headers, &first_ticks, 2, 2), None);
     }
 }

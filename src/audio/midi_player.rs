@@ -4,7 +4,9 @@ use crate::audio::midi_builder::{
 use crate::audio::midi_event::{FIRST_TICK, MidiEvent, MidiEventType};
 use crate::audio::midi_player_params::MidiPlayerParams;
 use crate::audio::midi_sequencer::{MidiSequencer, tick_increase};
-use crate::audio::playback_order::{first_playback_ticks, measure_loop_tick_range};
+use crate::audio::playback_order::{
+    MeasureLoop, first_occurrence_ticks, first_playback_ticks, measure_loop_tick_range,
+};
 use crate::parser::song_parser::Song;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
@@ -36,6 +38,8 @@ pub struct AudioPlayer {
     beat_notify: Arc<Notify>,
     /// First playback tick per measure, for seeking.
     measure_playback_ticks: Vec<u32>,
+    /// First playback tick per measure, `None` when it is never played.
+    measure_first_occurrences: Vec<Option<u32>>,
 }
 
 impl AudioPlayer {
@@ -53,6 +57,8 @@ impl AudioPlayer {
 
         let events = MidiBuilder::new().build_for_song_with_order(&song, playback_order);
         let measure_playback_ticks = first_playback_ticks(&song.measure_headers, playback_order);
+        let measure_first_occurrences =
+            first_occurrence_ticks(&song.measure_headers, playback_order);
 
         let sound_font = if let Some(ref sound_font_file) = sound_font_file {
             let mut sf2 = File::open(sound_font_file).map_err(|e| {
@@ -82,6 +88,7 @@ impl AudioPlayer {
             current_tick,
             beat_notify,
             measure_playback_ticks,
+            measure_first_occurrences,
         })
     }
 
@@ -158,23 +165,31 @@ impl AudioPlayer {
             .set_tempo_percentage(new_tempo_percentage);
     }
 
-    pub fn set_measure_loop(&self, start_measure: usize, end_measure: usize) {
-        let Some((start_tick, end_tick)) = measure_loop_tick_range(
+    /// Loop the given measures, returning the first one that plays, where
+    /// each pass starts. Clears the loop when none of them ever plays.
+    pub fn set_measure_loop(&self, start_measure: usize, end_measure: usize) -> Option<usize> {
+        let Some(measure_loop) = measure_loop_tick_range(
             &self.song.measure_headers,
-            &self.measure_playback_ticks,
+            &self.measure_first_occurrences,
             start_measure,
             end_measure,
         ) else {
-            log::warn!("Cannot loop measures {start_measure}..={end_measure}: empty range");
+            log::warn!("Cannot loop measures {start_measure}..={end_measure}: never played");
             self.player_params.clear_loop();
-            return;
+            return None;
         };
+        let MeasureLoop {
+            first_measure,
+            start_tick,
+            end_tick,
+        } = measure_loop;
         log::info!(
             "Loop measures {start_measure}..={end_measure} (ticks {start_tick}..{end_tick})"
         );
-        let start_tempo = self.song.measure_headers[start_measure].tempo.value;
+        let start_tempo = self.song.measure_headers[first_measure].tempo.value;
         self.player_params
             .set_loop_region(start_tick, end_tick, start_tempo);
+        Some(first_measure)
     }
 
     pub fn clear_measure_loop(&self) {

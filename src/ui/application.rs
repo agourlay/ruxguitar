@@ -268,13 +268,16 @@ impl RuxApplication {
     }
 
     /// Loop the selected measures, or play through when nothing is selected.
-    fn sync_measure_loop(&self) {
+    /// Returns the measure each pass of the loop starts on.
+    fn sync_measure_loop(&self) -> Option<usize> {
         let (Some(audio_player), Some(tablature)) = (&self.audio_player, &self.tablature) else {
-            return;
+            return None;
         };
-        match tablature.selection_range() {
-            Some((start, end)) => audio_player.set_measure_loop(start, end),
-            None => audio_player.clear_measure_loop(),
+        if let Some((start, end)) = tablature.selection_range() {
+            audio_player.set_measure_loop(start, end)
+        } else {
+            audio_player.clear_measure_loop();
+            None
         }
     }
 
@@ -587,15 +590,20 @@ impl RuxApplication {
                 let dragged = self.selection_drag_moved;
                 self.selection_drag_moved = false;
                 self.selection_press_position = None;
-                let focus_task = if let Some(tablature) = &mut self.tablature {
+                if let Some(tablature) = &mut self.tablature {
                     tablature.set_pointer_drag_active(false);
                     if !dragged {
                         tablature.clear_selection();
                     }
-                    // a new loop range starts playing from its first measure
-                    let (measure_id, beat_id) = match tablature.selection_range() {
-                        Some((start, _)) => (start, 0),
-                        None => (tablature.selection_anchor(), self.selection_focus_beat),
+                }
+                // keep a running loop in step with the selection
+                let loop_start = self.sync_measure_loop();
+                let focus_task = if let Some(tablature) = &mut self.tablature {
+                    // a new loop starts playing from its first measure
+                    let (measure_id, beat_id) = match (loop_start, tablature.selection_range()) {
+                        (Some(first_measure), _) => (first_measure, 0),
+                        (None, Some((start, _))) => (start, 0),
+                        (None, None) => (tablature.selection_anchor(), self.selection_focus_beat),
                     };
                     tablature.focus_on_measure_beat(measure_id, beat_id);
                     if let Some(audio_player) = &self.audio_player {
@@ -614,8 +622,6 @@ impl RuxApplication {
                 } else {
                     Task::none()
                 };
-                // keep a running loop in step with the selection
-                self.sync_measure_loop();
                 self.persist_session();
                 focus_task
             }
@@ -669,10 +675,11 @@ impl RuxApplication {
                     .is_some_and(AudioPlayer::is_playing);
                 let mut scroll_task = Task::none();
                 if !was_playing {
-                    self.sync_measure_loop();
+                    let loop_start = self.sync_measure_loop();
                     // resume in place inside the loop, otherwise jump to its start
                     let outside_loop = self.tablature.as_ref().and_then(|tablature| {
-                        let (start, end) = tablature.selection_range()?;
+                        let (_, end) = tablature.selection_range()?;
+                        let start = loop_start?;
                         let focused = tablature.focused_measure();
                         (focused < start || focused > end).then_some(start)
                     });
