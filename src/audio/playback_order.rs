@@ -140,8 +140,9 @@ pub struct MeasureLoop {
 /// The range covers the first playthrough of the selected measures that
 /// the playback reaches: measures it never reaches (e.g. an unused
 /// alternative ending) are skipped at either edge, and it ends with the
-/// first occurrence of the last reached measure, so repeats and jumps that
-/// follow the selection are never pulled into the loop.
+/// first occurrence of the last reached measure, so a repeat closing after
+/// that measure is never pulled into the loop. A repeat inside the
+/// selection plays as written, even through measures before the selection.
 /// Returns `None` when no selected measure is ever played.
 pub fn measure_loop_tick_range(
     headers: &[MeasureHeader],
@@ -519,6 +520,7 @@ mod tests {
         let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
         assert_eq!(indices, vec![0, 1, 0, 2, 3, 4, 3, 5]);
     }
+
     #[test]
     fn measure_loop_tick_range_without_repeats() {
         let measure_len = 3840_u32;

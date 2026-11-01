@@ -4,7 +4,7 @@ use std::ops::Range;
 
 /// Events to play for one step of the playback, as index ranges into
 /// `MidiSequencer::events`.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct Step {
     /// Events reached by this step, `None` once the sequence is exhausted.
     pub events: Option<Range<usize>>,
@@ -13,6 +13,9 @@ pub struct Step {
     /// Set when the step crossed the loop end: playback restarted at the
     /// loop start, and these events of the new pass follow `events`.
     pub restart: Option<Range<usize>>,
+    /// Share of the step's time, in `0.0..=1.0`, played before the loop
+    /// end was reached: where the audio of the new pass begins.
+    pub restart_at: f64,
 }
 
 pub struct MidiSequencer {
@@ -72,6 +75,7 @@ impl MidiSequencer {
     /// before it, then restarts at the loop start with the time that ran
     /// past the end, so every pass keeps the beat.
     pub fn step(&mut self, tempo: u32, elapsed_secs: f64, loop_range: Option<(u32, u32)>) -> Step {
+        let position_before = self.tick_position;
         self.advance(tempo, elapsed_secs);
         let Some((start, end)) = loop_range.filter(|&(start, end)| start < end) else {
             return self.pending_step();
@@ -79,14 +83,21 @@ impl MidiSequencer {
         if self.tick_position < f64::from(end) {
             return self.pending_step();
         }
-        let (events, tick, overshoot) = if self.last_tick < end {
+        let (events, tick, overshoot, restart_at) = if self.last_tick < end {
+            let advanced = self.tick_position - position_before;
+            let before_end = f64::from(end) - position_before;
+            let restart_at = if advanced > 0.0 {
+                (before_end / advanced).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
             let overshoot = (self.tick_position - f64::from(end)) % f64::from(end - start);
             // stop right before the loop end: what is left of this pass
             self.tick_position = f64::from(end - 1);
-            (self.next_events_range(), end - 1, overshoot)
+            (self.next_events_range(), end - 1, overshoot, restart_at)
         } else {
             // a seek landed past the loop end: nothing is left of this pass
-            (Some(Range::default()), self.last_tick, 0.0)
+            (Some(Range::default()), self.last_tick, 0.0, 0.0)
         };
         self.last_tick = start.saturating_sub(1);
         self.tick_position = f64::from(start) + overshoot;
@@ -95,6 +106,7 @@ impl MidiSequencer {
             events,
             tick,
             restart: Some(self.next_events_range().unwrap_or_default()),
+            restart_at,
         }
     }
 
@@ -104,6 +116,7 @@ impl MidiSequencer {
             events: self.next_events_range(),
             tick: self.get_tick(),
             restart: None,
+            restart_at: 1.0,
         }
     }
 
@@ -254,6 +267,8 @@ mod tests {
         let step = sequencer.step(TEMPO, STEP_SECS, loop_range);
         assert_eq!(step.tick, 1999);
         assert!(step.restart.is_some());
+        // the loop end came 40 of the 192 ticks into the step
+        assert!((step.restart_at - 40.0 / 192.0).abs() < 1e-9);
         assert_eq!(sequencer.get_tick(), 1152);
         assert_eq!(sequencer.get_last_tick(), 999);
     }
@@ -265,6 +280,8 @@ mod tests {
         let step = sequencer.step(TEMPO, STEP_SECS, Some((1000, 2000)));
         assert_eq!(step_ticks(&sequencer, &step), ["|", "1000"]);
         assert_eq!(sequencer.get_tick(), 1000);
+        // nothing of the old pass is left to render
+        assert!(step.restart_at.abs() < 1e-9);
     }
 
     #[test]

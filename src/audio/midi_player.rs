@@ -507,6 +507,8 @@ fn new_output_stream(
                 player_params.set_finished(true);
                 beat_notify.notify_one();
             }
+            // frames already rendered, before a loop restart
+            let mut rendered = 0;
             if !counting_in {
                 let events = sequencer_guard.events();
                 if let Some(range) = step.events {
@@ -519,8 +521,12 @@ fn new_output_stream(
                         &beat_notify,
                     );
                 }
-                // the loop end was crossed: the next pass starts right away
+                // the loop end was crossed: render up to it, then start the
+                // next pass there, so the last notes of the pass still sound
                 if let Some(range) = step.restart {
+                    rendered = ((render_len as f64) * step.restart_at).round() as usize;
+                    rendered = rendered.min(render_len);
+                    synthesizer_guard.render(&mut left[..rendered], &mut right[..rendered]);
                     synthesizer_guard.note_off_all(false);
                     synthesizer_guard.reset_all_controllers();
                     player_params.set_tempo(player_params.loop_start_tempo());
@@ -544,7 +550,10 @@ fn new_output_stream(
             }
 
             // Render the waveform.
-            synthesizer_guard.render(&mut left[..render_len], &mut right[..render_len]);
+            synthesizer_guard.render(
+                &mut left[rendered..render_len],
+                &mut right[rendered..render_len],
+            );
 
             let master_volume = player_params.master_volume();
 
