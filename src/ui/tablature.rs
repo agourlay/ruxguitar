@@ -305,17 +305,10 @@ impl Tablature {
     }
 
     fn sync_selection_visuals(&mut self) {
-        match self.selection {
-            Some((start, end)) => {
-                for (index, measure) in self.canvas_measures.iter_mut().enumerate() {
-                    measure.set_selected(index >= start && index <= end);
-                }
-            }
-            None => {
-                for measure in &mut self.canvas_measures {
-                    measure.set_selected(false);
-                }
-            }
+        let selection = self.selection;
+        for (index, measure) in self.canvas_measures.iter_mut().enumerate() {
+            measure
+                .set_selected(selection.is_some_and(|(start, end)| (start..=end).contains(&index)));
         }
     }
 
@@ -511,6 +504,54 @@ mod tests {
         let mut tab = Tablature::new(song, 0, Id::new("test-scroll"), &order);
         tab.update_container_size(width, height);
         tab
+    }
+
+    fn selected_measures(tab: &Tablature) -> Vec<usize> {
+        (0..tab.measure_count())
+            .filter(|&index| tab.canvas_measures[index].is_selected())
+            .collect()
+    }
+
+    #[test]
+    fn a_drag_selects_from_its_anchor_either_way() {
+        let mut tab = load_tablature(800.0, 600.0);
+        tab.begin_selection_drag(3);
+        assert_eq!(tab.selection_range(), None);
+        tab.extend_selection_drag(5);
+        assert_eq!(tab.selection_range(), Some((3, 5)));
+        // dragging back past the anchor flips the range
+        tab.extend_selection_drag(1);
+        assert_eq!(tab.selection_range(), Some((1, 3)));
+        assert_eq!(tab.selection_anchor(), 3);
+        assert_eq!(selected_measures(&tab), [1, 2, 3]);
+    }
+
+    #[test]
+    fn a_new_drag_drops_the_previous_selection() {
+        let mut tab = load_tablature(800.0, 600.0);
+        tab.begin_selection_drag(0);
+        tab.extend_selection_drag(2);
+        tab.begin_selection_drag(4);
+        assert_eq!(tab.selection_range(), None);
+        assert!(selected_measures(&tab).is_empty());
+    }
+
+    #[test]
+    fn a_restored_selection_is_ordered() {
+        let mut tab = load_tablature(800.0, 600.0);
+        tab.restore_selection(4, 2);
+        assert_eq!(tab.selection_range(), Some((2, 4)));
+        assert_eq!(tab.selection_anchor(), 2);
+        tab.clear_selection();
+        assert!(selected_measures(&tab).is_empty());
+    }
+
+    #[test]
+    fn the_selection_survives_a_track_change() {
+        let mut tab = load_tablature(800.0, 600.0);
+        tab.restore_selection(1, 2);
+        tab.update_track(1);
+        assert_eq!(selected_measures(&tab), [1, 2]);
     }
 
     #[test]

@@ -194,6 +194,11 @@ impl CanvasMeasure {
         self.total_measure_len - self.measure_len
     }
 
+    #[cfg(test)]
+    pub const fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+
     pub fn set_selected(&mut self, selected: bool) {
         if self.is_selected != selected {
             self.is_selected = selected;
