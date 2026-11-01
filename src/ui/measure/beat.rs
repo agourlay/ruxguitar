@@ -119,7 +119,7 @@ impl BeatSlot<'_> {
         &self.beats[self.index]
     }
 
-    fn x(&self) -> f32 {
+    pub(super) fn x(&self) -> f32 {
         self.positions[self.index]
     }
 }
@@ -303,13 +303,10 @@ fn draw_note(
         draw_bend(
             frame,
             colors,
+            staff,
+            slot,
+            Point::new(note_position_x, note_position_y),
             movements,
-            note_position_x,
-            note_position_y,
-            beat_position_x,
-            slot.span,
-            slot.width_scale,
-            measure_start_y,
             show_bend_amplitude,
         );
     } else {

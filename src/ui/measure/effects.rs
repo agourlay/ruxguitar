@@ -1,6 +1,7 @@
 //! Note and beat effects drawn on the staff: slides, arcs, bends, strokes and tremolo.
 
-use super::layout::{BEND_ARROW_WIDTH, STRING_LINE_HEIGHT};
+use super::beat::BeatSlot;
+use super::layout::{BEND_ARROW_WIDTH, STRING_LINE_HEIGHT, Staff};
 use crate::parser::song_parser::{Beat, BeatStrokeDirection, TremoloPickingEffect};
 use crate::ui::utils::TablatureColors;
 use iced::advanced::text::Shaping::Auto;
@@ -105,26 +106,29 @@ const BEND_AMPLITUDES: [&str; 13] = [
 /// rising to (or releasing from) a band above the staff, with the reached
 /// amplitude in tones next to the arrow tip. A bend without movements is a
 /// held bend, drawn as a dashed line at band height across the beat.
-#[allow(clippy::too_many_arguments)]
+/// The bend arrows of a note, from its fret number up above the staff,
+/// and the amplitude each one reaches when `show_amplitude`.
 pub(super) fn draw_bend(
     frame: &mut Frame<Renderer>,
     colors: TablatureColors,
+    staff: Staff,
+    slot: &BeatSlot,
+    note_position: Point,
     movements: &[i32],
-    note_position_x: f32,
-    note_position_y: f32,
-    beat_position_x: f32,
-    width_per_beat: f32,
-    width_scale: f32,
-    measure_start_y: f32,
     show_amplitude: bool,
 ) {
+    let Point {
+        x: note_position_x,
+        y: note_position_y,
+    } = note_position;
+    let measure_start_y = staff.top;
     let stroke = Stroke::default()
         .with_width(0.8)
         .with_color(colors.foreground);
     let arrow_size = 2.5;
     // shrink the arrows with the beat when the measure is compressed, so
     // they stay within the width reserved by beat_natural_width
-    let arrow_width = BEND_ARROW_WIDTH * width_scale.min(1.0);
+    let arrow_width = BEND_ARROW_WIDTH * slot.width_scale.min(1.0);
     // vertical extent: from the note's fret number up to a band above the staff
     let y_low = note_position_y + 4.0;
     let y_high = measure_start_y - 8.0;
@@ -133,7 +137,7 @@ pub(super) fn draw_bend(
     if movements.is_empty() {
         // held bend: dashed line at band height until the end of the beat
         let x_start = note_position_x - 4.0;
-        let x_end = (beat_position_x + width_per_beat - 6.0).max(x_start + 5.0);
+        let x_end = (slot.x() + slot.span - 6.0).max(x_start + 5.0);
         let dashed = Stroke {
             line_dash: LineDash {
                 segments: &[2.5, 2.5],
