@@ -6,9 +6,6 @@ use iced::{
     Alignment, Border, Element, Length, Point, Size, Subscription, Task, Theme, event, keyboard,
     mouse, stream, window,
 };
-
-/// Ignore tiny pointer jitter so a click does not start a measure selection.
-const SELECTION_DRAG_THRESHOLD_PX: f32 = 12.0;
 use std::fmt::Display;
 
 use crate::audio::midi_player::AudioPlayer;
@@ -21,6 +18,7 @@ use crate::ui::icons::{
     stop_icon,
 };
 use crate::ui::picker::{FilePickerError, load_file, open_file_dialog};
+use crate::ui::selection_drag::{DragRelease, SelectionDrag};
 use crate::ui::tablature::Tablature;
 use crate::ui::tuning::tuning_label;
 use crate::ui::utils::{action_gated, action_toggle, modal, untitled_text_table_box};
@@ -37,16 +35,12 @@ use tokio::sync::Notify;
 const ICONS_FONT: &[u8] = include_bytes!("../../resources/icons.ttf");
 
 pub struct RuxApplication {
-    song_info: Option<SongDisplayInfo>,
-    track_selection: TrackSelection,
-    all_tracks: Vec<TrackSelection>,
-    tablature: Option<Tablature>,
+    /// The open song, if any.
+    song: Option<LoadedSong>,
     tablature_id: Id,
-    tempo_selection: TempoSelection,
+    /// Absent while no song is open, or when the audio failed to start.
     audio_player: Option<AudioPlayer>,
-    /// Playback preferences kept at the app level so they survive reloading a file.
-    metronome_enabled: bool,
-    count_in_enabled: bool,
+    prefs: PlaybackPrefs,
     tab_file_is_loading: bool,
     sound_font_file: Option<PathBuf>,
     /// Latest tick published by the audio callback, with its wake-up signal.
@@ -55,14 +49,44 @@ pub struct RuxApplication {
     config: Config,
     error_message: Option<String>,
     is_fullscreen: bool,
-    measure_selection_dragging: bool,
-    selection_drag_moved: bool,
-    selection_press_position: Option<Point>,
-    selection_focus_beat: usize,
+    selection_drag: SelectionDrag,
     current_tab_path: Option<PathBuf>,
-    pending_session_restore: Option<SessionState>,
-    deferred_session_restore: Option<SessionState>,
-    saved_master_volume: f32,
+    session_restore: Option<SessionRestore>,
+}
+
+/// A parsed song, with its tablature and the track it shows.
+struct LoadedSong {
+    info: SongDisplayInfo,
+    tracks: Vec<TrackSelection>,
+    track: TrackSelection,
+    tablature: Tablature,
+}
+
+/// Playback preferences, kept at the app level so they survive reloading a file.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PlaybackPrefs {
+    tempo: TempoSelection,
+    metronome: bool,
+    count_in: bool,
+    /// The volume to give a new player; the live one is the player's own.
+    master_volume: f32,
+}
+
+impl PlaybackPrefs {
+    fn apply_to(&self, audio_player: &AudioPlayer) {
+        audio_player.set_metronome(self.metronome);
+        audio_player.set_count_in(self.count_in);
+        audio_player.set_master_volume(self.master_volume);
+    }
+}
+
+/// A saved session waiting to be applied to the file reopened at startup.
+#[derive(Debug)]
+enum SessionRestore {
+    /// The file is loading; the session only applies if it opens.
+    OnLoad(SessionState),
+    /// The file is open; the session waits for the tablature to be laid out.
+    OnLayout(SessionState),
 }
 
 #[derive(Debug)]
@@ -90,6 +114,15 @@ impl SongDisplayInfo {
             copyright: song.song_info.copyright.clone(),
             gp_version: song.version,
             file_name,
+        }
+    }
+
+    /// The song name, followed by its artist when known.
+    fn title_line(&self) -> String {
+        if self.artist.is_empty() {
+            self.name.clone()
+        } else {
+            format!("{} - {}", self.name, self.artist)
         }
     }
 
@@ -128,6 +161,18 @@ impl Default for TempoSelection {
 impl TempoSelection {
     const fn new(percentage: u32) -> Self {
         Self { percentage }
+    }
+
+    /// The next preset up, if any.
+    fn faster(self) -> Option<Self> {
+        let index = Self::PRESET.iter().position(|t| *t == self)?;
+        Self::PRESET.get(index + 1).copied()
+    }
+
+    /// The next preset down, if any.
+    fn slower(self) -> Option<Self> {
+        let index = Self::PRESET.iter().position(|t| *t == self)?;
+        index.checked_sub(1).map(|i| Self::PRESET[i])
     }
 
     const PRESET: [Self; 9] = [
@@ -215,15 +260,15 @@ impl RuxApplication {
     fn new(sound_font_file: Option<PathBuf>, config: Config) -> Self {
         let session = config.session().clone();
         Self {
-            song_info: None,
-            track_selection: TrackSelection::default(),
-            all_tracks: vec![],
-            tablature: None,
+            song: None,
             tablature_id: Id::new("tablature-outer-container"),
-            tempo_selection: TempoSelection::new(session.tempo_percentage),
             audio_player: None,
-            metronome_enabled: false,
-            count_in_enabled: false,
+            prefs: PlaybackPrefs {
+                tempo: TempoSelection::new(session.tempo_percentage),
+                metronome: false,
+                count_in: false,
+                master_volume: session.master_volume.clamp(0.0, 1.0),
+            },
             tab_file_is_loading: false,
             sound_font_file,
             current_tick: Arc::new(AtomicU32::new(0)),
@@ -231,14 +276,9 @@ impl RuxApplication {
             config,
             error_message: None,
             is_fullscreen: false,
-            measure_selection_dragging: false,
-            selection_drag_moved: false,
-            selection_press_position: None,
-            selection_focus_beat: 0,
+            selection_drag: SelectionDrag::Idle,
             current_tab_path: None,
-            pending_session_restore: None,
-            deferred_session_restore: None,
-            saved_master_volume: session.master_volume.clamp(0.0, 1.0),
+            session_restore: None,
         }
     }
 
@@ -249,7 +289,7 @@ impl RuxApplication {
             Task::done(Message::OpenFile(path.clone()))
         } else if let Some(path) = app.config.session().last_tab_file.clone() {
             if path.is_file() {
-                app.pending_session_restore = Some(app.config.session().clone());
+                app.session_restore = Some(SessionRestore::OnLoad(app.config.session().clone()));
                 Task::done(Message::OpenFile(path))
             } else {
                 Task::none()
@@ -262,18 +302,18 @@ impl RuxApplication {
 
     /// Fresh tab defaults when the user opens a GP file (not startup session restore).
     fn reset_tab_defaults(&mut self) {
-        self.tempo_selection = TempoSelection::default();
-        self.saved_master_volume = 1.0;
-        self.deferred_session_restore = None;
+        self.prefs.tempo = TempoSelection::default();
+        self.prefs.master_volume = 1.0;
+        self.session_restore = None;
     }
 
     /// Loop the selected measures, or play through when nothing is selected.
     /// Returns the measure each pass of the loop starts on.
     fn sync_measure_loop(&self) -> Option<usize> {
-        let (Some(audio_player), Some(tablature)) = (&self.audio_player, &self.tablature) else {
+        let (Some(audio_player), Some(song)) = (&self.audio_player, &self.song) else {
             return None;
         };
-        if let Some((start, end)) = tablature.selection_range() {
+        if let Some((start, end)) = song.tablature.selection_range() {
             audio_player.set_measure_loop(start, end)
         } else {
             audio_player.clear_measure_loop();
@@ -283,7 +323,7 @@ impl RuxApplication {
 
     fn persist_session(&mut self) {
         let (measure_index, beat_index, selection_start, selection_end) =
-            if let Some(tablature) = &self.tablature {
+            if let Some(LoadedSong { tablature, .. }) = &self.song {
                 let selection = tablature.selection_range();
                 (
                     tablature.focused_measure(),
@@ -304,19 +344,19 @@ impl RuxApplication {
             .audio_player
             .as_ref()
             .map(AudioPlayer::master_volume)
-            .unwrap_or(self.saved_master_volume);
+            .unwrap_or(self.prefs.master_volume);
 
         let session = SessionState {
             last_tab_file: self.current_tab_path.clone(),
-            track_index: self.track_selection.index,
-            tempo_percentage: self.tempo_selection.percentage,
+            track_index: self.song.as_ref().map_or(0, |song| song.track.index),
+            tempo_percentage: self.prefs.tempo.percentage,
             master_volume,
             measure_index,
             beat_index,
             selection_start,
             selection_end,
         };
-        self.saved_master_volume = master_volume;
+        self.prefs.master_volume = master_volume;
         log::debug!(
             "Session saved (tab={:?}, track={}, measure={})",
             session.last_tab_file,
@@ -329,29 +369,27 @@ impl RuxApplication {
     }
 
     fn apply_session_restore(&mut self, session: &SessionState) -> Task<Message> {
-        let Some(tablature) = &mut self.tablature else {
-            return Task::none();
-        };
-        let Some(audio_player) = &self.audio_player else {
+        let (Some(song), Some(audio_player)) = (&mut self.song, &self.audio_player) else {
             return Task::none();
         };
 
-        let track_count = self.all_tracks.len();
+        let track_count = song.tracks.len();
         if track_count == 0 {
             return Task::none();
         }
         let track = session.track_index.min(track_count - 1);
-        if track != self.track_selection.index {
-            self.track_selection = self.all_tracks[track].clone();
-            tablature.update_track(track);
+        if track != song.track.index {
+            song.track = song.tracks[track].clone();
+            song.tablature.update_track(track);
         }
+        let tablature = &mut song.tablature;
 
         let tempo = session.tempo_percentage.clamp(25, 200);
-        self.tempo_selection = TempoSelection::new(tempo);
+        self.prefs.tempo = TempoSelection::new(tempo);
         audio_player.set_tempo_percentage(tempo);
 
         let volume = session.master_volume.clamp(0.0, 1.0);
-        self.saved_master_volume = volume;
+        self.prefs.master_volume = volume;
         audio_player.set_master_volume(volume);
 
         let measure_count = tablature.measure_count();
@@ -400,14 +438,14 @@ impl RuxApplication {
     }
 
     fn title(&self) -> String {
-        match &self.song_info {
-            Some(song_info) => format!("Ruxguitar - {}", song_info.file_name),
+        match &self.song {
+            Some(song) => format!("Ruxguitar - {}", song.info.file_name),
             None => String::from("Ruxguitar - untitled"),
         }
     }
 
     fn focus_measure_with_scroll(&mut self, measure_id: usize) -> Task<Message> {
-        let Some(tablature) = &mut self.tablature else {
+        let Some(LoadedSong { tablature, .. }) = &mut self.song else {
             return Task::none();
         };
         tablature.focus_on_measure(measure_id);
@@ -426,10 +464,10 @@ impl RuxApplication {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TrackSelected(selection) => {
-                if let Some(tablature) = self.tablature.as_mut() {
-                    tablature.update_track(selection.index);
+                if let Some(song) = &mut self.song {
+                    song.tablature.update_track(selection.index);
+                    song.track = selection;
                 }
-                self.track_selection = selection;
                 self.persist_session();
                 Task::none()
             }
@@ -463,7 +501,13 @@ impl RuxApplication {
                 self.audio_player = None;
                 // a startup restore only applies to the file it reopened,
                 // whether or not that load succeeds
-                let restore_session = self.pending_session_restore.take();
+                let restore_session = match self.session_restore.take() {
+                    Some(SessionRestore::OnLoad(session)) => Some(session),
+                    other => {
+                        self.session_restore = other;
+                        None
+                    }
+                };
                 match result {
                     Ok((contents, parent_folder, file_name, tab_path)) => {
                         if let Err(err) = self.config.set_tabs_folder(parent_folder) {
@@ -472,10 +516,10 @@ impl RuxApplication {
                             )));
                         }
                         if let Ok(song) = parse_gp_data(&contents) {
-                            if restore_session.is_none() {
-                                self.reset_tab_defaults();
+                            if let Some(session) = restore_session {
+                                self.session_restore = Some(SessionRestore::OnLayout(session));
                             } else {
-                                self.deferred_session_restore = restore_session;
+                                self.reset_tab_defaults();
                             }
                             // build all tracks selection
                             let track_selections: Vec<_> = song
@@ -497,11 +541,10 @@ impl RuxApplication {
                                     "No tracks found in GP file".to_string(),
                                 ));
                             }
-                            self.all_tracks.clone_from(&track_selections);
-                            self.song_info = Some(SongDisplayInfo::new(&song, file_name));
+                            let info = SongDisplayInfo::new(&song, file_name);
                             // select first track by default
                             let default_track = 0;
-                            self.track_selection = track_selections[default_track].clone();
+                            let track = track_selections[default_track].clone();
                             // share song ownership with tablature and player
                             let song_rc = Rc::new(song);
                             let playback_order = compute_playback_order(&song_rc.measure_headers);
@@ -512,12 +555,17 @@ impl RuxApplication {
                                 tablature_scroll_id.clone(),
                                 &playback_order,
                             );
-                            self.tablature = Some(tablature);
+                            self.song = Some(LoadedSong {
+                                info,
+                                tracks: track_selections,
+                                track,
+                                tablature,
+                            });
                             // audio player initialization
                             match AudioPlayer::new(
                                 song_rc.clone(),
                                 song_rc.tempo.value,
-                                self.tempo_selection.percentage,
+                                self.prefs.tempo.percentage,
                                 self.sound_font_file.clone(),
                                 self.current_tick.clone(),
                                 self.beat_notify.clone(),
@@ -525,9 +573,7 @@ impl RuxApplication {
                             ) {
                                 Ok(audio_player) => {
                                     // apply persistent playback preferences
-                                    audio_player.set_metronome(self.metronome_enabled);
-                                    audio_player.set_count_in(self.count_in_enabled);
-                                    audio_player.set_master_volume(self.saved_master_volume);
+                                    self.prefs.apply_to(&audio_player);
                                     self.audio_player = Some(audio_player);
                                     self.current_tab_path = Some(tab_path);
                                     self.persist_session();
@@ -553,57 +599,39 @@ impl RuxApplication {
                 }
             }
             Message::SelectionDragStart(measure_id, beat_id, press_position) => {
-                self.measure_selection_dragging = true;
-                self.selection_drag_moved = false;
-                self.selection_press_position = Some(press_position);
-                self.selection_focus_beat = beat_id;
-                if let Some(tablature) = &mut self.tablature {
+                self.selection_drag = SelectionDrag::press(press_position, beat_id);
+                if let Some(LoadedSong { tablature, .. }) = &mut self.song {
                     tablature.set_pointer_drag_active(true);
                     tablature.begin_selection_drag(measure_id);
                 }
                 Task::none()
             }
             Message::SelectionDragTo(measure_id, cursor_position) => {
-                if !self.measure_selection_dragging {
-                    return Task::none();
-                }
-                let Some(press_position) = self.selection_press_position else {
-                    return Task::none();
-                };
-                let delta = cursor_position - press_position;
-                if delta.x * delta.x + delta.y * delta.y
-                    < SELECTION_DRAG_THRESHOLD_PX * SELECTION_DRAG_THRESHOLD_PX
+                if self.selection_drag.move_to(cursor_position)
+                    && let Some(LoadedSong { tablature, .. }) = &mut self.song
                 {
-                    return Task::none();
-                }
-                self.selection_drag_moved = true;
-                if let Some(tablature) = &mut self.tablature {
                     tablature.extend_selection_drag(measure_id);
                 }
                 Task::none()
             }
             Message::SelectionDragEnd => {
-                if !self.measure_selection_dragging {
+                let Some(DragRelease { moved, focus_beat }) = self.selection_drag.release() else {
                     return Task::none();
-                }
-                self.measure_selection_dragging = false;
-                let dragged = self.selection_drag_moved;
-                self.selection_drag_moved = false;
-                self.selection_press_position = None;
-                if let Some(tablature) = &mut self.tablature {
+                };
+                if let Some(LoadedSong { tablature, .. }) = &mut self.song {
                     tablature.set_pointer_drag_active(false);
-                    if !dragged {
+                    if !moved {
                         tablature.clear_selection();
                     }
                 }
                 // keep a running loop in step with the selection
                 let loop_start = self.sync_measure_loop();
-                let focus_task = if let Some(tablature) = &mut self.tablature {
+                let focus_task = if let Some(LoadedSong { tablature, .. }) = &mut self.song {
                     // a new loop starts playing from its first measure
                     let (measure_id, beat_id) = match (loop_start, tablature.selection_range()) {
                         (Some(first_measure), _) => (first_measure, 0),
                         (None, Some((start, _))) => (start, 0),
-                        (None, None) => (tablature.selection_anchor(), self.selection_focus_beat),
+                        (None, None) => (tablature.selection_anchor(), focus_beat),
                     };
                     tablature.focus_on_measure_beat(measure_id, beat_id);
                     if let Some(audio_player) = &self.audio_player {
@@ -635,7 +663,7 @@ impl RuxApplication {
                 {
                     return Task::done(Message::StopPlayer);
                 }
-                let Some(tablature) = &mut self.tablature else {
+                let Some(LoadedSong { tablature, .. }) = &mut self.song else {
                     return Task::none();
                 };
                 tablature.focus_on_tick(tick);
@@ -652,17 +680,21 @@ impl RuxApplication {
                     })
             }
             Message::NextMeasure => {
-                let target = self.tablature.as_ref().and_then(|t| {
-                    let next = t.focused_measure() + 1;
-                    (next < t.measure_count()).then_some(next)
-                });
+                let target = self
+                    .song
+                    .as_ref()
+                    .map(|song| &song.tablature)
+                    .and_then(|t| {
+                        let next = t.focused_measure() + 1;
+                        (next < t.measure_count()).then_some(next)
+                    });
                 target.map_or_else(Task::none, |m| self.focus_measure_with_scroll(m))
             }
             Message::PreviousMeasure => {
                 let target = self
-                    .tablature
+                    .song
                     .as_ref()
-                    .and_then(|t| t.focused_measure().checked_sub(1));
+                    .and_then(|song| song.tablature.focused_measure().checked_sub(1));
                 target.map_or_else(Task::none, |m| self.focus_measure_with_scroll(m))
             }
             Message::PlayPause => {
@@ -677,7 +709,8 @@ impl RuxApplication {
                 if !was_playing {
                     let loop_start = self.sync_measure_loop();
                     // resume in place inside the loop, otherwise jump to its start
-                    let outside_loop = self.tablature.as_ref().and_then(|tablature| {
+                    let outside_loop = self.song.as_ref().and_then(|song| {
+                        let tablature = &song.tablature;
                         let (_, end) = tablature.selection_range()?;
                         let start = loop_start?;
                         let focused = tablature.focused_measure();
@@ -699,11 +732,11 @@ impl RuxApplication {
                 Task::batch([scroll_task, Task::done(Message::WindowResized)])
             }
             Message::StopPlayer => {
-                if self.audio_player.is_some() && self.tablature.is_some() {
+                if self.audio_player.is_some() && self.song.is_some() {
                     self.persist_session();
                 }
-                if let (Some(audio_player), Some(tablature)) =
-                    (&mut self.audio_player, &mut self.tablature)
+                if let (Some(audio_player), Some(LoadedSong { tablature, .. })) =
+                    (&mut self.audio_player, &mut self.song)
                 {
                     // stop audio player
                     audio_player.stop();
@@ -719,30 +752,28 @@ impl RuxApplication {
                 }
             }
             Message::ToggleSolo => {
-                if let Some(audio_player) = &self.audio_player {
-                    let track = self.track_selection.index;
-                    audio_player.toggle_solo_mode(track);
+                if let (Some(audio_player), Some(song)) = (&self.audio_player, &self.song) {
+                    audio_player.toggle_solo_mode(song.track.index);
                 }
                 Task::none()
             }
             Message::ToggleMute => {
-                if let Some(audio_player) = &self.audio_player {
-                    let track = self.track_selection.index;
-                    audio_player.toggle_track_mute(track);
+                if let (Some(audio_player), Some(song)) = (&self.audio_player, &self.song) {
+                    audio_player.toggle_track_mute(song.track.index);
                 }
                 Task::none()
             }
             Message::ToggleMetronome => {
-                self.metronome_enabled = !self.metronome_enabled;
+                self.prefs.metronome = !self.prefs.metronome;
                 if let Some(audio_player) = &self.audio_player {
-                    audio_player.set_metronome(self.metronome_enabled);
+                    audio_player.set_metronome(self.prefs.metronome);
                 }
                 Task::none()
             }
             Message::ToggleCountIn => {
-                self.count_in_enabled = !self.count_in_enabled;
+                self.prefs.count_in = !self.prefs.count_in;
                 if let Some(audio_player) = &self.audio_player {
-                    audio_player.set_count_in(self.count_in_enabled);
+                    audio_player.set_count_in(self.prefs.count_in);
                 }
                 Task::none()
             }
@@ -759,14 +790,14 @@ impl RuxApplication {
                 })
             }
             Message::TablatureResized(tablature_container_size) => {
-                if let Some(tablature) = &mut self.tablature {
+                if let Some(LoadedSong { tablature, .. }) = &mut self.song {
                     tablature.update_container_size(
                         tablature_container_size.width,
                         tablature_container_size.height,
                     );
                 }
                 if tablature_container_size.width > 0.0
-                    && let Some(session) = self.deferred_session_restore.take()
+                    && let Some(SessionRestore::OnLayout(session)) = self.session_restore.take()
                 {
                     return self.apply_session_restore(&session);
                 }
@@ -776,7 +807,7 @@ impl RuxApplication {
                 if let Some(audio_player) = &self.audio_player {
                     audio_player.set_tempo_percentage(tempos_selection.percentage);
                 }
-                self.tempo_selection = tempos_selection;
+                self.prefs.tempo = tempos_selection;
                 self.persist_session();
                 Task::none()
             }
@@ -784,29 +815,17 @@ impl RuxApplication {
                 if self.tab_file_is_loading {
                     return Task::none();
                 }
-                if let Some(current_index) = TempoSelection::PRESET
-                    .iter()
-                    .position(|t| t == &self.tempo_selection)
-                    && current_index < TempoSelection::PRESET.len() - 1
-                {
-                    let next_tempo = TempoSelection::PRESET[current_index + 1];
-                    return Task::done(Message::TempoSelected(next_tempo));
-                }
-                Task::none()
+                self.prefs.tempo.faster().map_or_else(Task::none, |tempo| {
+                    Task::done(Message::TempoSelected(tempo))
+                })
             }
             Message::DecreaseTempo => {
                 if self.tab_file_is_loading {
                     return Task::none();
                 }
-                if let Some(current_index) = TempoSelection::PRESET
-                    .iter()
-                    .position(|t| t == &self.tempo_selection)
-                    && current_index > 0
-                {
-                    let previous_tempo = TempoSelection::PRESET[current_index - 1];
-                    return Task::done(Message::TempoSelected(previous_tempo));
-                }
-                Task::none()
+                self.prefs.tempo.slower().map_or_else(Task::none, |tempo| {
+                    Task::done(Message::TempoSelected(tempo))
+                })
             }
             Message::ToggleFullscreen => {
                 self.is_fullscreen = !self.is_fullscreen;
@@ -818,7 +837,7 @@ impl RuxApplication {
                 window::latest().and_then(move |id| window::set_mode(id, mode))
             }
             Message::MasterVolumeChanged(volume) => {
-                self.saved_master_volume = volume;
+                self.prefs.master_volume = volume;
                 if let Some(audio_player) = &self.audio_player {
                     audio_player.set_master_volume(volume);
                 }
@@ -857,9 +876,9 @@ impl RuxApplication {
             let play_button = action_gated(icon, message, Some(Message::PlayPause));
             let stop_button = action_gated(stop_icon(), "Stop", Some(Message::StopPlayer));
             let counter = self
-                .tablature
+                .song
                 .as_ref()
-                .map(|tab| {
+                .map(|LoadedSong { tablature: tab, .. }| {
                     let headers = &tab.song.measure_headers;
                     let focused = tab.focused_measure();
                     let total_measures = tab.measure_count();
@@ -881,13 +900,11 @@ impl RuxApplication {
             row![horizontal()]
         };
 
-        let track_control = if self.all_tracks.is_empty() {
-            row![horizontal()]
-        } else {
+        let track_control = if let Some(song) = &self.song {
             let tempo_label = text("Tempo").size(14);
             let tempo_percentage = pick_list(
                 TempoSelection::PRESET,
-                Some(&self.tempo_selection),
+                Some(&self.prefs.tempo),
                 Message::TempoSelected,
             )
             .text_size(14)
@@ -908,26 +925,26 @@ impl RuxApplication {
                 Message::ToggleMute,
                 self.audio_player
                     .as_ref()
-                    .is_some_and(|p| p.is_track_muted(self.track_selection.index)),
+                    .is_some_and(|p| p.is_track_muted(song.track.index)),
             );
 
             let metronome_mode = action_toggle(
                 metronome_icon(),
                 "Metronome",
                 Message::ToggleMetronome,
-                self.metronome_enabled,
+                self.prefs.metronome,
             );
 
             let count_in_mode = action_toggle(
                 count_in_icon(),
                 "Count-in",
                 Message::ToggleCountIn,
-                self.count_in_enabled,
+                self.prefs.count_in,
             );
 
             let track_pick_list = pick_list(
-                self.all_tracks.as_slice(),
-                Some(&self.track_selection),
+                song.tracks.as_slice(),
+                Some(&song.track),
                 Message::TrackSelected,
             )
             .text_size(14)
@@ -937,7 +954,7 @@ impl RuxApplication {
             let current_volume = self
                 .audio_player
                 .as_ref()
-                .map_or(self.saved_master_volume, AudioPlayer::master_volume);
+                .map_or(self.prefs.master_volume, AudioPlayer::master_volume);
             let volume_slider = slider(0.0..=1.0, current_volume, Message::MasterVolumeChanged)
                 .step(0.01_f32)
                 .width(100);
@@ -955,6 +972,8 @@ impl RuxApplication {
             ]
             .spacing(10)
             .align_y(Alignment::Center)
+        } else {
+            row![horizontal()]
         };
 
         let controls = row![
@@ -977,28 +996,18 @@ impl RuxApplication {
                 ..Default::default()
             });
 
-        let song_info = if let Some(song) = &self.song_info {
-            if !song.artist.is_empty() {
-                format!("{} - {}", song.name, song.artist)
-            } else {
-                song.name.clone()
-            }
-        } else {
-            String::new()
-        };
-        let metadata_line = self
-            .song_info
-            .as_ref()
+        let song_info = self.song.as_ref().map(|song| &song.info);
+        let title_line = song_info
+            .map(SongDisplayInfo::title_line)
+            .unwrap_or_default();
+        let metadata_line = song_info
             .and_then(SongDisplayInfo::metadata_line)
             .unwrap_or_default();
-
-        let gp_version = if let Some(song) = &self.song_info {
-            format!("{:?}", song.gp_version)
-        } else {
-            String::new()
-        };
+        let gp_version = song_info
+            .map(|info| format!("{:?}", info.gp_version))
+            .unwrap_or_default();
         let status = row![
-            container(Text::new(song_info).shaping(Auto))
+            container(Text::new(title_line).shaping(Auto))
                 .width(Length::FillPortion(1))
                 .align_x(Alignment::Start),
             container(Text::new(metadata_line).shaping(Auto))
@@ -1012,10 +1021,10 @@ impl RuxApplication {
 
         let status = container(status).padding(4);
 
-        let tablature_view = self
-            .tablature
-            .as_ref()
-            .map_or_else(|| untitled_text_table_box().into(), |t| t.view());
+        let tablature_view = self.song.as_ref().map_or_else(
+            || untitled_text_table_box().into(),
+            |song| song.tablature.view(),
+        );
 
         let tablature = container(tablature_view).id(self.tablature_id.clone());
 
@@ -1110,7 +1119,7 @@ impl RuxApplication {
         // closing is handled here so the session is saved before exiting
         subscriptions.push(window::close_requests().map(|_| Message::CloseRequested));
 
-        if self.measure_selection_dragging {
+        if self.selection_drag.is_active() {
             let drag_release = event::listen_with(|event, _status, _id| {
                 if matches!(
                     event,
@@ -1178,3 +1187,98 @@ impl PartialEq for BeatSubscriptionData {
 }
 
 impl Eq for BeatSubscriptionData {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::song_parser::{SongInfo, Tempo};
+
+    fn display_info(name: &str, artist: &str, album: &str, copyright: &str) -> SongDisplayInfo {
+        let song = Song {
+            song_info: SongInfo {
+                name: name.to_string(),
+                artist: artist.to_string(),
+                album: album.to_string(),
+                copyright: copyright.to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        SongDisplayInfo::new(&song, "song.gp5".to_string())
+    }
+
+    fn measure(start: u32, bpm: u32) -> MeasureHeader {
+        MeasureHeader {
+            start,
+            tempo: Tempo::new(bpm, None),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tempo_steps_through_the_presets() {
+        let normal = TempoSelection::default();
+        assert_eq!(normal.faster(), Some(TempoSelection::new(150)));
+        assert_eq!(normal.slower(), Some(TempoSelection::new(90)));
+    }
+
+    #[test]
+    fn tempo_stops_at_both_ends() {
+        assert_eq!(TempoSelection::new(200).faster(), None);
+        assert_eq!(TempoSelection::new(25).slower(), None);
+    }
+
+    #[test]
+    fn a_restored_tempo_off_the_presets_does_not_step() {
+        // a session may hold any percentage, the steps only know the presets
+        assert_eq!(TempoSelection::new(75).faster(), None);
+        assert_eq!(TempoSelection::new(75).slower(), None);
+    }
+
+    #[test]
+    fn the_title_names_the_artist_when_known() {
+        assert_eq!(display_info("Song", "", "", "").title_line(), "Song");
+        assert_eq!(
+            display_info("Song", "Band", "", "").title_line(),
+            "Song - Band"
+        );
+    }
+
+    #[test]
+    fn metadata_skips_empty_fields() {
+        assert_eq!(display_info("Song", "Band", "", "").metadata_line(), None);
+        assert_eq!(
+            display_info("Song", "Band", "Album", "2024").metadata_line(),
+            Some("Album \u{2022} 2024".to_string())
+        );
+    }
+
+    #[test]
+    fn a_track_shows_its_tuning_when_known() {
+        let guitar = TrackSelection::new(0, "Guitar".to_string(), Some("Drop D".to_string()));
+        assert_eq!(guitar.to_string(), "1 - Guitar (Drop D)");
+        let drums = TrackSelection::new(2, "Drums".to_string(), None);
+        assert_eq!(drums.to_string(), "3 - Drums");
+    }
+
+    #[test]
+    fn song_time_follows_tempo_changes() {
+        let bar = QUARTER_TIME * 4;
+        // two 4/4 bars at 120 bpm, then one at 60 bpm
+        let headers = [
+            measure(QUARTER_TIME, 120),
+            measure(QUARTER_TIME + bar, 120),
+            measure(QUARTER_TIME + 2 * bar, 60),
+        ];
+        assert_eq!(song_time_up_to_measure(&headers, 0), 0.0);
+        assert_eq!(song_time_up_to_measure(&headers, 2), 4.0);
+        assert_eq!(song_time_up_to_measure(&headers, 3), 8.0);
+    }
+
+    #[test]
+    fn times_read_as_minutes_and_seconds() {
+        assert_eq!(format_mmss(0.0), "0:00");
+        assert_eq!(format_mmss(65.9), "1:05");
+        assert_eq!(format_mmss(-3.0), "0:00");
+    }
+}
