@@ -1,11 +1,129 @@
 //! Staff furniture: bar lines, repeats, endings, time signature and focus boxes.
 
 use super::layout::{BEAT_LENGTH, HALF_BEAT_LENGTH, RowSpacing, STRING_LINE_HEIGHT};
-use crate::parser::song_parser::TimeSignature;
+use crate::parser::song_parser::{MeasureHeader, TimeSignature};
 use crate::ui::utils::TablatureColors;
 use iced::advanced::text::Shaping::Auto;
 use iced::widget::canvas::{Frame, Path, Stroke, Text};
 use iced::{Point, Rectangle, Renderer, Size};
+
+/// The bar line a measure opens with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BarStart {
+    /// A repeat sign: thick and thin lines, then dots.
+    Repeat,
+    /// The opening of the song: thick and thin lines.
+    Section,
+    /// A plain line, for the first measure of a staff line.
+    Line,
+    /// No line: the previous measure's closing line is shared.
+    None,
+}
+
+impl BarStart {
+    pub(super) const fn of(header: &MeasureHeader, measure_id: usize, first_on_line: bool) -> Self {
+        if header.repeat_open {
+            Self::Repeat
+        } else if measure_id == 0 {
+            Self::Section
+        } else if first_on_line {
+            Self::Line
+        } else {
+            Self::None
+        }
+    }
+}
+
+/// The bar line a measure closes with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BarEnd {
+    /// A repeat sign, with how many times the section repeats.
+    Repeat(i8),
+    /// The end of the song: thin and thick lines.
+    Section,
+    /// A plain line.
+    Line,
+}
+
+impl BarEnd {
+    pub(super) const fn of(header: &MeasureHeader, is_last: bool) -> Self {
+        if header.repeat_close > 0 {
+            Self::Repeat(header.repeat_close)
+        } else if is_last {
+            Self::Section
+        } else {
+            Self::Line
+        }
+    }
+}
+
+pub(super) fn draw_bar_start(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    bar: BarStart,
+    measure_start_x: f32,
+    measure_start_y: f32,
+    vertical_measure_height: f32,
+) {
+    match bar {
+        BarStart::Repeat => draw_open_repeat(
+            frame,
+            colors,
+            measure_start_x,
+            measure_start_y,
+            vertical_measure_height,
+        ),
+        BarStart::Section => draw_open_section(
+            frame,
+            colors,
+            measure_start_x,
+            measure_start_y,
+            vertical_measure_height,
+        ),
+        BarStart::Line => draw_measure_vertical_line(
+            frame,
+            colors,
+            vertical_measure_height,
+            measure_start_x,
+            measure_start_y,
+        ),
+        BarStart::None => {}
+    }
+}
+
+pub(super) fn draw_bar_end(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    bar: BarEnd,
+    measure_end_x: f32,
+    measure_start_y: f32,
+    vertical_measure_height: f32,
+) {
+    match bar {
+        BarEnd::Repeat(count) => draw_close_repeat(
+            frame,
+            colors,
+            measure_end_x,
+            measure_start_y,
+            vertical_measure_height,
+            count,
+        ),
+        BarEnd::Section => draw_end_section(
+            frame,
+            colors,
+            measure_end_x,
+            measure_start_y,
+            vertical_measure_height,
+        ),
+        BarEnd::Line => draw_measure_vertical_line(
+            frame,
+            colors,
+            vertical_measure_height,
+            measure_end_x,
+            measure_start_y,
+        ),
+    }
+}
 
 /// Keep drawn lines off the canvas edge, where they would be clipped in half.
 pub(super) const CANVAS_MARGIN: f32 = 2.0;
@@ -77,7 +195,7 @@ pub(super) fn draw_focused_box(
     frame.stroke_rectangle(top_left, rectangle_size, stroke);
 }
 
-pub(super) fn draw_measure_vertical_line(
+fn draw_measure_vertical_line(
     frame: &mut Frame<Renderer>,
     colors: TablatureColors,
     vertical_measure_height: f32,
@@ -93,7 +211,7 @@ pub(super) fn draw_measure_vertical_line(
     frame.stroke(&vertical_line, stroke);
 }
 
-pub(super) fn draw_open_section(
+fn draw_open_section(
     frame: &mut Frame<Renderer>,
     colors: TablatureColors,
     measure_start_x: f32,
@@ -121,7 +239,7 @@ pub(super) fn draw_open_section(
     );
 }
 
-pub(super) fn draw_open_repeat(
+fn draw_open_repeat(
     frame: &mut Frame<Renderer>,
     colors: TablatureColors,
     measure_start_x: f32,
@@ -145,7 +263,7 @@ pub(super) fn draw_open_repeat(
     );
 }
 
-pub(super) fn draw_close_repeat(
+fn draw_close_repeat(
     frame: &mut Frame<Renderer>,
     colors: TablatureColors,
     measure_end_x: f32,
@@ -260,7 +378,7 @@ fn draw_repeat_dots(
     );
 }
 
-pub(super) fn draw_end_section(
+fn draw_end_section(
     frame: &mut Frame<Renderer>,
     colors: TablatureColors,
     measure_end_x: f32,

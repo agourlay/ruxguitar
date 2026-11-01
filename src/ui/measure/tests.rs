@@ -9,7 +9,7 @@ use super::layout::{
 use super::rhythm::{
     MAX_BEAMS, beam_leans_right, beam_runs, division_length, is_rest, stem_beams, tuplet_runs,
 };
-use super::staff::{CANVAS_MARGIN, focus_box_top};
+use super::staff::{BarEnd, BarStart, CANVAS_MARGIN, focus_box_top};
 use crate::parser::song_parser::{
     Beat, Chord, Duration, KeySignature, MeasureHeader, Note, NoteEffect, QUARTER_TIME,
 };
@@ -505,4 +505,35 @@ fn quintuplet_of_sixteenths_is_one_run() {
     let beats: Vec<Beat> = (0..5).map(|_| beat(16, 5, 4)).collect();
     let positions: Vec<f32> = (0..5).map(|i| i as f32 * 10.0).collect();
     assert_eq!(tuplet_runs(&beats, &positions), vec![(5, 0.0, 40.0)]);
+}
+
+#[test]
+fn the_song_opens_with_a_section_line() {
+    let header = MeasureHeader::default();
+    assert_eq!(BarStart::of(&header, 0, true), BarStart::Section);
+    // a later measure only draws its opening line at the start of a staff line
+    assert_eq!(BarStart::of(&header, 3, true), BarStart::Line);
+    assert_eq!(BarStart::of(&header, 3, false), BarStart::None);
+}
+
+#[test]
+fn a_repeat_sign_wins_over_the_other_opening_lines() {
+    let header = MeasureHeader {
+        repeat_open: true,
+        ..Default::default()
+    };
+    assert_eq!(BarStart::of(&header, 0, true), BarStart::Repeat);
+    assert_eq!(BarStart::of(&header, 3, false), BarStart::Repeat);
+}
+
+#[test]
+fn the_last_measure_closes_the_song_unless_it_repeats() {
+    let plain = MeasureHeader::default();
+    assert_eq!(BarEnd::of(&plain, false), BarEnd::Line);
+    assert_eq!(BarEnd::of(&plain, true), BarEnd::Section);
+    let repeated = MeasureHeader {
+        repeat_close: 2,
+        ..Default::default()
+    };
+    assert_eq!(BarEnd::of(&repeated, true), BarEnd::Repeat(2));
 }

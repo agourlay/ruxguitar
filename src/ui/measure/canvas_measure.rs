@@ -8,9 +8,8 @@ use super::layout::{
 };
 use super::rhythm::{draw_rhythm, draw_tuplet_bracket, tuplet_runs};
 use super::staff::{
-    draw_alternative_ending, draw_close_repeat, draw_end_section, draw_focused_box,
-    draw_measure_vertical_line, draw_open_repeat, draw_open_section, draw_selection_fill,
-    draw_time_signature,
+    BarEnd, BarStart, draw_alternative_ending, draw_bar_end, draw_bar_start, draw_focused_box,
+    draw_selection_fill, draw_time_signature,
 };
 use crate::parser::song_parser::{KeySignature, MeasureHeader, Song, TripletFeel};
 use crate::ui::application::Message;
@@ -389,36 +388,17 @@ impl canvas::Program<Message> for CanvasMeasure {
 
             // measure headers
             let measure_header = &self.song.measure_headers[self.measure_id];
-            let next_measure_header = &self.song.measure_headers.get(self.measure_id + 1);
+            let next_measure_header = self.song.measure_headers.get(self.measure_id + 1);
 
-            // display open measure bar
-            if measure_header.repeat_open {
-                draw_open_repeat(
-                    frame,
-                    colors,
-                    measure_start_x,
-                    measure_start_y,
-                    vertical_measure_height,
-                );
-            } else if self.measure_id == 0 {
-                draw_open_section(
-                    frame,
-                    colors,
-                    measure_start_x,
-                    measure_start_y,
-                    vertical_measure_height,
-                );
-            } else if self.is_first_on_line {
-                // only the first measure on a row draws its opening line,
-                // otherwise it doubles with the previous measure's end line
-                draw_measure_vertical_line(
-                    frame,
-                    colors,
-                    vertical_measure_height,
-                    measure_start_x,
-                    measure_start_y,
-                );
-            }
+            let bar_start = BarStart::of(measure_header, self.measure_id, self.is_first_on_line);
+            draw_bar_start(
+                frame,
+                colors,
+                bar_start,
+                measure_start_x,
+                measure_start_y,
+                vertical_measure_height,
+            );
 
             // display time signature (if first measure OR if it changed)
             if self.has_time_signature {
@@ -597,34 +577,15 @@ impl canvas::Program<Message> for CanvasMeasure {
                 }
             }
 
-            // draw close measure
-            if measure_header.repeat_close > 0 {
-                draw_close_repeat(
-                    frame,
-                    colors,
-                    measure_start_x + actual_width,
-                    measure_start_y,
-                    vertical_measure_height,
-                    measure_header.repeat_close,
-                );
-            } else if next_measure_header.is_none() {
-                draw_end_section(
-                    frame,
-                    colors,
-                    measure_start_x + actual_width,
-                    measure_start_y,
-                    vertical_measure_height,
-                );
-            } else {
-                // vertical measure end
-                draw_measure_vertical_line(
-                    frame,
-                    colors,
-                    vertical_measure_height,
-                    measure_start_x + actual_width, // end of measure
-                    measure_start_y,
-                );
-            }
+            let bar_end = BarEnd::of(measure_header, next_measure_header.is_none());
+            draw_bar_end(
+                frame,
+                colors,
+                bar_end,
+                measure_start_x + actual_width,
+                measure_start_y,
+                vertical_measure_height,
+            );
         });
 
         vec![tab]
