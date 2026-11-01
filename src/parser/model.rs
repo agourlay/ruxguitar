@@ -578,6 +578,40 @@ pub enum SlideType {
     OutUpWards,
 }
 
+impl SlideType {
+    /// The bit of each slide in the GP5 and GPX slide masks, in the order
+    /// they are checked.
+    const FLAGS: [(i32, Self); 6] = [
+        (0x01, Self::ShiftSlideTo),
+        (0x02, Self::LegatoSlideTo),
+        (0x04, Self::OutDownwards),
+        (0x08, Self::OutUpWards),
+        (0x10, Self::IntoFromBelow),
+        (0x20, Self::IntoFromAbove),
+    ];
+
+    /// The slide named by a GP5 or GPX bit mask. A note flagged as sliding
+    /// always slides, like TuxGuitar: without a known bit it shifts.
+    pub fn from_flags(flags: i32) -> Self {
+        Self::FLAGS
+            .iter()
+            .find(|(bit, _)| flags & bit != 0)
+            .map_or(Self::ShiftSlideTo, |(_, slide)| slide.clone())
+    }
+
+    /// The slide named by a GP4 ordinal, shifting when it is unknown.
+    pub const fn from_ordinal(ordinal: i8) -> Self {
+        match ordinal {
+            -2 => Self::IntoFromAbove,
+            -1 => Self::IntoFromBelow,
+            2 => Self::LegatoSlideTo,
+            3 => Self::OutDownwards,
+            4 => Self::OutUpWards,
+            _ => Self::ShiftSlideTo,
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TrillEffect {
     pub fret: i8,
@@ -841,5 +875,40 @@ impl Default for Track {
             fret_count: 24,
             measures: vec![],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slide_flags_pick_the_slide_kind() {
+        assert_eq!(SlideType::from_flags(0x01), SlideType::ShiftSlideTo);
+        assert_eq!(SlideType::from_flags(0x02), SlideType::LegatoSlideTo);
+        assert_eq!(SlideType::from_flags(0x04), SlideType::OutDownwards);
+        assert_eq!(SlideType::from_flags(0x08), SlideType::OutUpWards);
+        assert_eq!(SlideType::from_flags(0x10), SlideType::IntoFromBelow);
+        assert_eq!(SlideType::from_flags(0x20), SlideType::IntoFromAbove);
+        // the lowest bit set wins
+        assert_eq!(SlideType::from_flags(0x22), SlideType::LegatoSlideTo);
+    }
+
+    #[test]
+    fn a_flagged_slide_without_a_known_kind_still_slides() {
+        assert_eq!(SlideType::from_flags(0), SlideType::ShiftSlideTo);
+        assert_eq!(SlideType::from_flags(0x40), SlideType::ShiftSlideTo);
+        assert_eq!(SlideType::from_ordinal(0), SlideType::ShiftSlideTo);
+        assert_eq!(SlideType::from_ordinal(9), SlideType::ShiftSlideTo);
+    }
+
+    #[test]
+    fn gp4_slide_ordinals_pick_the_slide_kind() {
+        assert_eq!(SlideType::from_ordinal(-2), SlideType::IntoFromAbove);
+        assert_eq!(SlideType::from_ordinal(-1), SlideType::IntoFromBelow);
+        assert_eq!(SlideType::from_ordinal(1), SlideType::ShiftSlideTo);
+        assert_eq!(SlideType::from_ordinal(2), SlideType::LegatoSlideTo);
+        assert_eq!(SlideType::from_ordinal(3), SlideType::OutDownwards);
+        assert_eq!(SlideType::from_ordinal(4), SlideType::OutUpWards);
     }
 }

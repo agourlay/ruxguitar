@@ -599,7 +599,7 @@ fn build_note(
         SlapEffect::None
     };
     if gp_note.slide {
-        effect.slide = Some(slide_type_of(gp_note.slide_flags));
+        effect.slide = Some(SlideType::from_flags(gp_note.slide_flags));
     }
     effect.trill = trill_of(gp_note, value);
     effect.tremolo_picking = tremolo_picking_of(gp_beat);
@@ -692,22 +692,6 @@ fn drum_string_for(strings: &[(i32, i32)], beat_notes: &[Note], value: i32) -> O
         .filter(|(number, _)| !taken(*number))
         .min_by_key(|(number, _)| (number - preferred).abs())
         .copied()
-}
-
-const fn slide_type_of(flags: i32) -> SlideType {
-    if flags & 0x02 != 0 {
-        SlideType::LegatoSlideTo
-    } else if flags & 0x04 != 0 {
-        SlideType::OutDownwards
-    } else if flags & 0x08 != 0 {
-        SlideType::OutUpWards
-    } else if flags & 0x10 != 0 {
-        SlideType::IntoFromBelow
-    } else if flags & 0x20 != 0 {
-        SlideType::IntoFromAbove
-    } else {
-        SlideType::ShiftSlideTo
-    }
 }
 
 fn trill_of(gp_note: &GpxNote, initial_fret: i32) -> Option<TrillEffect> {
@@ -1106,15 +1090,5 @@ mod tests {
         assert_eq!(stroke.direction, BeatStrokeDirection::Down);
         assert_eq!(stroke.value, BRUSH_STROKE_VALUE);
         assert_eq!(GpxDirection::parse("Sideways"), None);
-    }
-
-    #[test]
-    fn slide_flags_pick_the_slide_kind() {
-        assert_eq!(slide_type_of(0x01), SlideType::ShiftSlideTo);
-        assert_eq!(slide_type_of(0x02), SlideType::LegatoSlideTo);
-        assert_eq!(slide_type_of(0x04), SlideType::OutDownwards);
-        assert_eq!(slide_type_of(0x08), SlideType::OutUpWards);
-        assert_eq!(slide_type_of(0x10), SlideType::IntoFromBelow);
-        assert_eq!(slide_type_of(0x20), SlideType::IntoFromAbove);
     }
 }
