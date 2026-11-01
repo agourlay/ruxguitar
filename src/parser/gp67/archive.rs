@@ -32,3 +32,36 @@ pub fn read_gp7_gpif(data: &[u8]) -> Result<Vec<u8>, RuxError> {
     }
     Ok(bytes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+
+    fn archive_with(name: &str, content: &[u8]) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file(name, SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(content).unwrap();
+        writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn the_score_is_read_from_the_archive() {
+        let data = archive_with(RESOURCE_SCORE, b"<GPIF/>");
+        assert_eq!(read_gp7_gpif(&data).unwrap(), b"<GPIF/>");
+    }
+
+    #[test]
+    fn an_archive_without_a_score_is_rejected() {
+        let data = archive_with("Content/other.xml", b"<x/>");
+        assert!(read_gp7_gpif(&data).is_err());
+    }
+
+    #[test]
+    fn a_file_that_is_not_an_archive_is_rejected() {
+        assert!(read_gp7_gpif(b"not a zip file").is_err());
+    }
+}

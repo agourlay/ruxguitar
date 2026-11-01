@@ -883,6 +883,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_pitch_without_accidental_is_spelled_with_sharps() {
+        let c_sharp = PitchClass::from(1, None, None);
+        assert_eq!(c_sharp.note, "C#");
+        assert_eq!((c_sharp.just, c_sharp.accidental, c_sharp.value), (0, 1, 1));
+        assert!(c_sharp.sharp);
+        let e = PitchClass::from(4, None, None);
+        assert_eq!(e.note, "E");
+        assert_eq!((e.just, e.accidental, e.value), (4, 0, 4));
+    }
+
+    #[test]
+    fn a_pitch_wraps_around_the_octave() {
+        assert_eq!(PitchClass::from(13, None, None).note, "C#");
+        assert_eq!(PitchClass::from(-1, None, None).note, "B");
+    }
+
+    #[test]
+    fn an_explicit_flat_spells_the_pitch_flat() {
+        // B flat: B lowered by one
+        let b_flat = PitchClass::from(11, Some(-1), None);
+        assert_eq!((b_flat.just, b_flat.accidental, b_flat.value), (11, -1, 10));
+        assert!(!b_flat.sharp);
+    }
+
+    #[test]
     fn slide_flags_pick_the_slide_kind() {
         assert_eq!(SlideType::from_flags(0x01), SlideType::ShiftSlideTo);
         assert_eq!(SlideType::from_flags(0x02), SlideType::LegatoSlideTo);

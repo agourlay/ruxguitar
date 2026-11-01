@@ -624,7 +624,10 @@ fn a_plain_measure_needs_no_row_above_the_staff() {
     let header = &song.measure_headers[0];
     let measure = &song.tracks[0].measures[0];
     let rows = RowSpacing::for_measure(measure, header, false, false, false);
-    assert_eq!(rows.first_string_y(), RowSpacing::default().first_string_y());
+    assert_eq!(
+        rows.first_string_y(),
+        RowSpacing::default().first_string_y()
+    );
     // the stems hang below it
     assert!(rows.staff_footer > RowSpacing::default().staff_footer);
 }

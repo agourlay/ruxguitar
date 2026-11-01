@@ -69,3 +69,42 @@ impl<'a> BitReader<'a> {
         bytes
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bits_are_read_most_significant_first() {
+        let mut reader = BitReader::new(&[0b1010_0000]);
+        assert_eq!(reader.read_bits(3), 0b101);
+    }
+
+    #[test]
+    fn reversed_bits_are_read_least_significant_first() {
+        let mut reader = BitReader::new(&[0b1100_0000]);
+        assert_eq!(reader.read_bits_reversed(3), 0b011);
+    }
+
+    #[test]
+    fn reads_cross_byte_boundaries() {
+        let mut reader = BitReader::new(&[0b0000_0001, 0b1000_0000]);
+        reader.read_bits(7);
+        assert_eq!(reader.read_bits(2), 0b11);
+        assert_eq!(reader.byte_offset(), 1);
+    }
+
+    #[test]
+    fn whole_bytes_can_be_read_off_a_byte_boundary() {
+        let mut reader = BitReader::new(&[0x0A, 0xBC, 0xD0]);
+        reader.read_bits(4);
+        assert_eq!(reader.read_bytes(2), [0xAB, 0xCD]);
+    }
+
+    #[test]
+    fn reading_past_the_end_yields_zeros() {
+        let mut reader = BitReader::new(&[0xFF]);
+        assert_eq!(reader.read_bits(12), 0xFF0);
+        assert!(reader.end());
+    }
+}

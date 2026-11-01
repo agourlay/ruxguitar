@@ -166,3 +166,89 @@ impl MidiPlayerParams {
             .store(tempo_percentage, Ordering::Relaxed);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn params() -> MidiPlayerParams {
+        MidiPlayerParams::new(120, 100, None)
+    }
+
+    #[test]
+    fn the_tempo_follows_its_percentage() {
+        let params = params();
+        assert_eq!(params.adjusted_tempo(), 120);
+        params.set_tempo_percentage(50);
+        assert_eq!(params.adjusted_tempo(), 60);
+        params.set_tempo(200);
+        assert_eq!(params.adjusted_tempo(), 100);
+    }
+
+    #[test]
+    fn the_tempo_never_reaches_zero() {
+        let params = params();
+        params.set_tempo(0);
+        assert_eq!(params.adjusted_tempo(), 1);
+    }
+
+    #[test]
+    fn mute_wins_over_solo() {
+        let params = params();
+        assert!(params.is_track_audible(0) && params.is_track_audible(1));
+        params.set_solo_track_id(Some(1));
+        assert!(!params.is_track_audible(0));
+        assert!(params.is_track_audible(1));
+        params.toggle_track_mute(1);
+        assert!(!params.is_track_audible(1));
+        params.toggle_track_mute(1);
+        params.set_solo_track_id(None);
+        assert!(params.is_track_audible(0) && params.is_track_audible(1));
+    }
+
+    #[test]
+    fn tracks_past_the_mute_mask_cannot_be_muted() {
+        let params = params();
+        params.toggle_track_mute(64);
+        assert!(!params.is_track_muted(64));
+        assert!(params.is_track_audible(64));
+    }
+
+    #[test]
+    fn a_count_in_request_is_taken_once() {
+        let params = params();
+        assert_eq!(params.take_count_in_request(), None);
+        params.request_count_in(3840, 960);
+        assert_eq!(params.take_count_in_request(), Some((3840, 960)));
+        assert_eq!(params.take_count_in_request(), None);
+    }
+
+    #[test]
+    fn the_master_volume_is_clamped() {
+        let params = params();
+        params.set_master_volume(1.5);
+        assert_eq!(params.master_volume(), 1.0);
+        params.set_master_volume(-1.0);
+        assert_eq!(params.master_volume(), 0.0);
+        params.set_master_volume(0.25);
+        assert_eq!(params.master_volume(), 0.25);
+    }
+
+    #[test]
+    fn a_loop_region_can_be_set_and_cleared() {
+        let params = params();
+        assert!(!params.loop_enabled());
+        params.set_loop_region(960, 4800, 90);
+        assert!(params.loop_enabled());
+        assert_eq!(
+            (
+                params.loop_start_tick(),
+                params.loop_end_tick(),
+                params.loop_start_tempo()
+            ),
+            (960, 4800, 90)
+        );
+        params.clear_loop();
+        assert!(!params.loop_enabled());
+    }
+}
