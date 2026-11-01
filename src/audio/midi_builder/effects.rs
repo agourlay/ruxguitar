@@ -315,3 +315,211 @@ pub(super) fn compute_stroke_offsets(
 
     offsets
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::song_parser::{
+        DEFAULT_BANK, DEFAULT_PERCUSSION_BANK, DEFAULT_VELOCITY, Measure, NoteEffect, Voice,
+    };
+
+    fn channel(bank: u8) -> MidiChannel {
+        MidiChannel {
+            channel_id: 0,
+            effect_channel_id: 0,
+            instrument: 0,
+            volume: 0,
+            balance: 0,
+            chorus: 0,
+            reverb: 0,
+            phaser: 0,
+            tremolo: 0,
+            bank,
+        }
+    }
+
+    fn note(string: i8, kind: NoteType) -> Note {
+        let mut note = Note::new(NoteEffect::default());
+        note.string = string;
+        note.kind = kind;
+        note
+    }
+
+    /// A quarter note beat starting at `start`.
+    fn beat(start: u32, notes: Vec<Note>) -> Beat {
+        Beat {
+            notes,
+            start,
+            ..Default::default()
+        }
+    }
+
+    /// One measure per beat list, played once each in order.
+    fn track(measures: Vec<Vec<Beat>>) -> (Track, Vec<(usize, i64)>) {
+        let order = (0..measures.len()).map(|m| (m, 0)).collect();
+        let measures = measures
+            .into_iter()
+            .map(|beats| Measure {
+                voices: vec![Voice {
+                    measure_index: 0,
+                    beats,
+                }],
+                ..Default::default()
+            })
+            .collect();
+        let track = Track {
+            measures,
+            ..Default::default()
+        };
+        (track, order)
+    }
+
+    /// The first note of the first beat, the one whose duration is measured.
+    fn first_note(track: &Track) -> &Note {
+        &track.measures[0].voices[0].beats[0].notes[0]
+    }
+
+    fn duration_of(track: &Track, order: &[(usize, i64)], beat_id: usize, note: &Note) -> u32 {
+        apply_duration_effect(track, order, 0, 0, beat_id, note, false, 120, QUARTER_TIME)
+    }
+
+    #[test]
+    fn accents_and_ghosts_shift_the_velocity() {
+        let guitar = channel(DEFAULT_BANK);
+        let mut plain = note(1, NoteType::Normal);
+        assert_eq!(
+            apply_velocity_effect(&plain, None, &guitar),
+            DEFAULT_VELOCITY
+        );
+        plain.effect.ghost_note = true;
+        let ghost = apply_velocity_effect(&plain, None, &guitar);
+        plain.effect.ghost_note = false;
+        plain.effect.accentuated_note = true;
+        let accent = apply_velocity_effect(&plain, None, &guitar);
+        plain.effect.accentuated_note = false;
+        plain.effect.heavy_accentuated_note = true;
+        let heavy = apply_velocity_effect(&plain, None, &guitar);
+        assert!(ghost < DEFAULT_VELOCITY);
+        assert!(
+            DEFAULT_VELOCITY < accent && accent < heavy,
+            "{accent} {heavy}"
+        );
+    }
+
+    #[test]
+    fn velocity_stays_in_the_midi_range() {
+        let mut loud = note(1, NoteType::Normal);
+        loud.velocity = 127;
+        loud.effect.heavy_accentuated_note = true;
+        assert_eq!(
+            apply_velocity_effect(&loud, None, &channel(DEFAULT_BANK)),
+            127
+        );
+        let mut quiet = note(1, NoteType::Normal);
+        quiet.velocity = MIN_VELOCITY;
+        quiet.effect.ghost_note = true;
+        assert_eq!(
+            apply_velocity_effect(&quiet, None, &channel(DEFAULT_BANK)),
+            MIN_VELOCITY
+        );
+    }
+
+    #[test]
+    fn a_note_after_a_hammer_on_is_softer_except_on_drums() {
+        let mut hammer = note(1, NoteType::Normal);
+        hammer.effect.hammer = true;
+        let played = note(1, NoteType::Normal);
+        let guitar = apply_velocity_effect(&played, Some(&hammer), &channel(DEFAULT_BANK));
+        assert_eq!(guitar, DEFAULT_VELOCITY - 25);
+        let drums =
+            apply_velocity_effect(&played, Some(&hammer), &channel(DEFAULT_PERCUSSION_BANK));
+        assert_eq!(drums, DEFAULT_VELOCITY);
+    }
+
+    #[test]
+    fn a_static_duration_follows_the_tempo_up_to_the_note_length() {
+        assert_eq!(apply_static_duration(120, DEFAULT_DURATION_DEAD, 1000), 60);
+        assert_eq!(apply_static_duration(120, DEFAULT_DURATION_DEAD, 40), 40);
+    }
+
+    #[test]
+    fn a_tie_extends_the_note_across_the_barline() {
+        let (track, order) = track(vec![
+            vec![beat(0, vec![note(1, NoteType::Normal)])],
+            vec![beat(QUARTER_TIME, vec![note(1, NoteType::Tie)])],
+        ]);
+        let played = first_note(&track);
+        assert_eq!(duration_of(&track, &order, 0, played), QUARTER_TIME * 2);
+    }
+
+    #[test]
+    fn a_new_note_on_the_string_ends_the_tie_chain() {
+        let (track, order) = track(vec![vec![
+            beat(0, vec![note(1, NoteType::Normal)]),
+            beat(QUARTER_TIME, vec![note(1, NoteType::Normal)]),
+            beat(QUARTER_TIME * 2, vec![note(1, NoteType::Tie)]),
+        ]]);
+        assert_eq!(
+            duration_of(&track, &order, 0, first_note(&track)),
+            QUARTER_TIME
+        );
+    }
+
+    #[test]
+    fn let_ring_rings_through_the_beat_that_ends_it() {
+        let mut ringing = note(1, NoteType::Normal);
+        ringing.effect.let_ring = true;
+        let (track, order) = track(vec![vec![
+            beat(0, vec![ringing]),
+            beat(QUARTER_TIME, vec![note(2, NoteType::Normal)]),
+        ]]);
+        assert_eq!(
+            duration_of(&track, &order, 0, first_note(&track)),
+            QUARTER_TIME * 2
+        );
+    }
+
+    #[test]
+    fn dead_palm_muted_and_staccato_notes_are_cut_short() {
+        let (track, order) = track(vec![vec![beat(0, vec![note(1, NoteType::Normal)])]]);
+        let dead = note(1, NoteType::Dead);
+        assert_eq!(duration_of(&track, &order, 0, &dead), 60);
+        let mut muted = note(1, NoteType::Normal);
+        muted.effect.palm_mute = true;
+        assert_eq!(duration_of(&track, &order, 0, &muted), 120);
+        let mut staccato = note(1, NoteType::Normal);
+        staccato.effect.staccato = true;
+        assert_eq!(duration_of(&track, &order, 0, &staccato), QUARTER_TIME / 2);
+    }
+
+    #[test]
+    fn the_next_note_search_stops_at_the_first_beat_played() {
+        let (track, order) = track(vec![
+            vec![beat(0, vec![note(1, NoteType::Normal)])],
+            vec![
+                beat(QUARTER_TIME, vec![note(2, NoteType::Normal)]),
+                beat(QUARTER_TIME * 2, vec![note(1, NoteType::Normal)]),
+            ],
+        ]);
+        // the next beat plays string 2 only: no target on string 1
+        assert!(next_note_on_string(&track, &order, 0, 0, 0, 1).is_none());
+        let (_, next_beat, _) = next_note_on_string(&track, &order, 0, 0, 0, 2).unwrap();
+        assert_eq!(next_beat.start, QUARTER_TIME);
+    }
+
+    #[test]
+    fn the_previous_note_search_skips_other_strings_across_measures() {
+        let mut first = note(1, NoteType::Normal);
+        first.value = 5;
+        let (track, order) = track(vec![
+            vec![beat(0, vec![first])],
+            vec![
+                beat(QUARTER_TIME, vec![note(2, NoteType::Normal)]),
+                beat(QUARTER_TIME * 2, vec![note(1, NoteType::Normal)]),
+            ],
+        ]);
+        let previous = previous_note_on_string(&track, &order, 1, 0, 1, 1).unwrap();
+        assert_eq!(previous.value, 5);
+        assert!(previous_note_on_string(&track, &order, 0, 0, 0, 1).is_none());
+    }
+}

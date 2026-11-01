@@ -3,9 +3,9 @@
 use crate::audio::midi_event::{FIRST_TICK, MidiEvent};
 use crate::audio::playback_order::playback_tick;
 use crate::parser::song_parser::{
-    Beat, BendEffect, BendPoint, HarmonicType, MIN_VELOCITY, Measure, MeasureHeader, MidiChannel,
-    NATURAL_FREQUENCIES, Note, NoteType, QUARTER_TIME, SEMITONE_LENGTH, Song, Track,
-    TremoloBarEffect, VELOCITY_INCREMENT,
+    Beat, BendEffect, BendPoint, GraceEffect, HarmonicEffect, HarmonicType, MIN_VELOCITY, Measure,
+    MeasureHeader, MidiChannel, NATURAL_FREQUENCIES, Note, NoteType, QUARTER_TIME, SEMITONE_LENGTH,
+    Song, Track, TremoloBarEffect, VELOCITY_INCREMENT,
 };
 use std::rc::Rc;
 
@@ -376,6 +376,9 @@ impl MidiBuilder {
         }
     }
 
+    /// Play the effects that change a note's key or timing, and the extra
+    /// notes they bring. Returns the key the note itself sounds at, or `None`
+    /// when an effect already played it as repeated notes.
     #[allow(clippy::too_many_arguments)]
     fn add_key_effect(
         &mut self,
@@ -392,211 +395,206 @@ impl MidiBuilder {
     ) -> Option<i32> {
         let channel_id = i32::from(midi_channel.channel_id);
         let is_percussion = midi_channel.is_percussion();
+        let fret_key = |fret: i32| track_offset + fret + string_tuning;
+        // the fretted key, before any effect
+        let initial_key = fret_key(i32::from(note.value));
 
-        // compute key without effect
-        let initial_key = track_offset + i32::from(note.value) + string_tuning;
-
-        // key with effect
-        let mut key = initial_key;
-
-        // fade in
         if note.effect.fade_in {
-            let mut expression = 31;
-            let expression_increment = 1;
-            let mut tick = *note_start;
-            let tick_increment = *duration / ((127 - expression) / expression_increment);
-            while tick < (*note_start + *duration) && expression < 127 {
-                self.add_control_change(
-                    tick,
-                    track_id,
-                    channel_id,
-                    CC_EXPRESSION,
-                    expression as i32,
-                );
-                tick += tick_increment;
-                expression += expression_increment;
-            }
-            // normalize the expression
-            self.add_control_change(
-                *note_start + *duration,
-                track_id,
-                channel_id,
-                CC_EXPRESSION,
-                127,
-            );
+            self.add_fade_in(track_id, channel_id, *note_start, *duration);
         }
 
-        // grace note
         if let Some(grace) = &note.effect.grace {
-            let grace_key = track_offset + i32::from(grace.fret) + string_tuning;
-            let grace_length = grace.duration_time() as u32;
-            let grace_velocity = grace.velocity;
-            let grace_duration = if grace.is_dead {
-                apply_static_duration(tempo, DEFAULT_DURATION_DEAD, grace_length)
-            } else {
-                grace_length
-            };
-            let on_beat_duration = *note_start - grace_length;
-            if grace.is_on_beat || on_beat_duration < QUARTER_TIME {
-                *note_start = note_start.saturating_add(grace_length);
-                *duration = duration.saturating_sub(grace_length);
-            }
-            self.add_note(
-                track_id,
-                grace_key,
-                *note_start - grace_length,
-                grace_duration,
-                grace_velocity,
-                channel_id,
+            let grace_key = fret_key(i32::from(grace.fret));
+            self.add_grace_note(
+                track_id, channel_id, grace, grace_key, tempo, note_start, duration,
             );
         }
 
-        // trill
+        // a trill or tremolo picking plays the note itself, as repeated notes
         if let Some(trill) = &note.effect.trill
             && !is_percussion
         {
-            let trill_key = track_offset + i32::from(trill.fret) + string_tuning;
-            let mut trill_length = trill.duration.time();
-
-            let trill_tick_limit = *note_start + *duration;
+            let trill_key = fret_key(i32::from(trill.fret));
             // the real fretted note sounds first, then alternates with the trill fret
-            let mut real_key = true;
-            let mut tick = *note_start;
-
-            while tick + 10 < trill_tick_limit {
-                if tick + trill_length >= trill_tick_limit {
-                    trill_length = trill_tick_limit - tick - 1;
-                }
-                let iter_key = if real_key { initial_key } else { trill_key };
-                self.add_note(track_id, iter_key, tick, trill_length, velocity, channel_id);
-                real_key = !real_key;
-                tick += trill_length;
-            }
-
-            // all notes published (like TuxGuitar, possibly none for degenerate
-            // durations) - the caller does not need to publish the note
+            self.add_repeated_notes(
+                track_id,
+                channel_id,
+                [initial_key, trill_key],
+                trill.duration.time(),
+                *note_start,
+                *duration,
+                velocity,
+            );
+            return None;
+        }
+        if let Some(tremolo_picking) = &note.effect.tremolo_picking {
+            self.add_repeated_notes(
+                track_id,
+                channel_id,
+                [initial_key, initial_key],
+                tremolo_picking.duration.time(),
+                *note_start,
+                *duration,
+                velocity,
+            );
             return None;
         }
 
-        // tremolo picking
-        if let Some(tremolo_picking) = &note.effect.tremolo_picking {
-            let mut tp_length = tremolo_picking.duration.time();
-            let mut tick = *note_start;
-            let tp_tick_limit = *note_start + *duration;
-            while tick + 10 < tp_tick_limit {
-                if tick + tp_length >= tp_tick_limit {
-                    tp_length = tp_tick_limit - tick - 1;
-                }
-                self.add_note(track_id, initial_key, tick, tp_length, velocity, channel_id);
-                tick += tp_length;
-            }
-            // all notes published (like TuxGuitar, possibly none for degenerate
-            // durations) - the caller does not need to publish the note
-            return None;
+        if is_percussion {
+            return Some(initial_key);
         }
 
         // pitch-modulating effects share the channel pitch wheel and are
         // mutually exclusive: bend > tremolo bar > slide > vibrato
-        if !is_percussion {
-            // bend
-            if let Some(bend_effect) = &note.effect.bend {
-                self.add_bend(track_id, *note_start, *duration, channel_id, bend_effect);
+        if let Some(bend_effect) = &note.effect.bend {
+            self.add_bend(track_id, *note_start, *duration, channel_id, bend_effect);
+        } else if let Some(tremolo_bar) = &note.effect.tremolo_bar {
+            self.add_tremolo_bar(track_id, *note_start, *duration, channel_id, tremolo_bar);
+        } else if note.effect.slide.is_some() {
+            // the target must lie after the (triplet-adjusted) note start
+            if let Some(target) = slide_target.filter(|(tick, _)| *tick > *note_start) {
+                self.add_slide(track_id, channel_id, *note_start, note.value, target);
             }
-            // tremolo bar
-            else if let Some(tremolo_bar) = &note.effect.tremolo_bar {
-                self.add_tremolo_bar(track_id, *note_start, *duration, channel_id, tremolo_bar);
-            }
-            // slide
-            else if note.effect.slide.is_some() {
-                // the target must lie after the (triplet-adjusted) note start
-                if let Some((slide_tick, slide_value)) =
-                    slide_target.filter(|(tick2, _)| *tick2 > *note_start)
-                {
-                    let value_1 = i32::from(note.value);
-                    let value_2 = i32::from(slide_value);
-
-                    let tick1 = *note_start;
-                    let tick2 = slide_tick;
-
-                    // make slide
-                    let distance: i32 = value_2 - value_1;
-                    let length: i32 = (tick2 - tick1) as i32;
-                    let points = length / (QUARTER_TIME / 8) as i32;
-                    for p_offset in 1..=points {
-                        let tone = ((length / points) * p_offset * distance) as f32 / length as f32;
-                        let bend =
-                            DEFAULT_BEND as i32 + (tone * DEFAULT_BEND_SEMI_TONE * 2.0) as i32;
-                        let bend_tick = tick1 as i32 + (length / points) * p_offset;
-                        self.add_pitch_bend(bend_tick as u32, track_id, channel_id, bend);
-                    }
-
-                    // normalise the bend
-                    self.add_pitch_bend(tick2, track_id, channel_id, DEFAULT_BEND as i32);
-                }
-            }
-            // vibrato
-            else if note.effect.vibrato {
-                self.add_vibrato(track_id, *note_start, *duration, channel_id);
-            }
+        } else if note.effect.vibrato {
+            self.add_vibrato(track_id, *note_start, *duration, channel_id);
         }
 
-        // harmonic
-        if let Some(harmonic) = &note.effect.harmonic
-            && !is_percussion
-        {
-            match harmonic.kind {
-                HarmonicType::Natural => {
-                    for (harmonic_value, harmonic_frequency) in NATURAL_FREQUENCIES {
-                        if note.value % 12 == (harmonic_value % 12) as i16 {
-                            key = (initial_key + harmonic_frequency) - i32::from(note.value);
-                            break;
-                        }
-                    }
-                }
-                HarmonicType::Semi => {
-                    let velocity = MIN_VELOCITY.max(velocity - VELOCITY_INCREMENT * 3);
-                    self.add_note(
-                        track_id,
-                        initial_key,
-                        *note_start,
-                        *duration,
-                        velocity,
-                        channel_id,
-                    );
-                    key = initial_key + NATURAL_FREQUENCIES[0].1;
-                }
-                HarmonicType::Artificial | HarmonicType::Pinch => {
-                    let data = harmonic.data.min(NATURAL_FREQUENCIES.len() - 1);
-                    key = initial_key + NATURAL_FREQUENCIES[data].1;
-                }
-                HarmonicType::Tapped => {
-                    // like TuxGuitar, an unmatched tap interval still plays
-                    // an octave harmonic
-                    key = initial_key + NATURAL_FREQUENCIES[0].1;
-                    if let Some(right_hand_fret) = harmonic.right_hand_fret {
-                        for (harmonic_value, harmonic_frequency) in NATURAL_FREQUENCIES {
-                            if i16::from(right_hand_fret) - note.value == harmonic_value as i16 {
-                                key = initial_key + harmonic_frequency;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            if key - 12 > 0 {
-                let velocity = MIN_VELOCITY.max(velocity - VELOCITY_INCREMENT * 4);
-                self.add_note(
-                    track_id,
-                    key - 12,
-                    *note_start,
-                    *duration,
-                    velocity,
-                    channel_id,
-                );
-            }
-        }
+        let Some(harmonic) = &note.effect.harmonic else {
+            return Some(initial_key);
+        };
+        Some(self.add_harmonic(
+            track_id,
+            channel_id,
+            harmonic,
+            note.value,
+            initial_key,
+            *note_start,
+            *duration,
+            velocity,
+        ))
+    }
 
-        Some(key)
+    /// Raise the channel expression over the note, then restore it.
+    fn add_fade_in(&mut self, track_id: usize, channel_id: i32, start: u32, duration: u32) {
+        let mut expression = 31;
+        let expression_increment = 1;
+        let mut tick = start;
+        let tick_increment = duration / ((127 - expression) / expression_increment);
+        while tick < (start + duration) && expression < 127 {
+            self.add_control_change(tick, track_id, channel_id, CC_EXPRESSION, expression as i32);
+            tick += tick_increment;
+            expression += expression_increment;
+        }
+        // normalize the expression
+        self.add_control_change(start + duration, track_id, channel_id, CC_EXPRESSION, 127);
+    }
+
+    /// Play the grace note before the note. A grace note on the beat, or one
+    /// with too little room before the note, delays the note instead.
+    #[allow(clippy::too_many_arguments)]
+    fn add_grace_note(
+        &mut self,
+        track_id: usize,
+        channel_id: i32,
+        grace: &GraceEffect,
+        grace_key: i32,
+        tempo: u32,
+        note_start: &mut u32,
+        duration: &mut u32,
+    ) {
+        let grace_length = grace.duration_time() as u32;
+        let grace_duration = if grace.is_dead {
+            apply_static_duration(tempo, DEFAULT_DURATION_DEAD, grace_length)
+        } else {
+            grace_length
+        };
+        let on_beat_duration = *note_start - grace_length;
+        if grace.is_on_beat || on_beat_duration < QUARTER_TIME {
+            *note_start = note_start.saturating_add(grace_length);
+            *duration = duration.saturating_sub(grace_length);
+        }
+        self.add_note(
+            track_id,
+            grace_key,
+            *note_start - grace_length,
+            grace_duration,
+            grace.velocity,
+            channel_id,
+        );
+    }
+
+    /// Fill the note's span with notes of `step` ticks, alternating between
+    /// the two keys. Like TuxGuitar, a span too short plays nothing.
+    #[allow(clippy::too_many_arguments)]
+    fn add_repeated_notes(
+        &mut self,
+        track_id: usize,
+        channel_id: i32,
+        keys: [i32; 2],
+        mut step: u32,
+        start: u32,
+        duration: u32,
+        velocity: i16,
+    ) {
+        let tick_limit = start + duration;
+        let mut tick = start;
+        let mut key_index = 0;
+        while tick + 10 < tick_limit {
+            if tick + step >= tick_limit {
+                step = tick_limit - tick - 1;
+            }
+            self.add_note(track_id, keys[key_index], tick, step, velocity, channel_id);
+            key_index = 1 - key_index;
+            tick += step;
+        }
+    }
+
+    /// Glide the pitch wheel from the note to the next one on its string.
+    fn add_slide(
+        &mut self,
+        track_id: usize,
+        channel_id: i32,
+        start: u32,
+        from_value: i16,
+        (target_tick, target_value): (u32, i16),
+    ) {
+        let distance = i32::from(target_value) - i32::from(from_value);
+        let length = (target_tick - start) as i32;
+        let points = length / (QUARTER_TIME / 8) as i32;
+        for p_offset in 1..=points {
+            let tone = ((length / points) * p_offset * distance) as f32 / length as f32;
+            let bend = DEFAULT_BEND as i32 + (tone * DEFAULT_BEND_SEMI_TONE * 2.0) as i32;
+            let bend_tick = start as i32 + (length / points) * p_offset;
+            self.add_pitch_bend(bend_tick as u32, track_id, channel_id, bend);
+        }
+        // normalise the bend
+        self.add_pitch_bend(target_tick, track_id, channel_id, DEFAULT_BEND as i32);
+    }
+
+    /// Play a harmonic: its octave below, softer, and for a semi harmonic the
+    /// fretted note too. Returns the key the harmonic itself sounds at.
+    #[allow(clippy::too_many_arguments)]
+    fn add_harmonic(
+        &mut self,
+        track_id: usize,
+        channel_id: i32,
+        harmonic: &HarmonicEffect,
+        note_value: i16,
+        initial_key: i32,
+        start: u32,
+        duration: u32,
+        velocity: i16,
+    ) -> i32 {
+        if harmonic.kind == HarmonicType::Semi {
+            let velocity = MIN_VELOCITY.max(velocity - VELOCITY_INCREMENT * 3);
+            self.add_note(track_id, initial_key, start, duration, velocity, channel_id);
+        }
+        let key = harmonic_key(harmonic, note_value, initial_key);
+        if key - 12 > 0 {
+            let velocity = MIN_VELOCITY.max(velocity - VELOCITY_INCREMENT * 4);
+            self.add_note(track_id, key - 12, start, duration, velocity, channel_id);
+        }
+        key
     }
 
     fn add_vibrato(&mut self, track_id: usize, start: u32, duration: u32, channel_id: i32) {
@@ -824,9 +822,221 @@ impl MidiBuilder {
     }
 }
 
+/// The key a harmonic sounds at, from the fretted key, like TuxGuitar.
+fn harmonic_key(harmonic: &HarmonicEffect, note_value: i16, initial_key: i32) -> i32 {
+    match harmonic.kind {
+        // the harmonic of the fret the note sits on, if it has one
+        HarmonicType::Natural => NATURAL_FREQUENCIES
+            .iter()
+            .find(|(harmonic_value, _)| note_value % 12 == (harmonic_value % 12) as i16)
+            .map_or(initial_key, |(_, frequency)| {
+                initial_key + frequency - i32::from(note_value)
+            }),
+        HarmonicType::Semi => initial_key + NATURAL_FREQUENCIES[0].1,
+        HarmonicType::Artificial | HarmonicType::Pinch => {
+            let data = harmonic.data.min(NATURAL_FREQUENCIES.len() - 1);
+            initial_key + NATURAL_FREQUENCIES[data].1
+        }
+        // like TuxGuitar, an unmatched tap interval still plays an octave harmonic
+        HarmonicType::Tapped => harmonic
+            .right_hand_fret
+            .and_then(|right_hand_fret| {
+                NATURAL_FREQUENCIES.iter().find(|(harmonic_value, _)| {
+                    i16::from(right_hand_fret) - note_value == *harmonic_value as i16
+                })
+            })
+            .map_or(initial_key + NATURAL_FREQUENCIES[0].1, |(_, frequency)| {
+                initial_key + frequency
+            }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::to_channel_short;
+    use super::*;
+    use crate::audio::midi_event::MidiEventType;
+    use crate::parser::song_parser::DEFAULT_VELOCITY;
+
+    const TRACK: usize = 0;
+    const CHANNEL: i32 = 0;
+
+    fn harmonic(kind: HarmonicType) -> HarmonicEffect {
+        HarmonicEffect {
+            kind,
+            ..Default::default()
+        }
+    }
+
+    /// The (tick, key, length) of each note played, in order.
+    fn notes_played(events: &[MidiEvent]) -> Vec<(u32, i32, u32)> {
+        events
+            .iter()
+            .filter_map(|event| match event.event {
+                MidiEventType::NoteOn(_, key, _) => {
+                    let off = events.iter().find(|other| {
+                        other.tick >= event.tick
+                            && matches!(other.event, MidiEventType::NoteOff(_, k) if k == key)
+                    });
+                    Some((event.tick, key, off.map_or(0, |off| off.tick - event.tick)))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The (tick, wheel value) of each pitch bend, in GP's 0-127 scale.
+    fn pitch_bends(events: &[MidiEvent]) -> Vec<(u32, i32)> {
+        events
+            .iter()
+            .filter_map(|event| match event.event {
+                MidiEventType::MidiMessage(_, 0xE0, data1, data2) => {
+                    Some((event.tick, ((data2 << 7) | data1) / 128))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_natural_harmonic_sounds_at_its_fret_harmonic() {
+        let natural = harmonic(HarmonicType::Natural);
+        // the 12th fret harmonic is the open string an octave up
+        assert_eq!(harmonic_key(&natural, 12, 40 + 12), 40 + 12);
+        // the 5th fret harmonic is two octaves up
+        assert_eq!(harmonic_key(&natural, 5, 40 + 5), 40 + 24);
+        // a fret without a harmonic plays the fretted note
+        assert_eq!(harmonic_key(&natural, 2, 42), 42);
+    }
+
+    #[test]
+    fn an_artificial_harmonic_picks_its_interval_from_data() {
+        let mut artificial = harmonic(HarmonicType::Artificial);
+        artificial.data = 3;
+        assert_eq!(harmonic_key(&artificial, 2, 42), 42 + 19);
+        // out of range data is clamped to the last interval
+        artificial.data = 99;
+        assert_eq!(harmonic_key(&artificial, 2, 42), 42 + 31);
+    }
+
+    #[test]
+    fn a_tapped_harmonic_follows_the_right_hand_fret() {
+        let mut tapped = harmonic(HarmonicType::Tapped);
+        tapped.right_hand_fret = Some(7);
+        // tapped 5 frets above the note
+        assert_eq!(harmonic_key(&tapped, 2, 42), 42 + 24);
+        // an interval without a harmonic plays the octave
+        tapped.right_hand_fret = Some(3);
+        assert_eq!(harmonic_key(&tapped, 2, 42), 42 + 12);
+    }
+
+    #[test]
+    fn a_semi_harmonic_also_plays_the_fretted_note() {
+        let mut builder = MidiBuilder::new();
+        let key = builder.add_harmonic(
+            TRACK,
+            CHANNEL,
+            &harmonic(HarmonicType::Semi),
+            2,
+            42,
+            0,
+            100,
+            DEFAULT_VELOCITY,
+        );
+        assert_eq!(key, 54);
+        // the fretted note, then the harmonic's octave below
+        assert_eq!(notes_played(&builder.events), [(0, 42, 100), (0, 42, 100)]);
+    }
+
+    #[test]
+    fn repeated_notes_alternate_and_stop_at_the_note_end() {
+        let mut builder = MidiBuilder::new();
+        builder.add_repeated_notes(TRACK, CHANNEL, [40, 42], 100, 100, 400, DEFAULT_VELOCITY);
+        assert_eq!(
+            notes_played(&builder.events),
+            [
+                (100, 40, 100),
+                (200, 42, 100),
+                (300, 40, 100),
+                (400, 42, 99)
+            ]
+        );
+    }
+
+    #[test]
+    fn repeated_notes_need_room_to_play() {
+        let mut builder = MidiBuilder::new();
+        builder.add_repeated_notes(TRACK, CHANNEL, [40, 40], 100, 100, 10, DEFAULT_VELOCITY);
+        assert!(builder.events.is_empty());
+    }
+
+    #[test]
+    fn a_grace_note_on_the_beat_delays_the_note() {
+        let grace = GraceEffect {
+            duration: 2,
+            is_on_beat: true,
+            ..Default::default()
+        };
+        let length = grace.duration_time() as u32;
+        let mut start = QUARTER_TIME * 4;
+        let mut duration = QUARTER_TIME;
+        let mut builder = MidiBuilder::new();
+        builder.add_grace_note(TRACK, CHANNEL, &grace, 44, 120, &mut start, &mut duration);
+        assert_eq!(start, QUARTER_TIME * 4 + length);
+        assert_eq!(duration, QUARTER_TIME - length);
+        assert_eq!(
+            notes_played(&builder.events),
+            [(QUARTER_TIME * 4, 44, length)]
+        );
+    }
+
+    #[test]
+    fn a_grace_note_before_the_beat_leaves_the_note_in_place() {
+        let grace = GraceEffect {
+            duration: 2,
+            ..Default::default()
+        };
+        let length = grace.duration_time() as u32;
+        let mut start = QUARTER_TIME * 4;
+        let mut duration = QUARTER_TIME;
+        let mut builder = MidiBuilder::new();
+        builder.add_grace_note(TRACK, CHANNEL, &grace, 44, 120, &mut start, &mut duration);
+        assert_eq!((start, duration), (QUARTER_TIME * 4, QUARTER_TIME));
+        assert_eq!(
+            notes_played(&builder.events),
+            [(QUARTER_TIME * 4 - length, 44, length)]
+        );
+    }
+
+    #[test]
+    fn a_fade_in_ends_at_full_expression() {
+        let mut builder = MidiBuilder::new();
+        builder.add_fade_in(TRACK, CHANNEL, 0, QUARTER_TIME);
+        let expressions: Vec<(u32, i32)> = builder
+            .events
+            .iter()
+            .filter_map(|event| match event.event {
+                MidiEventType::MidiMessage(_, 0xB0, CC_EXPRESSION, value) => {
+                    Some((event.tick, value))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(expressions.first(), Some(&(0, 31)));
+        assert_eq!(expressions.last(), Some(&(QUARTER_TIME, 127)));
+        assert!(expressions.is_sorted_by_key(|(_, value)| *value));
+    }
+
+    #[test]
+    fn a_slide_glides_to_the_target_then_resets_the_wheel() {
+        let mut builder = MidiBuilder::new();
+        builder.add_slide(TRACK, CHANNEL, 0, 5, (QUARTER_TIME, 7));
+        let bends = pitch_bends(&builder.events);
+        // a point every 32nd note, ending two semitones up before the reset
+        assert_eq!(bends.len(), 9);
+        assert!(bends[..8].is_sorted_by_key(|(_, value)| *value));
+        assert_eq!(bends[7], (QUARTER_TIME, 64 + 11));
+        assert_eq!(bends[8], (QUARTER_TIME, 64));
+    }
 
     #[test]
     fn channel_short_scaling() {
