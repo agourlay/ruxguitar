@@ -13,147 +13,176 @@ use crate::ui::icons::{
 };
 use crate::ui::selections::TempoSelection;
 use crate::ui::song_info::SongDisplayInfo;
-use crate::ui::utils::{action_gated, action_toggle, modal, untitled_text_table_box};
+use crate::ui::utils::{
+    TablatureColors, action_gated, action_toggle, modal, untitled_text_table_box,
+};
 
-use super::{LoadedSong, Message, RuxApplication};
+use super::{Message, RuxApplication};
 
 impl RuxApplication {
     pub(super) fn view(&self) -> Element<'_, Message> {
+        let tablature_view = self.song.as_ref().map_or_else(
+            || untitled_text_table_box().into(),
+            |song| song.tablature.view(),
+        );
+        let tablature = container(tablature_view).id(self.tablature_id.clone());
+
+        let base: Element<Message> = if self.is_fullscreen {
+            column![tablature].spacing(20).padding(10).into()
+        } else {
+            column![
+                self.control_bar(),
+                tablature,
+                rule::horizontal(1),
+                self.status_bar(),
+            ]
+            .spacing(20)
+            .padding(10)
+            .into()
+        };
+
+        // add error modal if any
+        if let Some(error_message) = &self.error_message {
+            let error_view = text(error_message).size(20);
+            modal(base, error_view, Message::ClearError)
+        } else {
+            base
+        }
+    }
+
+    /// The bar above the tablature: open, transport and playback settings.
+    fn control_bar(&self) -> Element<'_, Message> {
         let open_file = action_gated(
             open_icon(),
             "Open file",
             (!self.tab_file_is_loading).then_some(Message::OpenFileDialog),
         );
-
-        let player_control = if let Some(audio_player) = &self.audio_player {
-            let (icon, message) = if audio_player.is_playing() {
-                (pause_icon(), "Pause")
-            } else {
-                (play_icon(), "Play")
-            };
-            let play_button = action_gated(icon, message, Some(Message::PlayPause));
-            let stop_button = action_gated(stop_icon(), "Stop", Some(Message::StopPlayer));
-            let counter = self
-                .song
-                .as_ref()
-                .map(|LoadedSong { tablature: tab, .. }| {
-                    let headers = &tab.song.measure_headers;
-                    let focused = tab.focused_measure();
-                    let total_measures = tab.measure_count();
-                    let current_seconds = song_time_up_to_measure(headers, focused);
-                    let total_seconds = song_time_up_to_measure(headers, total_measures);
-                    format!(
-                        "Measure {}/{} \u{2022} {}/{}",
-                        focused + 1,
-                        total_measures,
-                        format_mmss(current_seconds),
-                        format_mmss(total_seconds),
-                    )
-                })
-                .unwrap_or_default();
-            row![play_button, stop_button, text(counter).size(14)]
-                .spacing(10)
-                .align_y(Alignment::Center)
-        } else {
-            row![horizontal()]
-        };
-
-        let track_control = if let Some(song) = &self.song {
-            let tempo_label = text("Tempo").size(14);
-            let tempo_percentage = pick_list(
-                TempoSelection::PRESET,
-                Some(&self.prefs.tempo),
-                Message::TempoSelected,
-            )
-            .text_size(14)
-            .padding([5, 10]);
-
-            let solo_mode = action_toggle(
-                solo_icon(),
-                "Solo",
-                Message::ToggleSolo,
-                self.audio_player
-                    .as_ref()
-                    .is_some_and(|p| p.solo_track_id().is_some()),
-            );
-
-            let mute_mode = action_toggle(
-                mute_icon(),
-                "Mute",
-                Message::ToggleMute,
-                self.audio_player
-                    .as_ref()
-                    .is_some_and(|p| p.is_track_muted(song.track.index)),
-            );
-
-            let metronome_mode = action_toggle(
-                metronome_icon(),
-                "Metronome",
-                Message::ToggleMetronome,
-                self.prefs.metronome,
-            );
-
-            let count_in_mode = action_toggle(
-                count_in_icon(),
-                "Count-in",
-                Message::ToggleCountIn,
-                self.prefs.count_in,
-            );
-
-            let track_pick_list = pick_list(
-                song.tracks.as_slice(),
-                Some(&song.track),
-                Message::TrackSelected,
-            )
-            .text_size(14)
-            .padding([5, 10]);
-
-            let volume_label = text("Volume").size(14);
-            let current_volume = self
-                .audio_player
-                .as_ref()
-                .map_or(self.prefs.master_volume, AudioPlayer::master_volume);
-            let volume_slider = slider(0.0..=1.0, current_volume, Message::MasterVolumeChanged)
-                .step(0.01_f32)
-                .width(100);
-
-            row![
-                tempo_label,
-                tempo_percentage,
-                volume_label,
-                volume_slider,
-                metronome_mode,
-                count_in_mode,
-                solo_mode,
-                mute_mode,
-                track_pick_list,
-            ]
-            .spacing(10)
-            .align_y(Alignment::Center)
-        } else {
-            row![horizontal()]
-        };
-
         let controls = row![
             open_file,
             horizontal(),
-            player_control,
+            self.transport_controls(),
             horizontal(),
-            track_control,
+            self.playback_settings(),
         ]
         .spacing(10)
         .align_y(Alignment::Center);
 
-        let controls = container(controls)
+        container(controls)
             .padding(10)
             .style(|theme: &Theme| container::Style {
                 // a muted border that reads on either theme tone
                 border: Border::default()
-                    .color(crate::ui::utils::TablatureColors::of(theme).string_line)
+                    .color(TablatureColors::of(theme).string_line)
                     .width(1),
                 ..Default::default()
-            });
+            })
+            .into()
+    }
 
+    /// Play/pause, stop and where playback stands, once a song can play.
+    fn transport_controls(&self) -> Element<'_, Message> {
+        let Some(audio_player) = &self.audio_player else {
+            return row![horizontal()].into();
+        };
+        let (icon, message) = if audio_player.is_playing() {
+            (pause_icon(), "Pause")
+        } else {
+            (play_icon(), "Play")
+        };
+        let play_button = action_gated(icon, message, Some(Message::PlayPause));
+        let stop_button = action_gated(stop_icon(), "Stop", Some(Message::StopPlayer));
+        let counter = self
+            .song
+            .as_ref()
+            .map(|song| {
+                let tablature = &song.tablature;
+                position_label(
+                    &tablature.song.measure_headers,
+                    tablature.focused_measure(),
+                    tablature.measure_count(),
+                )
+            })
+            .unwrap_or_default();
+        row![play_button, stop_button, text(counter).size(14)]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into()
+    }
+
+    /// Tempo, volume, metronome, count-in, solo, mute and track, once a
+    /// song is open.
+    fn playback_settings(&self) -> Element<'_, Message> {
+        let Some(song) = &self.song else {
+            return row![horizontal()].into();
+        };
+        let tempo_percentage = pick_list(
+            TempoSelection::PRESET,
+            Some(&self.prefs.tempo),
+            Message::TempoSelected,
+        )
+        .text_size(14)
+        .padding([5, 10]);
+        let solo_mode = action_toggle(
+            solo_icon(),
+            "Solo",
+            Message::ToggleSolo,
+            self.audio_player
+                .as_ref()
+                .is_some_and(|p| p.solo_track_id().is_some()),
+        );
+        let mute_mode = action_toggle(
+            mute_icon(),
+            "Mute",
+            Message::ToggleMute,
+            self.audio_player
+                .as_ref()
+                .is_some_and(|p| p.is_track_muted(song.track.index)),
+        );
+        let metronome_mode = action_toggle(
+            metronome_icon(),
+            "Metronome",
+            Message::ToggleMetronome,
+            self.prefs.metronome,
+        );
+        let count_in_mode = action_toggle(
+            count_in_icon(),
+            "Count-in",
+            Message::ToggleCountIn,
+            self.prefs.count_in,
+        );
+        let track_pick_list = pick_list(
+            song.tracks.as_slice(),
+            Some(&song.track),
+            Message::TrackSelected,
+        )
+        .text_size(14)
+        .padding([5, 10]);
+        let current_volume = self
+            .audio_player
+            .as_ref()
+            .map_or(self.prefs.master_volume, AudioPlayer::master_volume);
+        let volume_slider = slider(0.0..=1.0, current_volume, Message::MasterVolumeChanged)
+            .step(0.01_f32)
+            .width(100);
+
+        row![
+            text("Tempo").size(14),
+            tempo_percentage,
+            text("Volume").size(14),
+            volume_slider,
+            metronome_mode,
+            count_in_mode,
+            solo_mode,
+            mute_mode,
+            track_pick_list,
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .into()
+    }
+
+    /// The bar under the tablature: title, metadata and file format.
+    fn status_bar(&self) -> Element<'_, Message> {
         let song_info = self.song.as_ref().map(|song| &song.info);
         let title_line = song_info
             .map(SongDisplayInfo::title_line)
@@ -176,33 +205,20 @@ impl RuxApplication {
                 .align_x(Alignment::End),
         ]
         .spacing(10);
-
-        let status = container(status).padding(4);
-
-        let tablature_view = self.song.as_ref().map_or_else(
-            || untitled_text_table_box().into(),
-            |song| song.tablature.view(),
-        );
-
-        let tablature = container(tablature_view).id(self.tablature_id.clone());
-
-        let base: Element<Message> = if self.is_fullscreen {
-            column![tablature].spacing(20).padding(10).into()
-        } else {
-            column![controls, tablature, rule::horizontal(1), status,]
-                .spacing(20)
-                .padding(10)
-                .into()
-        };
-
-        // add error modal if any
-        if let Some(error_message) = &self.error_message {
-            let error_view = text(error_message).size(20);
-            modal(base, error_view, Message::ClearError)
-        } else {
-            base
-        }
+        container(status).padding(4).into()
     }
+}
+
+/// Where playback stands: the focused measure out of all of them, and the
+/// time it starts at out of the song's length.
+fn position_label(headers: &[MeasureHeader], focused: usize, total_measures: usize) -> String {
+    format!(
+        "Measure {}/{} \u{2022} {}/{}",
+        focused + 1,
+        total_measures,
+        format_mmss(song_time_up_to_measure(headers, focused)),
+        format_mmss(song_time_up_to_measure(headers, total_measures)),
+    )
 }
 
 /// Seconds elapsed from the song's start up to (but not including) `measure_idx`.
@@ -253,6 +269,16 @@ mod tests {
         assert_eq!(song_time_up_to_measure(&headers, 0), 0.0);
         assert_eq!(song_time_up_to_measure(&headers, 2), 4.0);
         assert_eq!(song_time_up_to_measure(&headers, 3), 8.0);
+    }
+
+    #[test]
+    fn the_position_reads_as_measure_and_time() {
+        let bar = QUARTER_TIME * 4;
+        let headers = [measure(QUARTER_TIME, 120), measure(QUARTER_TIME + bar, 120)];
+        assert_eq!(
+            position_label(&headers, 1, 2),
+            "Measure 2/2 \u{2022} 0:02/0:04"
+        );
     }
 
     #[test]
