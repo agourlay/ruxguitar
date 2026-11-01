@@ -78,13 +78,13 @@ impl Span {
 
 /// A measure of a track being turned into events, and where it sits in
 /// the playback order.
-struct MeasureContext<'a> {
-    track_id: usize,
-    track: &'a Track,
-    header: &'a MeasureHeader,
-    midi_channel: &'a MidiChannel,
-    playback_order: &'a [(usize, i64)],
-    playback_index: usize,
+pub(super) struct MeasureContext<'a> {
+    pub(super) track_id: usize,
+    pub(super) track: &'a Track,
+    pub(super) header: &'a MeasureHeader,
+    pub(super) midi_channel: &'a MidiChannel,
+    pub(super) playback_order: &'a [(usize, i64)],
+    pub(super) playback_index: usize,
 }
 
 impl MidiBuilder {
@@ -298,17 +298,8 @@ impl MidiBuilder {
                 };
 
                 // apply effects on duration
-                let duration = apply_duration_effect(
-                    track,
-                    playback_order,
-                    playback_index,
-                    voice_id,
-                    beat_id,
-                    note,
-                    header.repeat_close > 0,
-                    tempo,
-                    beat_duration,
-                );
+                let duration =
+                    apply_duration_effect(context, voice_id, beat_id, note, beat_duration);
                 // note starts on beat (adjusted for triplet feel); degenerate
                 // durations (e.g. corrupt tuplet ratios) would emit a NoteOn
                 // without NoteOff

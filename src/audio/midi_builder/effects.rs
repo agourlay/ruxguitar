@@ -2,6 +2,7 @@
 //! These are stateless transforms (velocity, duration, triplet feel, strokes)
 //! with no MIDI/event-emitting side effects.
 
+use super::builder::MeasureContext;
 use crate::parser::song_parser::{
     Beat, BeatStrokeDirection, MIN_VELOCITY, MidiChannel, Note, NoteType, QUARTER_TIME, Track,
     TripletFeel, VELOCITY_INCREMENT,
@@ -35,18 +36,22 @@ pub(super) fn apply_velocity_effect(
 /// Extend the note duration through tie chains and let-ring, walking the
 /// note's own voice over the expanded playback order (repeats included)
 /// like TuxGuitar's `getRealNoteDuration`.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn apply_duration_effect(
-    track: &Track,
-    playback_order: &[(usize, i64)],
-    playback_index: usize,
+    context: &MeasureContext,
     voice_id: usize,
     beat_id: usize,
     note: &Note,
-    repeat_close: bool,
-    tempo: u32,
     duration: u32,
 ) -> u32 {
+    let MeasureContext {
+        track,
+        header,
+        playback_order,
+        playback_index,
+        ..
+    } = *context;
+    let repeat_close = header.repeat_close > 0;
+    let tempo = header.tempo.value;
     let (measure_id, current_move) = playback_order[playback_index];
     let note_beat = &track.measures[measure_id].voices[voice_id].beats[beat_id];
     let mut let_ring = note.effect.let_ring;
@@ -320,7 +325,8 @@ pub(super) fn compute_stroke_offsets(
 mod tests {
     use super::*;
     use crate::parser::song_parser::{
-        DEFAULT_BANK, DEFAULT_PERCUSSION_BANK, DEFAULT_VELOCITY, Measure, NoteEffect, Voice,
+        DEFAULT_BANK, DEFAULT_PERCUSSION_BANK, DEFAULT_VELOCITY, Measure, MeasureHeader,
+        NoteEffect, Voice,
     };
 
     fn channel(bank: u8) -> MidiChannel {
@@ -379,8 +385,19 @@ mod tests {
         &track.measures[0].voices[0].beats[0].notes[0]
     }
 
+    /// The duration of a quarter note in the first measure, at 120 bpm.
     fn duration_of(track: &Track, order: &[(usize, i64)], beat_id: usize, note: &Note) -> u32 {
-        apply_duration_effect(track, order, 0, 0, beat_id, note, false, 120, QUARTER_TIME)
+        let header = MeasureHeader::default();
+        let guitar = channel(DEFAULT_BANK);
+        let context = MeasureContext {
+            track_id: 0,
+            track,
+            header: &header,
+            midi_channel: &guitar,
+            playback_order: order,
+            playback_index: 0,
+        };
+        apply_duration_effect(&context, 0, beat_id, note, QUARTER_TIME)
     }
 
     #[test]
