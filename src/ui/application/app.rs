@@ -19,47 +19,44 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 use tokio::sync::Notify;
 
-mod subscription;
-mod view;
-
-const ICONS_FONT: &[u8] = include_bytes!("../../resources/icons.ttf");
+const ICONS_FONT: &[u8] = include_bytes!("../../../resources/icons.ttf");
 
 pub struct RuxApplication {
     /// The open song, if any.
-    song: Option<LoadedSong>,
-    tablature_id: Id,
+    pub(super) song: Option<LoadedSong>,
+    pub(super) tablature_id: Id,
     /// Absent while no song is open, or when the audio failed to start.
-    audio_player: Option<AudioPlayer>,
-    prefs: PlaybackPrefs,
-    tab_file_is_loading: bool,
+    pub(super) audio_player: Option<AudioPlayer>,
+    pub(super) prefs: PlaybackPrefs,
+    pub(super) tab_file_is_loading: bool,
     sound_font_file: Option<PathBuf>,
     /// Latest tick published by the audio callback, with its wake-up signal.
-    current_tick: Arc<AtomicU32>,
-    beat_notify: Arc<Notify>,
+    pub(super) current_tick: Arc<AtomicU32>,
+    pub(super) beat_notify: Arc<Notify>,
     config: Config,
-    error_message: Option<String>,
-    is_fullscreen: bool,
-    selection_drag: SelectionDrag,
+    pub(super) error_message: Option<String>,
+    pub(super) is_fullscreen: bool,
+    pub(super) selection_drag: SelectionDrag,
     current_tab_path: Option<PathBuf>,
     session_restore: Option<SessionRestore>,
 }
 
 /// A parsed song, with its tablature and the track it shows.
-struct LoadedSong {
-    info: SongDisplayInfo,
-    tracks: Vec<TrackSelection>,
-    track: TrackSelection,
-    tablature: Tablature,
+pub(super) struct LoadedSong {
+    pub(super) info: SongDisplayInfo,
+    pub(super) tracks: Vec<TrackSelection>,
+    pub(super) track: TrackSelection,
+    pub(super) tablature: Tablature,
 }
 
 /// Playback preferences, kept at the app level so they survive reloading a file.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct PlaybackPrefs {
-    tempo: TempoSelection,
-    metronome: bool,
-    count_in: bool,
+pub(super) struct PlaybackPrefs {
+    pub(super) tempo: TempoSelection,
+    pub(super) metronome: bool,
+    pub(super) count_in: bool,
     /// The volume to give a new player; the live one is the player's own.
-    master_volume: f32,
+    pub(super) master_volume: f32,
 }
 
 impl PlaybackPrefs {

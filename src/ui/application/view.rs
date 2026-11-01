@@ -17,7 +17,7 @@ use crate::ui::utils::{
     TablatureColors, action_gated, action_toggle, modal, untitled_text_table_box,
 };
 
-use super::{Message, RuxApplication};
+use super::app::{Message, RuxApplication};
 
 impl RuxApplication {
     pub(super) fn view(&self) -> Element<'_, Message> {

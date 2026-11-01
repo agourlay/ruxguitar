@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::Notify;
 
-use super::{Message, RuxApplication};
+use super::app::{Message, RuxApplication};
 
 impl RuxApplication {
     #[allow(clippy::unused_self)]
