@@ -5,9 +5,7 @@ use super::effects::{
     draw_bend, draw_hammer_arc, draw_pick_stroke, draw_slide, draw_staccato_dot, draw_stroke_arrow,
     draw_tie_arc, draw_tremolo_picking,
 };
-use super::layout::{
-    GRACE_DIGIT_WIDTH, GRACE_GAP, NOTE_DIGIT_WIDTH, RowSpacing, STRING_LINE_HEIGHT,
-};
+use super::layout::{GRACE_DIGIT_WIDTH, GRACE_GAP, NOTE_DIGIT_WIDTH, STRING_LINE_HEIGHT, Staff};
 use super::rhythm::{draw_rest, is_rest};
 use crate::parser::song_parser::{
     Beat, BeatStrokeDirection, BendEffect, GraceEffect, HarmonicType, Note, NoteEffect, NoteType,
@@ -101,23 +99,40 @@ pub(super) fn multiple_bend_conflicts(beat: &Beat, note: &Note, movements: &[i32
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+/// A beat being drawn, with the measure around it.
+pub(super) struct BeatSlot<'a> {
+    /// The measure's beats, to reach neighbouring notes.
+    pub(super) beats: &'a [Beat],
+    /// Where each of the measure's beats starts.
+    pub(super) positions: &'a [f32],
+    pub(super) index: usize,
+    /// Room for the glyphs drawn after the note, up to the next beat's grace note.
+    pub(super) span: f32,
+    /// How much the measure was stretched from its natural width.
+    pub(super) width_scale: f32,
+    /// The color of its fret numbers: the accent when it has the focus.
+    pub(super) color: Color,
+}
+
+impl BeatSlot<'_> {
+    fn beat(&self) -> &Beat {
+        &self.beats[self.index]
+    }
+
+    fn x(&self) -> f32 {
+        self.positions[self.index]
+    }
+}
+
 pub(super) fn draw_beat(
     frame: &mut Frame<Renderer>,
     colors: TablatureColors,
-    beat_position_x: f32,
-    // span usable for glyphs drawn after the note, up to the next beat's grace
-    beat_span: f32,
-    width_scale: f32,
-    measure_start_y: f32,
-    vertical_measure_height: f32,
-    rows: RowSpacing,
-    beat: &Beat,
-    beat_color: Color,
-    beats: &[Beat],
-    beat_positions: &[f32],
-    beat_index: usize,
+    staff: Staff,
+    slot: &BeatSlot,
 ) {
+    let beat = slot.beat();
+    let beat_position_x = slot.x();
+    let rows = staff.rows;
     // Annotate chord effect
     if let Some(chord) = &beat.effect.chord {
         let mut name_y = rows.chord_y();
@@ -141,12 +156,12 @@ pub(super) fn draw_beat(
             colors,
             beat,
             beat_position_x + 2.0,
-            measure_start_y,
-            vertical_measure_height,
+            staff.top,
+            staff.height,
         );
     }
     if !beat.effect.stroke.is_empty() && !beat.notes.is_empty() {
-        draw_stroke_arrow(frame, colors, beat, beat_position_x, measure_start_y);
+        draw_stroke_arrow(frame, colors, beat, beat_position_x, staff.top);
     }
     if beat.effect.pick_stroke != BeatStrokeDirection::None {
         draw_pick_stroke(
@@ -158,7 +173,7 @@ pub(super) fn draw_beat(
         );
     }
     if beat.notes.iter().any(|n| n.effect.staccato) {
-        draw_staccato_dot(frame, colors, beat, beat_position_x, measure_start_y);
+        draw_staccato_dot(frame, colors, beat, beat_position_x, staff.top);
     }
     if let Some(tremolo_picking) = beat
         .notes
@@ -170,7 +185,7 @@ pub(super) fn draw_beat(
             colors,
             tremolo_picking,
             beat_position_x,
-            measure_start_y + vertical_measure_height,
+            staff.bottom(),
         );
     }
 
@@ -183,17 +198,11 @@ pub(super) fn draw_beat(
         draw_note(
             frame,
             colors,
-            measure_start_y,
-            beat_position_x,
-            beat_span,
-            width_scale,
+            staff,
+            slot,
             note,
-            beat_color,
             bend_movements.as_deref(),
             show_bend_amplitude,
-            beats,
-            beat_positions,
-            beat_index,
         );
     }
 
@@ -227,23 +236,17 @@ pub(super) fn draw_beat(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn draw_note(
     frame: &mut Frame<Renderer>,
     colors: TablatureColors,
-    measure_start_y: f32,
-    beat_position_x: f32,
-    width_per_beat: f32,
-    width_scale: f32,
+    staff: Staff,
+    slot: &BeatSlot,
     note: &Note,
-    beat_color: Color,
     bend_movements: Option<&[i32]>,
     show_bend_amplitude: bool,
-    // the measure's beats and their positions, to reach neighbouring notes
-    beats: &[Beat],
-    beat_positions: &[f32],
-    beat_index: usize,
 ) {
+    let beat_position_x = slot.x();
+    let measure_start_y = staff.top;
     // note label (pushed down on the right string)
     let note_label = note_value(note);
     let note_label_len = note_label.chars().count();
@@ -256,14 +259,14 @@ fn draw_note(
     // a tied note carries no fret of its own: it is drawn as an arc hanging
     // back to the note it continues, like TuxGuitar
     if note.kind == NoteType::Tie {
-        let from_x = tied_from_note_x(beats, beat_positions, beat_index, note.string)
+        let from_x = tied_from_note_x(slot.beats, slot.positions, slot.index, note.string)
             .map_or(note_position_x - STRING_LINE_HEIGHT * 2.0, |x| x + 3.0);
-        draw_tie_arc(frame, beat_color, from_x, note_position_x, string_y);
+        draw_tie_arc(frame, slot.color, from_x, note_position_x, string_y);
     } else {
         let note_text = Text {
             shaping: Auto,
             content: note_label,
-            color: beat_color,
+            color: slot.color,
             size: 10.0.into(),
             position: Point::new(note_position_x, note_position_y),
             align_x: Alignment::Center,
@@ -304,15 +307,15 @@ fn draw_note(
             note_position_x,
             note_position_y,
             beat_position_x,
-            width_per_beat,
-            width_scale,
+            slot.span,
+            slot.width_scale,
             measure_start_y,
             show_bend_amplitude,
         );
     } else {
         // slides and hammers reach for the note they land on, like
         // TuxGuitar's paintSlide and paintHammer
-        let next_note = next_note_on_string(beats, beat_positions, beat_index, note.string);
+        let next_note = next_note_on_string(slot.beats, slot.positions, slot.index, note.string);
         if note.effect.slide.is_some() {
             draw_slide(
                 frame,

@@ -205,6 +205,32 @@ impl RowSpacing {
     }
 }
 
+/// Where a measure's staff sits on its canvas.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Staff {
+    /// Y of the first string.
+    pub(super) top: f32,
+    /// Distance from the first string to the last.
+    pub(super) height: f32,
+    /// The annotation rows around the staff.
+    pub(super) rows: RowSpacing,
+}
+
+impl Staff {
+    pub(super) fn new(rows: RowSpacing, string_count: usize) -> Self {
+        Self {
+            top: rows.first_string_y(),
+            height: STRING_LINE_HEIGHT * string_count.saturating_sub(1) as f32,
+            rows,
+        }
+    }
+
+    /// Y of the last string.
+    pub(super) fn bottom(self) -> f32 {
+        self.top + self.height
+    }
+}
+
 // Distance between strings
 pub(super) const STRING_LINE_HEIGHT: f32 = 13.0;
 

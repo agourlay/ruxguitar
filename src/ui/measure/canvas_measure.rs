@@ -1,15 +1,15 @@
 //! The canvas widget drawing one measure of a track, and its click handling.
 
-use super::beat::draw_beat;
+use super::beat::{BeatSlot, draw_beat};
 use super::layout::{
     BEAT_LENGTH, HALF_BEAT_LENGTH, MEASURE_NOTES_PADDING, MIN_BEAT_WIDTH, MIN_MEASURE_WIDTH,
-    RowSpacing, STRING_LINE_HEIGHT, beat_base_width, beat_natural_width, grace_gap_width,
-    lyric_extra_width, measure_height, spacing_for_quarter,
+    RowSpacing, Staff, beat_base_width, beat_natural_width, grace_gap_width, lyric_extra_width,
+    measure_height, spacing_for_quarter,
 };
 use super::rhythm::{draw_rhythm, draw_tuplet_bracket, tuplet_runs};
 use super::staff::{
     BarEnd, BarStart, draw_alternative_ending, draw_bar_end, draw_bar_start, draw_focused_box,
-    draw_selection_fill, draw_time_signature,
+    draw_selection_fill, draw_string_lines, draw_time_signature,
 };
 use crate::parser::song_parser::{KeySignature, MeasureHeader, Song, TripletFeel};
 use crate::ui::application::Message;
@@ -17,7 +17,7 @@ use crate::ui::utils::TablatureColors;
 use iced::advanced::mouse;
 use iced::advanced::text::Shaping::Auto;
 use iced::mouse::Cursor;
-use iced::widget::canvas::{Cache, Event, Geometry, Path, Stroke, Text};
+use iced::widget::canvas::{Cache, Event, Frame, Geometry, Text};
 use iced::widget::{Action, Canvas, canvas};
 use iced::{Element, Length, Point, Rectangle, Renderer, Theme};
 use std::cell::Cell;
@@ -261,6 +261,198 @@ impl CanvasMeasure {
     }
 }
 
+impl CanvasMeasure {
+    /// Paint the measure: its staff, labels, beats and bar lines, across
+    /// the width it was actually given.
+    fn paint(&self, frame: &mut Frame<Renderer>, colors: TablatureColors) {
+        log::debug!("Re-drawing measure {}", self.measure_id);
+        let string_count = self.song.tracks[self.track_id].strings.len();
+        let header = &self.song.measure_headers[self.measure_id];
+        let is_last = self.measure_id + 1 == self.song.measure_headers.len();
+        // may be wider than total_measure_len, when the measure fills its line
+        let width = frame.width();
+        let staff = Staff::new(self.row_spacing, string_count);
+
+        if self.is_selected {
+            draw_selection_fill(frame, colors, staff, width);
+        }
+        if self.is_focused {
+            draw_focused_box(frame, colors, staff, width);
+        }
+        draw_string_lines(frame, colors, staff, string_count, width);
+        let bar_start = BarStart::of(header, self.measure_id, self.is_first_on_line);
+        draw_bar_start(frame, colors, bar_start, 0.0, staff.top, staff.height);
+        if self.has_time_signature {
+            draw_time_signature(
+                frame,
+                colors,
+                &header.time_signature,
+                0.0,
+                staff.top,
+                string_count,
+                header.repeat_open, // need to offset if repeat dots present
+            );
+        }
+        self.draw_labels(frame, colors, staff, header);
+        // alternative ending bracket (e.g., "1.", "2.", "1.2.")
+        if header.repeat_alternative > 0 {
+            draw_alternative_ending(
+                frame,
+                colors,
+                header.repeat_alternative,
+                0.0,
+                width,
+                RowSpacing::ALT_ENDING_Y,
+            );
+        }
+        self.draw_beats(frame, colors, staff, header, width);
+        let bar_end = BarEnd::of(header, is_last);
+        draw_bar_end(frame, colors, bar_end, width, staff.top, staff.height);
+    }
+
+    /// The tempo, marker, key and feel above the staff, and the measure number.
+    fn draw_labels(
+        &self,
+        frame: &mut Frame<Renderer>,
+        colors: TablatureColors,
+        staff: Staff,
+        header: &MeasureHeader,
+    ) {
+        let rows = staff.rows;
+        // the marker follows the tempo label on the same row
+        let mut tempo_label_len = 0;
+        if self.has_tempo_label {
+            let tempo_label = format!("{TEMPO_SIGN} = {}", header.tempo.value);
+            tempo_label_len = tempo_label.chars().count() * 10;
+            frame.fill_text(Text {
+                shaping: Auto,
+                content: tempo_label,
+                color: colors.foreground,
+                size: 11.0.into(),
+                position: Point::new(0.0, rows.marker_y()),
+                ..Text::default()
+            });
+        }
+        if let Some(marker) = &header.marker {
+            frame.fill_text(Text {
+                shaping: Auto,
+                content: marker.title.clone(),
+                color: colors.accent,
+                size: 10.0.into(),
+                position: Point::new(
+                    MEASURE_NOTES_PADDING + tempo_label_len as f32,
+                    rows.marker_y(),
+                ),
+                ..Text::default()
+            });
+        }
+        // key signature and feel, at the measure that establishes them
+        if self.has_key_signature || self.has_triplet_feel {
+            let mut labels = Vec::new();
+            if self.has_key_signature {
+                labels.push(header.key_signature.to_string());
+            }
+            if self.has_triplet_feel {
+                labels.push(triplet_feel_label(header.triplet_feel).to_string());
+            }
+            frame.fill_text(Text {
+                shaping: Auto,
+                content: labels.join("  "),
+                color: colors.foreground,
+                size: 9.0.into(),
+                position: Point::new(2.0, rows.signature_y()),
+                ..Text::default()
+            });
+        }
+        frame.fill_text(Text {
+            shaping: Auto,
+            content: format!("{}", self.measure_id + 1),
+            color: colors.accent,
+            size: 10.0.into(),
+            position: Point::new(0.0, staff.top - 15.0),
+            ..Text::default()
+        });
+    }
+
+    /// The beats with their lyrics, then the rhythm and tuplets under them.
+    fn draw_beats(
+        &self,
+        frame: &mut Frame<Renderer>,
+        colors: TablatureColors,
+        staff: Staff,
+        header: &MeasureHeader,
+        width: f32,
+    ) {
+        let measure = &self.song.tracks[self.track_id].measures[self.measure_id];
+        // TODO draw second voice if present (audio playback already handles all voices)
+        let beats = &measure.voices[0].beats;
+        log::debug!("{} beats", beats.len());
+        let mut beat_start = 0.0;
+        if self.has_time_signature {
+            beat_start += BEAT_LENGTH;
+        }
+        if header.repeat_open {
+            beat_start += BEAT_LENGTH;
+        }
+        // the extra width the measure was given goes to its beats
+        let width_scale = if self.natural_beats_len > 0.0 {
+            (width - self.overhead_width()) / self.natural_beats_len
+        } else {
+            1.0
+        };
+        // every position is known before any beat is drawn: slides and
+        // hammer-ons reach for the next note on their string
+        let positions = beat_x_positions(
+            beat_start + MEASURE_NOTES_PADDING,
+            &self.beat_widths,
+            width_scale,
+        );
+        for (index, natural_width) in self.beat_widths.iter().enumerate() {
+            let beat_width = natural_width * width_scale;
+            // the inline effect glyphs may not reach into the space the
+            // next beat's grace note occupies
+            let next_grace = beats.get(index + 1).map_or(0.0, grace_gap_width);
+            let slot = BeatSlot {
+                beats,
+                positions: &positions,
+                index,
+                span: beat_width - next_grace,
+                width_scale,
+                color: if self.is_focused && index == self.focused_beat {
+                    colors.accent
+                } else {
+                    colors.foreground
+                },
+            };
+            draw_beat(frame, colors, staff, &slot);
+            // the syllable sung on this beat, under the staff
+            if let Some(syllable) = self.lyrics.get(index)
+                && !syllable.is_empty()
+            {
+                frame.fill_text(Text {
+                    shaping: Auto,
+                    content: syllable.clone(),
+                    color: colors.foreground,
+                    size: 8.0.into(),
+                    position: Point::new(
+                        positions[index],
+                        staff.bottom() + staff.rows.staff_footer,
+                    ),
+                    ..Text::default()
+                });
+            }
+        }
+        // the rhythm under the staff, once every beat position is known
+        draw_rhythm(frame, colors, beats, &positions, staff.bottom(), header);
+        // tuplet brackets span consecutive beats of the same division
+        if staff.rows.tuplet > 0.0 {
+            for (enters, x1, x2) in tuplet_runs(beats, &positions) {
+                draw_tuplet_bracket(frame, colors, enters, x1, x2, staff.rows.tuplet_y());
+            }
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub enum MeasureInteraction {
     #[default]
@@ -323,275 +515,9 @@ impl canvas::Program<Message> for CanvasMeasure {
             self.canvas_cache.clear();
         }
         // the cache will not redraw its geometry unless the dimensions of its layer change, or it is explicitly cleared.
-        let tab = self.canvas_cache.draw(renderer, bounds.size(), |frame| {
-            log::debug!("Re-drawing measure {}", self.measure_id);
-            let track = &self.song.tracks[self.track_id];
-            let strings = &track.strings;
-            let string_count = strings.len();
-
-            // use actual allocated width (may be larger than total_measure_len due to FillPortion)
-            let actual_width = frame.width();
-            // scale beat area: extra width goes to beat spacing
-            let actual_measure_len = actual_width - self.overhead_width();
-
-            // distance between lines of measures
-            let vertical_measure_height = STRING_LINE_HEIGHT * (string_count - 1) as f32;
-
-            // Positive x-values extend to the right, and positive y-values extend downwards.
-            let measure_start_x = 0.0;
-            let rows = self.row_spacing;
-            let measure_start_y = rows.first_string_y();
-
-            if self.is_selected {
-                draw_selection_fill(
-                    frame,
-                    colors,
-                    actual_width,
-                    vertical_measure_height,
-                    measure_start_x,
-                    measure_start_y,
-                    rows,
-                );
-            }
-
-            // draw focused box
-            if self.is_focused {
-                draw_focused_box(
-                    frame,
-                    colors,
-                    actual_width,
-                    vertical_measure_height,
-                    measure_start_x,
-                    measure_start_y,
-                    rows,
-                );
-            }
-
-            // draw string lines first (apply rest on top)
-            for (string_id, _fret) in strings.iter().enumerate() {
-                // down position
-                let local_start_y = string_id as f32 * STRING_LINE_HEIGHT;
-                // add 1 to x to avoid overlapping with vertical line
-                let start_point =
-                    Point::new(measure_start_x + 1.0, measure_start_y + local_start_y);
-                // draw at the same y until end of container
-                let end_point = Point::new(
-                    measure_start_x + actual_width,
-                    measure_start_y + local_start_y,
-                );
-                let line = Path::line(start_point, end_point);
-                let stroke = Stroke::default()
-                    .with_width(0.8)
-                    .with_color(colors.string_line);
-                frame.stroke(&line, stroke);
-            }
-
-            // measure headers
-            let measure_header = &self.song.measure_headers[self.measure_id];
-            let next_measure_header = self.song.measure_headers.get(self.measure_id + 1);
-
-            let bar_start = BarStart::of(measure_header, self.measure_id, self.is_first_on_line);
-            draw_bar_start(
-                frame,
-                colors,
-                bar_start,
-                measure_start_x,
-                measure_start_y,
-                vertical_measure_height,
-            );
-
-            // display time signature (if first measure OR if it changed)
-            if self.has_time_signature {
-                draw_time_signature(
-                    frame,
-                    colors,
-                    &measure_header.time_signature,
-                    measure_start_x,
-                    measure_start_y,
-                    string_count,
-                    measure_header.repeat_open, // need to offset if repeat dots present
-                );
-            }
-
-            // capture tempo label len to adjust next annotations
-            let mut tempo_label_len = 0;
-            // display measure tempo (if first measure OR if it changed)
-            if self.has_tempo_label {
-                let tempo_label = format!("{TEMPO_SIGN} = {}", measure_header.tempo.value);
-                tempo_label_len = tempo_label.chars().count() * 10;
-                let tempo_text = Text {
-                    shaping: Auto,
-                    content: tempo_label,
-                    color: colors.foreground,
-                    size: 11.0.into(),
-                    position: Point::new(measure_start_x, rows.marker_y()),
-                    ..Text::default()
-                };
-                frame.fill_text(tempo_text);
-            }
-
-            // marker annotation
-            if let Some(marker) = &measure_header.marker {
-                // measure marker label
-                let marker_text = Text {
-                    shaping: Auto,
-                    content: marker.title.clone(),
-                    color: colors.accent,
-                    size: 10.0.into(),
-                    position: Point::new(
-                        measure_start_x + MEASURE_NOTES_PADDING + tempo_label_len as f32,
-                        rows.marker_y(),
-                    ),
-                    ..Text::default()
-                };
-                frame.fill_text(marker_text);
-            }
-
-            // key signature and feel, at the measure that establishes them
-            if self.has_key_signature || self.has_triplet_feel {
-                let mut labels = Vec::new();
-                if self.has_key_signature {
-                    labels.push(measure_header.key_signature.to_string());
-                }
-                if self.has_triplet_feel {
-                    labels.push(triplet_feel_label(measure_header.triplet_feel).to_string());
-                }
-                let signature_text = Text {
-                    shaping: Auto,
-                    content: labels.join("  "),
-                    color: colors.foreground,
-                    size: 9.0.into(),
-                    position: Point::new(measure_start_x + 2.0, rows.signature_y()),
-                    ..Text::default()
-                };
-                frame.fill_text(signature_text);
-            }
-
-            // measure count label
-            let measure_count_text = Text {
-                shaping: Auto,
-                content: format!("{}", self.measure_id + 1),
-                color: colors.accent,
-                size: 10.0.into(),
-                position: Point::new(measure_start_x, measure_start_y - 15.0),
-                ..Text::default()
-            };
-            frame.fill_text(measure_count_text);
-
-            // alternative ending bracket (e.g., "1.", "2.", "1.2.")
-            if measure_header.repeat_alternative > 0 {
-                draw_alternative_ending(
-                    frame,
-                    colors,
-                    measure_header.repeat_alternative,
-                    measure_start_x,
-                    actual_width,
-                    RowSpacing::ALT_ENDING_Y,
-                );
-            }
-
-            // add notes on top of strings
-            let measure = &track.measures[self.measure_id];
-            // TODO draw second voice if present (audio playback already handles all voices)
-            let beats = &measure.voices[0].beats;
-            let beats_len = beats.len();
-            log::debug!("{beats_len} beats");
-            let mut beat_start = measure_start_x;
-            if self.has_time_signature {
-                beat_start += BEAT_LENGTH;
-            }
-            if measure_header.repeat_open {
-                beat_start += BEAT_LENGTH;
-            }
-            // beats with multi-movement bends get extra width for the arrows,
-            // like TuxGuitar's getEffectWidth
-            let width_scale = if self.natural_beats_len > 0.0 {
-                actual_measure_len / self.natural_beats_len
-            } else {
-                1.0
-            };
-            // every position is known before any beat is drawn: slides and
-            // hammer-ons reach for the next note on their string
-            let beat_positions = beat_x_positions(
-                beat_start + MEASURE_NOTES_PADDING,
-                &self.beat_widths,
-                width_scale,
-            );
-            for (b_id, beat) in beats.iter().enumerate() {
-                let beat_position_x = beat_positions[b_id];
-                // pick color if beat under focus
-                let beat_color = if self.is_focused && b_id == self.focused_beat {
-                    colors.accent
-                } else {
-                    colors.foreground
-                };
-                let beat_width = self.beat_widths[b_id] * width_scale;
-                // the inline effect glyphs may not reach into the space the
-                // next beat's grace note occupies
-                let next_grace = beats.get(b_id + 1).map_or(0.0, grace_gap_width);
-                // draw beat
-                draw_beat(
-                    frame,
-                    colors,
-                    beat_position_x,
-                    beat_width - next_grace,
-                    width_scale,
-                    measure_start_y,
-                    vertical_measure_height,
-                    rows,
-                    beat,
-                    beat_color,
-                    beats,
-                    &beat_positions,
-                    b_id,
-                );
-                // the syllable sung on this beat, under the staff
-                if let Some(syllable) = self.lyrics.get(b_id)
-                    && !syllable.is_empty()
-                {
-                    let lyric_text = Text {
-                        shaping: Auto,
-                        content: syllable.clone(),
-                        color: colors.foreground,
-                        size: 8.0.into(),
-                        position: Point::new(
-                            beat_position_x,
-                            measure_start_y + vertical_measure_height + rows.staff_footer,
-                        ),
-                        ..Text::default()
-                    };
-                    frame.fill_text(lyric_text);
-                }
-            }
-
-            // the rhythm under the staff, once every beat position is known
-            draw_rhythm(
-                frame,
-                colors,
-                beats,
-                &beat_positions,
-                measure_start_y + vertical_measure_height,
-                measure_header,
-            );
-
-            // tuplet brackets span consecutive beats of the same division
-            if rows.tuplet > 0.0 {
-                for (enters, x1, x2) in tuplet_runs(beats, &beat_positions) {
-                    draw_tuplet_bracket(frame, colors, enters, x1, x2, rows.tuplet_y());
-                }
-            }
-
-            let bar_end = BarEnd::of(measure_header, next_measure_header.is_none());
-            draw_bar_end(
-                frame,
-                colors,
-                bar_end,
-                measure_start_x + actual_width,
-                measure_start_y,
-                vertical_measure_height,
-            );
-        });
-
+        let tab = self
+            .canvas_cache
+            .draw(renderer, bounds.size(), |frame| self.paint(frame, colors));
         vec![tab]
     }
 }

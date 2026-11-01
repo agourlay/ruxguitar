@@ -1,11 +1,11 @@
 //! Staff furniture: bar lines, repeats, endings, time signature and focus boxes.
 
-use super::layout::{BEAT_LENGTH, HALF_BEAT_LENGTH, RowSpacing, STRING_LINE_HEIGHT};
+use super::layout::{BEAT_LENGTH, HALF_BEAT_LENGTH, RowSpacing, STRING_LINE_HEIGHT, Staff};
 use crate::parser::song_parser::{MeasureHeader, TimeSignature};
 use crate::ui::utils::TablatureColors;
 use iced::advanced::text::Shaping::Auto;
 use iced::widget::canvas::{Frame, Path, Stroke, Text};
-use iced::{Point, Rectangle, Renderer, Size};
+use iced::{Point, Rectangle, Renderer};
 
 /// The bar line a measure opens with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,59 +140,60 @@ pub(super) fn focus_box_top(rows: RowSpacing, measure_start_y: f32) -> f32 {
         .max(0.0)
 }
 
+/// The box drawn around a selected or focused measure, enclosing
+/// everything drawn around its staff.
+fn measure_box(staff: Staff, width: f32) -> Rectangle {
+    const BOX_SIDE: f32 = 8.0;
+    let top = focus_box_top(staff.rows, staff.top);
+    let bottom = staff.rows.staff_footer - CANVAS_MARGIN;
+    Rectangle {
+        x: BOX_SIDE,
+        y: staff.top - top,
+        width: width - BOX_SIDE * 2.0,
+        height: staff.height + top + bottom,
+    }
+}
+
 pub(super) fn draw_selection_fill(
     frame: &mut Frame<Renderer>,
     colors: TablatureColors,
-    total_measure_len: f32,
-    vertical_measure_height: f32,
-    measure_start_x: f32,
-    measure_start_y: f32,
-    rows: RowSpacing,
+    staff: Staff,
+    width: f32,
 ) {
-    const BOX_SIDE: f32 = 8.0;
-    let top = focus_box_top(rows, measure_start_y);
-    let bottom = rows.staff_footer - CANVAS_MARGIN;
-    let top_left = Point::new(measure_start_x + BOX_SIDE, measure_start_y - top);
-    let rectangle_size = Size::new(
-        total_measure_len - BOX_SIDE * 2.0,
-        vertical_measure_height + top + bottom,
-    );
-    frame.fill_rectangle(top_left, rectangle_size, colors.selection);
+    let area = measure_box(staff, width);
+    frame.fill_rectangle(area.position(), area.size(), colors.selection);
 }
 
 pub(super) fn draw_focused_box(
     frame: &mut Frame<Renderer>,
     colors: TablatureColors,
-    total_measure_len: f32,
-    vertical_measure_height: f32,
-    measure_start_x: f32,
-    measure_start_y: f32,
-    rows: RowSpacing,
+    staff: Staff,
+    width: f32,
 ) {
-    const BOX_SIDE: f32 = 8.0;
-
-    let top = focus_box_top(rows, measure_start_y);
-    let bottom = rows.staff_footer - CANVAS_MARGIN;
-    let focused_box = Rectangle {
-        x: measure_start_x + BOX_SIDE,
-        y: measure_start_y - top,
-        width: total_measure_len - BOX_SIDE * 2.0,
-        height: vertical_measure_height + top + bottom,
-    };
-
-    let Rectangle {
-        x,
-        y,
-        width,
-        height,
-    } = focused_box;
-
-    let top_left = Point::new(x, y);
-    let rectangle_size = Size::new(width, height);
+    let area = measure_box(staff, width);
     let stroke = Stroke::default()
         .with_width(1.0)
         .with_color(colors.foreground);
-    frame.stroke_rectangle(top_left, rectangle_size, stroke);
+    frame.stroke_rectangle(area.position(), area.size(), stroke);
+}
+
+/// The strings, across the whole measure.
+pub(super) fn draw_string_lines(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    staff: Staff,
+    string_count: usize,
+    width: f32,
+) {
+    let stroke = Stroke::default()
+        .with_width(0.8)
+        .with_color(colors.string_line);
+    for string_id in 0..string_count {
+        let y = staff.top + string_id as f32 * STRING_LINE_HEIGHT;
+        // start 1 to the right to avoid overlapping the bar line
+        let line = Path::line(Point::new(1.0, y), Point::new(width, y));
+        frame.stroke(&line, stroke);
+    }
 }
 
 fn draw_measure_vertical_line(
