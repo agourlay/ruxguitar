@@ -10,7 +10,11 @@ use serde::{Deserialize, Serialize};
 use crate::RuxError;
 
 /// Last UI and playback state, restored on the next launch.
+///
+/// Fields missing from a saved session take their default, so a config
+/// written before a field existed still loads.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SessionState {
     pub last_tab_file: Option<PathBuf>,
     pub track_index: usize,
@@ -133,5 +137,21 @@ mod tests {
         let config: Config = serde_json::from_str(json).unwrap();
         assert_eq!(config.session.tempo_percentage, 100);
         assert!(config.session.last_tab_file.is_none());
+    }
+
+    #[test]
+    fn session_fields_default_when_missing_from_json() {
+        // a session saved before some of its fields existed
+        let json = r#"{"tabs_folder":"/tabs","session":{"last_tab_file":"/tabs/song.gp5","tempo_percentage":75}}"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.tabs_folder, Some(PathBuf::from("/tabs")));
+        assert_eq!(
+            config.session.last_tab_file,
+            Some(PathBuf::from("/tabs/song.gp5"))
+        );
+        assert_eq!(config.session.tempo_percentage, 75);
+        assert!((config.session.master_volume - 1.0).abs() < f32::EPSILON);
+        assert_eq!(config.session.measure_index, 0);
+        assert!(config.session.selection_start.is_none());
     }
 }
