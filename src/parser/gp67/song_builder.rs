@@ -358,7 +358,16 @@ fn resolve_bar(doc: &GpxDocument, master_index: usize, track_index: usize) -> Op
 }
 
 /// Build one voice (`voice_slot`) of a measure.
-#[allow(clippy::too_many_arguments)]
+/// The beat before the one being built. GPX puts grace notes on a beat of
+/// their own, before the beat they belong to.
+#[derive(Default)]
+struct PreviousBeat<'a> {
+    beat: Option<&'a GpxBeat>,
+    /// Its notes when it is a grace beat, empty otherwise.
+    grace_notes: Vec<&'a GpxNote>,
+    duration: Duration,
+}
+
 fn build_voice(
     doc: &GpxDocument,
     gp_bar: Option<&GpxBar>,
@@ -382,85 +391,104 @@ fn build_voice(
     };
 
     let mut start = measure_start;
-    let mut previous_beat: Option<&GpxBeat> = None;
-    let mut previous_grace_notes: Vec<&GpxNote> = Vec::new();
-    let mut previous_duration = Duration::default();
-
+    let mut previous = PreviousBeat::default();
     for &beat_id in &gp_voice.beat_ids {
         let Some(gp_beat) = doc.beat(beat_id) else {
             continue;
         };
         let duration = rhythm_to_duration(doc.rhythm(gp_beat.rhythm_id));
 
-        // GPX puts grace notes on a separate preceding beat; we attach them to
-        // the following beat's notes, so buffer them here without advancing time.
+        // a grace beat is attached to the following beat's notes: hold its
+        // notes without advancing time
         if gp_beat.grace_notes.is_some() {
-            previous_grace_notes.clear();
-            if let Some(note_ids) = &gp_beat.note_ids {
-                for &id in note_ids {
-                    if let Some(note) = doc.note(id) {
-                        previous_grace_notes.push(note);
-                    }
-                }
-            }
-            previous_beat = Some(gp_beat);
-            previous_duration = duration;
+            let grace_notes = gp_beat
+                .note_ids
+                .iter()
+                .flatten()
+                .filter_map(|&id| doc.note(id))
+                .collect();
+            previous = PreviousBeat {
+                beat: Some(gp_beat),
+                grace_notes,
+                duration,
+            };
             continue;
         }
 
-        let mut beat = Beat {
+        let beat = build_beat(
+            doc,
+            gp_beat,
             start,
-            duration: duration.clone(),
-            empty: false,
-            text: gp_beat.text.trim().to_string(),
-            effect: BeatEffects {
-                stroke: stroke_of(gp_beat),
-                pick_stroke: stroke_direction(gp_beat.pick_stroke),
-                chord: chord_of(doc, gp_beat),
-            },
-            notes: Vec::new(),
-        };
-
-        if let Some(note_ids) = &gp_beat.note_ids {
-            let velocity = dynamic_velocity(gp_beat.dynamic);
-            // drums claim their kit position in order, so that when two
-            // sounds want the same string the higher one on the staff wins
-            // it, like TuxGuitar's allocatePercussionNotesToStrings
-            let mut note_ids = note_ids.clone();
-            if is_percussion {
-                note_ids.sort_by_key(|&id| {
-                    doc.note(id)
-                        .and_then(midi_value_of)
-                        .map_or(i32::MAX, preferred_drum_string)
-                });
-            }
-            for &id in &note_ids {
-                if let Some(gp_note) = doc.note(id)
-                    && let Some(note) = build_note(
-                        gp_note,
-                        strings,
-                        is_percussion,
-                        &beat.notes,
-                        velocity,
-                        gp_beat,
-                        previous_beat,
-                        &previous_grace_notes,
-                        &previous_duration,
-                    )
-                {
-                    beat.notes.push(note);
-                }
-            }
-        }
-
+            &duration,
+            strings,
+            is_percussion,
+            &previous,
+        );
         start += beat.duration.time();
         voice.beats.push(beat);
-        previous_beat = Some(gp_beat);
-        previous_grace_notes.clear();
-        previous_duration = duration;
+        previous = PreviousBeat {
+            beat: Some(gp_beat),
+            grace_notes: Vec::new(),
+            duration,
+        };
     }
 
     voice
+}
+
+fn build_beat(
+    doc: &GpxDocument,
+    gp_beat: &GpxBeat,
+    start: u32,
+    duration: &Duration,
+    strings: &[(i32, i32)],
+    is_percussion: bool,
+    previous: &PreviousBeat,
+) -> Beat {
+    let mut beat = Beat {
+        start,
+        duration: duration.clone(),
+        empty: false,
+        text: gp_beat.text.trim().to_string(),
+        effect: BeatEffects {
+            stroke: stroke_of(gp_beat),
+            pick_stroke: stroke_direction(gp_beat.pick_stroke),
+            chord: chord_of(doc, gp_beat),
+        },
+        notes: Vec::new(),
+    };
+
+    let Some(note_ids) = &gp_beat.note_ids else {
+        return beat;
+    };
+    let velocity = dynamic_velocity(gp_beat.dynamic);
+    // drums claim their kit position in order, so that when two
+    // sounds want the same string the higher one on the staff wins
+    // it, like TuxGuitar's allocatePercussionNotesToStrings
+    let mut note_ids = note_ids.clone();
+    if is_percussion {
+        note_ids.sort_by_key(|&id| {
+            doc.note(id)
+                .and_then(midi_value_of)
+                .map_or(i32::MAX, preferred_drum_string)
+        });
+    }
+    for &id in &note_ids {
+        if let Some(gp_note) = doc.note(id)
+            && let Some(note) = build_note(
+                gp_note,
+                strings,
+                is_percussion,
+                &beat.notes,
+                velocity,
+                gp_beat,
+                previous,
+            )
+        {
+            beat.notes.push(note);
+        }
+    }
+    beat
 }
 
 fn rhythm_to_duration(rhythm: Option<&GpxRhythm>) -> Duration {
@@ -538,7 +566,6 @@ fn dynamic_velocity(dynamic: Option<GpxDynamic>) -> i16 {
     convert_velocity(level)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_note(
     gp_note: &GpxNote,
     strings: &[(i32, i32)],
@@ -546,9 +573,7 @@ fn build_note(
     beat_notes: &[Note],
     velocity: i16,
     gp_beat: &GpxBeat,
-    previous_beat: Option<&GpxBeat>,
-    previous_grace_notes: &[&GpxNote],
-    previous_duration: &Duration,
+    previous: &PreviousBeat,
 ) -> Option<Note> {
     let string_count = strings.len() as i32;
     let (value, string) = if gp_note.string >= 0 && gp_note.fret >= 0 {
@@ -606,12 +631,7 @@ fn build_note(
     effect.harmonic = harmonic_of(gp_note);
     effect.bend = bend_of(gp_note);
     effect.tremolo_bar = tremolo_bar_of(gp_beat);
-    effect.grace = grace_of(
-        previous_beat,
-        previous_grace_notes,
-        previous_duration,
-        gp_note,
-    );
+    effect.grace = grace_of(previous, gp_note);
 
     Some(note)
 }
@@ -841,19 +861,16 @@ fn tremolo_bar_of(gp_beat: &GpxBeat) -> Option<TremoloBarEffect> {
     Some(TremoloBarEffect { points })
 }
 
-fn grace_of(
-    previous_beat: Option<&GpxBeat>,
-    previous_grace_notes: &[&GpxNote],
-    previous_duration: &Duration,
-    current_note: &GpxNote,
-) -> Option<GraceEffect> {
-    let previous_beat = previous_beat?;
+/// The grace note the previous beat holds for this note's string, if any.
+fn grace_of(previous: &PreviousBeat, current_note: &GpxNote) -> Option<GraceEffect> {
+    let previous_beat = previous.beat?;
     let grace_type = previous_beat.grace_notes.as_deref()?;
-    let grace_note = previous_grace_notes
+    let grace_note = previous
+        .grace_notes
         .iter()
         .find(|n| n.string == current_note.string)?;
 
-    let duration = match previous_duration.value {
+    let duration = match previous.duration.value {
         v if v == u16::from(DURATION_SIXTEENTH) => 3,
         v if v == u16::from(DURATION_THIRTY_SECOND) => 2,
         v if v == u16::from(DURATION_SIXTY_FOURTH) => 1,
