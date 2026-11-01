@@ -15,7 +15,7 @@ pub enum FilePickerError {
 /// Opens a file dialog and returns the content of the picked file.
 pub async fn open_file_dialog(
     picker_folder: Option<PathBuf>,
-) -> Result<(Vec<u8>, Option<PathBuf>, String), FilePickerError> {
+) -> Result<(Vec<u8>, Option<PathBuf>, String, PathBuf), FilePickerError> {
     let mut picker = rfd::AsyncFileDialog::new()
         .add_filter("Guitar Pro files", &SUPPORTED_EXTENSIONS)
         .set_title("Select a Guitar Pro file");
@@ -28,7 +28,7 @@ pub async fn open_file_dialog(
         .pick_file()
         .await
         .ok_or(FilePickerError::DialogClosed)?;
-    load_file(picked_file).await
+    load_file(picked_file.path()).await
 }
 
 /// Loads the content of a file at the given path.
@@ -36,9 +36,10 @@ pub async fn open_file_dialog(
 /// Return the content of the file and its name.
 pub async fn load_file(
     path: impl Into<PathBuf>,
-) -> Result<(Vec<u8>, Option<PathBuf>, String), FilePickerError> {
+) -> Result<(Vec<u8>, Option<PathBuf>, String, PathBuf), FilePickerError> {
     let path = path.into();
-    let file_extension = path
+    let tab_path = std::fs::canonicalize(&path).unwrap_or(path);
+    let file_extension = tab_path
         .extension()
         .and_then(|e| e.to_str())
         .map(str::to_lowercase)
@@ -48,19 +49,19 @@ pub async fn load_file(
             "Unsupported file extension: {file_extension}"
         )));
     }
-    let file_name = path
+    let file_name = tab_path
         .file_name()
         .and_then(|f| f.to_str())
         .map(ToString::to_string)
         .unwrap_or_default();
-    let parent_folder = path.parent().and_then(|parent| {
+    let parent_folder = tab_path.parent().and_then(|parent| {
         // make sure relative path from CLI is returned as absolute path
         let absolute_path = std::fs::canonicalize(parent);
         absolute_path.ok()
     });
     log::info!("Loading file: {file_name:?}");
-    tokio::fs::read(&path)
+    tokio::fs::read(&tab_path)
         .await
         .map_err(|error| FilePickerError::IoError(error.to_string()))
-        .map(|content| (content, parent_folder, file_name))
+        .map(|content| (content, parent_folder, file_name, tab_path))
 }

@@ -11,6 +11,10 @@ pub struct MidiPlayerParams {
     metronome: AtomicBool,
     count_in: AtomicBool,
     finished: AtomicBool, // the sequence ran past its last event
+    loop_enabled: AtomicBool,
+    loop_start_tick: AtomicU32,
+    loop_end_tick: AtomicU32,
+    loop_start_tempo: AtomicU32, // song tempo at the loop start, restored on each pass
     // pending count-in request: total ticks (high) | beat ticks (low), 0 = none
     count_in_request: AtomicU64,
     master_volume: AtomicU32, // f32 bits
@@ -26,9 +30,40 @@ impl MidiPlayerParams {
             metronome: AtomicBool::new(false),
             count_in: AtomicBool::new(false),
             finished: AtomicBool::new(false),
+            loop_enabled: AtomicBool::new(false),
+            loop_start_tick: AtomicU32::new(0),
+            loop_end_tick: AtomicU32::new(0),
+            loop_start_tempo: AtomicU32::new(tempo),
             count_in_request: AtomicU64::new(0),
             master_volume: AtomicU32::new(1.0_f32.to_bits()),
         }
+    }
+
+    pub fn loop_enabled(&self) -> bool {
+        self.loop_enabled.load(Ordering::Relaxed)
+    }
+
+    pub fn set_loop_region(&self, start_tick: u32, end_tick: u32, start_tempo: u32) {
+        self.loop_start_tick.store(start_tick, Ordering::Relaxed);
+        self.loop_end_tick.store(end_tick, Ordering::Relaxed);
+        self.loop_start_tempo.store(start_tempo, Ordering::Relaxed);
+        self.loop_enabled.store(true, Ordering::Relaxed);
+    }
+
+    pub fn clear_loop(&self) {
+        self.loop_enabled.store(false, Ordering::Relaxed);
+    }
+
+    pub fn loop_start_tick(&self) -> u32 {
+        self.loop_start_tick.load(Ordering::Relaxed)
+    }
+
+    pub fn loop_end_tick(&self) -> u32 {
+        self.loop_end_tick.load(Ordering::Relaxed)
+    }
+
+    pub fn loop_start_tempo(&self) -> u32 {
+        self.loop_start_tempo.load(Ordering::Relaxed)
     }
 
     pub fn metronome_enabled(&self) -> bool {

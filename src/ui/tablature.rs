@@ -18,6 +18,9 @@ pub struct Tablature {
     viewport_height: f32,   // visible height of the tablature container
     page_top_line: u32,     // line currently shown at the top of the view
     focused_measure: usize,
+    selection_anchor: usize,
+    selection: Option<(usize, usize)>,
+    pointer_drag_active: bool,
     line_tracker: LineTracker,
     pub scroll_id: Id,
     measure_per_tick: BTreeMap<u32, u32>, // tick to measure index as u32
@@ -46,6 +49,9 @@ impl Tablature {
             viewport_height: 0.0,
             page_top_line: 1,
             focused_measure: 0,
+            selection_anchor: 0,
+            selection: None,
+            pointer_drag_active: false,
             line_tracker: LineTracker::default(),
             scroll_id,
             measure_per_tick,
@@ -81,6 +87,7 @@ impl Tablature {
         self.line_tracker = LineTracker::make(&self.canvas_measures, existing_width);
         self.update_first_on_line();
         self.update_line_spacing();
+        self.sync_measure_highlight_state();
     }
 
     pub fn update_container_size(&mut self, width: f32, height: f32) {
@@ -231,8 +238,85 @@ impl Tablature {
         self.focused_measure
     }
 
+    pub fn focused_beat(&self) -> usize {
+        self.canvas_measures
+            .get(self.focused_measure)
+            .map(CanvasMeasure::focused_beat)
+            .unwrap_or(0)
+    }
+
+    pub fn restore_selection(&mut self, start: usize, end: usize) {
+        let lo = start.min(end);
+        let hi = start.max(end);
+        self.selection_anchor = lo;
+        self.apply_selection_range(lo, hi);
+    }
+
     pub const fn measure_count(&self) -> usize {
         self.canvas_measures.len()
+    }
+
+    pub fn selection_range(&self) -> Option<(usize, usize)> {
+        self.selection
+    }
+
+    pub fn begin_selection_drag(&mut self, measure_id: usize) {
+        self.selection_anchor = measure_id;
+        self.clear_selection();
+    }
+
+    pub fn extend_selection_drag(&mut self, measure_id: usize) {
+        self.apply_selection_range(self.selection_anchor, measure_id);
+    }
+
+    pub fn clear_selection(&mut self) {
+        if self.selection.is_none() {
+            return;
+        }
+        self.selection = None;
+        self.sync_selection_visuals();
+    }
+
+    pub const fn selection_anchor(&self) -> usize {
+        self.selection_anchor
+    }
+
+    pub fn set_pointer_drag_active(&mut self, active: bool) {
+        self.pointer_drag_active = active;
+        for measure in &mut self.canvas_measures {
+            measure.set_pointer_drag_active(active);
+        }
+    }
+
+    fn apply_selection_range(&mut self, from: usize, to: usize) {
+        let start = from.min(to);
+        let end = from.max(to);
+        self.selection = Some((start, end));
+        self.sync_selection_visuals();
+    }
+
+    /// Reapply yellow selection and drag state after rebuilding measure canvases.
+    fn sync_measure_highlight_state(&mut self) {
+        self.sync_selection_visuals();
+        let active = self.pointer_drag_active;
+        for measure in &mut self.canvas_measures {
+            measure.set_pointer_drag_active(active);
+        }
+    }
+
+    fn sync_selection_visuals(&mut self) {
+        match self.selection {
+            Some((start, end)) => {
+                for (index, measure) in self.canvas_measures.iter_mut().enumerate() {
+                    measure.set_selected(index >= start && index <= end);
+                }
+            }
+            None => {
+                for measure in &mut self.canvas_measures {
+                    measure.set_selected(false);
+                }
+            }
+        }
     }
 
     /// Scroll needed to bring `measure_id` into view, a page at a time: the

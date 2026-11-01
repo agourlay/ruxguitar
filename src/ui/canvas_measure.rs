@@ -272,6 +272,8 @@ pub struct CanvasMeasure {
     track_id: usize,
     song: Rc<Song>,
     is_focused: bool,
+    is_selected: bool,
+    pointer_drag_active: bool,
     focused_beat: usize,
     canvas_cache: Cache,
     measure_len: f32,
@@ -371,6 +373,8 @@ impl CanvasMeasure {
             track_id,
             song,
             is_focused: focused,
+            is_selected: false,
+            pointer_drag_active: false,
             focused_beat: 0,
             canvas_cache: Cache::default(),
             measure_len,
@@ -430,10 +434,25 @@ impl CanvasMeasure {
         self.total_measure_len - self.measure_len
     }
 
+    pub fn set_selected(&mut self, selected: bool) {
+        if self.is_selected != selected {
+            self.is_selected = selected;
+            self.canvas_cache.clear();
+        }
+    }
+
+    pub fn set_pointer_drag_active(&mut self, active: bool) {
+        self.pointer_drag_active = active;
+    }
+
     pub fn toggle_focused(&mut self) {
         self.is_focused = !self.is_focused;
         self.focused_beat = 0;
         self.canvas_cache.clear();
+    }
+
+    pub const fn focused_beat(&self) -> usize {
+        self.focused_beat
     }
 
     pub fn focus_beat(&mut self, beat_id: usize) {
@@ -499,16 +518,31 @@ impl canvas::Program<Message> for CanvasMeasure {
         bounds: Rectangle,
         cursor: Cursor,
     ) -> Option<Action<Message>> {
-        if let Event::Mouse(mouse::Event::ButtonPressed(_)) = event
-            && let Some(cursor_position) = cursor.position_in(bounds)
-        {
-            let beat_id = self.beat_at_x(cursor_position.x, bounds.width);
-            log::info!("Clicked on measure {} beat {beat_id}", self.measure_id);
-            *state = MeasureInteraction::Clicked;
-            return Some(Action::publish(Message::FocusMeasure(
-                self.measure_id,
-                beat_id,
-            )));
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if cursor.position_in(bounds).is_some() =>
+            {
+                let cursor_position = cursor.position_in(bounds).unwrap();
+                let beat_id = self.beat_at_x(cursor_position.x, bounds.width);
+                let press_position = cursor.position().expect("cursor inside measure bounds");
+                *state = MeasureInteraction::Clicked;
+                return Some(Action::publish(Message::SelectionDragStart(
+                    self.measure_id,
+                    beat_id,
+                    press_position,
+                )));
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. })
+                if self.pointer_drag_active
+                    && cursor.position_in(bounds).is_some()
+                    && let Some(cursor_position) = cursor.position() =>
+            {
+                return Some(Action::publish(Message::SelectionDragTo(
+                    self.measure_id,
+                    cursor_position,
+                )));
+            }
+            _ => {}
         }
         None
     }
@@ -547,6 +581,18 @@ impl canvas::Program<Message> for CanvasMeasure {
             let measure_start_x = 0.0;
             let rows = self.row_spacing;
             let measure_start_y = rows.first_string_y();
+
+            if self.is_selected {
+                draw_selection_fill(
+                    frame,
+                    colors,
+                    actual_width,
+                    vertical_measure_height,
+                    measure_start_x,
+                    measure_start_y,
+                    rows,
+                );
+            }
 
             // draw focused box
             if self.is_focused {
@@ -1265,6 +1311,26 @@ fn focus_box_top(rows: RowSpacing, measure_start_y: f32) -> f32 {
     rows.staff_header
         .min(measure_start_y - CANVAS_MARGIN)
         .max(0.0)
+}
+
+fn draw_selection_fill(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    total_measure_len: f32,
+    vertical_measure_height: f32,
+    measure_start_x: f32,
+    measure_start_y: f32,
+    rows: RowSpacing,
+) {
+    const BOX_SIDE: f32 = 8.0;
+    let top = focus_box_top(rows, measure_start_y);
+    let bottom = rows.staff_footer - CANVAS_MARGIN;
+    let top_left = Point::new(measure_start_x + BOX_SIDE, measure_start_y - top);
+    let rectangle_size = Size::new(
+        total_measure_len - BOX_SIDE * 2.0,
+        vertical_measure_height + top + bottom,
+    );
+    frame.fill_rectangle(top_left, rectangle_size, colors.selection);
 }
 
 fn draw_focused_box(
