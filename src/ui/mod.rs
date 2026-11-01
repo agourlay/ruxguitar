@@ -3,6 +3,8 @@ mod icons;
 mod measure;
 mod picker;
 mod selection_drag;
+mod selections;
+mod song_info;
 mod tablature;
 mod tuning;
 mod utils;
