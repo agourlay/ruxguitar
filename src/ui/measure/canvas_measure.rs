@@ -510,9 +510,15 @@ impl canvas::Program<Message> for CanvasMeasure {
             } else {
                 1.0
             };
-            let mut beat_position_x = beat_start + MEASURE_NOTES_PADDING;
-            let mut beat_positions = Vec::with_capacity(beats_len);
+            // every position is known before any beat is drawn: slides and
+            // hammer-ons reach for the next note on their string
+            let beat_positions = beat_x_positions(
+                beat_start + MEASURE_NOTES_PADDING,
+                &self.beat_widths,
+                width_scale,
+            );
             for (b_id, beat) in beats.iter().enumerate() {
+                let beat_position_x = beat_positions[b_id];
                 // pick color if beat under focus
                 let beat_color = if self.is_focused && b_id == self.focused_beat {
                     colors.accent
@@ -556,8 +562,6 @@ impl canvas::Program<Message> for CanvasMeasure {
                     };
                     frame.fill_text(lyric_text);
                 }
-                beat_positions.push(beat_position_x);
-                beat_position_x += beat_width;
             }
 
             // the rhythm under the staff, once every beat position is known
@@ -590,6 +594,19 @@ impl canvas::Program<Message> for CanvasMeasure {
 
         vec![tab]
     }
+}
+
+/// Where each beat starts: one after the other from `start`, each as wide
+/// as its natural width scaled to the room the measure was given.
+pub(super) fn beat_x_positions(start: f32, natural_widths: &[f32], width_scale: f32) -> Vec<f32> {
+    natural_widths
+        .iter()
+        .scan(start, |x, width| {
+            let position = *x;
+            *x += width * width_scale;
+            Some(position)
+        })
+        .collect()
 }
 
 /// Whether a measure states its key: when it changes, or when a song opens

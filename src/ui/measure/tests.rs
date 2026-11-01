@@ -1,8 +1,8 @@
 use super::beat::{
     beat_annotations, multiple_bend_conflicts, next_note_on_string, note_value, tied_from_note_x,
 };
-use super::canvas_measure::CanvasMeasure;
 use super::canvas_measure::shows_key_signature;
+use super::canvas_measure::{CanvasMeasure, beat_x_positions};
 use super::chord::has_diagram;
 use super::layout::{
     BEAT_LENGTH, DURATION_WIDTHS, LABEL_CHAR_WIDTH, LABEL_GAP, LABEL_MAX_EXTRA,
@@ -737,4 +737,13 @@ fn only_the_highest_string_labels_bends_moving_together() {
 fn bends_moving_apart_label_none() {
     let beat = beat_with(vec![bent(1, 0, 4), bent(2, 4, 0)]);
     assert!(multiple_bend_conflicts(&beat, &beat.notes[0], &[4]));
+}
+
+#[test]
+fn beats_follow_each_other_at_their_scaled_widths() {
+    assert_eq!(
+        beat_x_positions(20.0, &[10.0, 30.0, 20.0], 2.0),
+        [20.0, 40.0, 100.0]
+    );
+    assert!(beat_x_positions(20.0, &[], 1.0).is_empty());
 }
