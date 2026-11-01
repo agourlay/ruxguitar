@@ -1,10 +1,10 @@
+use crate::parser::gp345::effect_parser::{parse_beat_effects, parse_chord, parse_note_effects};
 use crate::parser::gp345::primitive_parser::{
     parse_byte_size_string, parse_i8, parse_int, parse_int_byte_sized_string, parse_u8, skip,
 };
 use crate::parser::gp345::song_parser::{
     Beat, GpVersion, MAX_VOICES, Measure, Note, NoteEffect, NoteType, QUARTER_TIME, Song, Track,
-    Voice, convert_velocity, parse_beat_effects, parse_chord, parse_color, parse_duration,
-    parse_measure_headers, parse_note_effects,
+    Voice, convert_velocity, parse_color, parse_duration, parse_measure_headers,
 };
 use nom::multi::count;
 use nom::{IResult, Parser};
