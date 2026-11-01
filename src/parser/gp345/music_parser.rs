@@ -619,3 +619,140 @@ impl MusicParser {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::song_parser::MeasureHeader;
+
+    fn parser(version: GpVersion) -> MusicParser {
+        MusicParser::new(Song {
+            version,
+            ..Default::default()
+        })
+    }
+
+    /// A parser whose only track already holds one measure with these
+    /// notes, as `(string, fret)` pairs.
+    fn parser_with_notes(version: GpVersion, notes: &[(i8, i16)]) -> MusicParser {
+        let notes = notes
+            .iter()
+            .map(|&(string, value)| {
+                let mut note = Note::new(NoteEffect::default());
+                note.string = string;
+                note.value = value;
+                note
+            })
+            .collect();
+        let mut parser = parser(version);
+        parser.song.tracks = vec![Track {
+            measures: vec![Measure {
+                voices: vec![Voice {
+                    measure_index: 0,
+                    beats: vec![Beat {
+                        notes,
+                        ..Default::default()
+                    }],
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }];
+        parser
+    }
+
+    fn note_from(parser: &MusicParser, bytes: &[u8]) -> Note {
+        let mut note = Note::new(NoteEffect::default());
+        let (rest, ()) = parser.parse_note(&mut note, &(2, 59), 0)(bytes).unwrap();
+        assert!(rest.is_empty(), "{} bytes left", rest.len());
+        note
+    }
+
+    fn int(value: i32) -> [u8; 4] {
+        value.to_le_bytes()
+    }
+
+    #[test]
+    fn a_song_without_measures_or_tracks_is_rejected() {
+        for (measures, tracks) in [(0, 1), (1, 0), (70_000, 1), (1, 300)] {
+            let bytes = [int(measures), int(tracks)].concat();
+            let mut parser = parser(GpVersion::GP4);
+            let result = parser.parse_music_data(&bytes);
+            assert!(
+                matches!(result, Err(nom::Err::Failure(_))),
+                "{measures} measures, {tracks} tracks"
+            );
+        }
+    }
+
+    #[test]
+    fn a_gp5_note_reads_its_kind_velocity_fret_and_accidentals() {
+        // flags: note type and fret (0x20), velocity (0x10)
+        let note = note_from(&parser(GpVersion::GP5), &[0x30, 1, 6, 7, 0x02]);
+        assert_eq!(note.kind, NoteType::Normal);
+        assert_eq!(note.velocity, convert_velocity(6));
+        assert_eq!(note.value, 7);
+        assert_eq!(note.string, 2);
+        assert!(note.swap_accidentals);
+    }
+
+    #[test]
+    fn a_gp4_note_has_no_accidentals_byte() {
+        let note = note_from(&parser(GpVersion::GP4), &[0x20, 1, 12]);
+        assert_eq!(note.value, 12);
+    }
+
+    #[test]
+    fn note_accents_come_from_the_flags() {
+        let ghost = note_from(&parser(GpVersion::GP4), &[0x04]);
+        assert!(ghost.effect.ghost_note);
+        let accents = note_from(&parser(GpVersion::GP4), &[0x42]);
+        assert!(accents.effect.accentuated_note && accents.effect.heavy_accentuated_note);
+    }
+
+    #[test]
+    fn a_fret_out_of_range_reads_as_open() {
+        let note = note_from(&parser(GpVersion::GP4), &[0x20, 1, 120]);
+        assert_eq!(note.value, 0);
+    }
+
+    #[test]
+    fn a_tied_note_takes_the_fret_of_the_note_it_continues() {
+        let parser = parser_with_notes(GpVersion::GP4, &[(1, 3), (2, 5)]);
+        // tied (type 2), the fret byte is ignored
+        let note = note_from(&parser, &[0x20, 2, 0]);
+        assert_eq!(note.kind, NoteType::Tie);
+        assert_eq!(note.value, 5);
+    }
+
+    #[test]
+    fn a_tie_without_a_note_before_it_reads_as_open() {
+        let parser = parser_with_notes(GpVersion::GP4, &[(1, 3)]);
+        assert_eq!(parser.get_tied_note_value(2, 0), -1);
+        let note = note_from(&parser, &[0x20, 2, 0]);
+        assert_eq!(note.value, 0);
+    }
+
+    #[test]
+    fn a_mix_change_tempo_applies_from_its_measure_on() {
+        let mut parser = parser(GpVersion::GP4);
+        parser.song.measure_headers = (0..3).map(|_| MeasureHeader::default()).collect();
+        // instrument, then volume, pan, chorus, reverb, phaser and tremolo
+        // all unchanged (-1), the new tempo, its transition and the trailing byte
+        let bytes = [
+            &[0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF][..],
+            &int(90),
+            &[0, 0],
+        ]
+        .concat();
+        let (rest, ()) = parser.parse_mix_change(1)(&bytes).unwrap();
+        assert!(rest.is_empty());
+        let tempos: Vec<u32> = parser
+            .song
+            .measure_headers
+            .iter()
+            .map(|header| header.tempo.value)
+            .collect();
+        assert_eq!(tempos, [120, 90, 90]);
+    }
+}
