@@ -117,20 +117,23 @@ pub fn first_playback_ticks(headers: &[MeasureHeader], order: &[(usize, i64)]) -
 }
 
 /// Playback tick range `[start, end)` for an inclusive measure index range.
+///
+/// The range covers the first playthrough of the selected measures: it
+/// ends with the first occurrence of `end_measure`, so repeats and jumps
+/// that follow the selection are never pulled into the loop.
+/// Returns `None` when the range would be empty (e.g. measures the
+/// playback never reaches).
 pub fn measure_loop_tick_range(
     headers: &[MeasureHeader],
     first_playback_ticks: &[u32],
-    last_playback_tick: u32,
     start_measure: usize,
     end_measure: usize,
-) -> (u32, u32) {
-    let start = first_playback_ticks[start_measure];
-    let end = if end_measure + 1 < headers.len() {
-        first_playback_ticks[end_measure + 1]
-    } else {
-        last_playback_tick.saturating_add(1)
-    };
-    (start, end)
+) -> Option<(u32, u32)> {
+    let start = *first_playback_ticks.get(start_measure)?;
+    let end = first_playback_ticks
+        .get(end_measure)?
+        .saturating_add(headers.get(end_measure)?.length());
+    (end > start).then_some((start, end))
 }
 
 /// Bit for the given repetition in an alternative ending bitmask.
@@ -484,5 +487,54 @@ mod tests {
         let order = compute_playback_order(&headers);
         let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
         assert_eq!(indices, vec![0, 1, 0, 2, 3, 4, 3, 5]);
+    }
+    #[test]
+    fn measure_loop_tick_range_without_repeats() {
+        let measure_len = 3840_u32;
+        let headers: Vec<_> = (0..4)
+            .map(|i| make_header(960 + measure_len * i, false, 0))
+            .collect();
+        let order = compute_playback_order(&headers);
+        let first_ticks = first_playback_ticks(&headers, &order);
+        assert_eq!(
+            measure_loop_tick_range(&headers, &first_ticks, 1, 2),
+            Some((960 + measure_len, 960 + measure_len * 3))
+        );
+        // last measure: ends with the song
+        assert_eq!(
+            measure_loop_tick_range(&headers, &first_ticks, 3, 3),
+            Some((960 + measure_len * 3, 960 + measure_len * 4))
+        );
+        // out of range
+        assert_eq!(measure_loop_tick_range(&headers, &first_ticks, 2, 4), None);
+    }
+
+    #[test]
+    fn measure_loop_tick_range_stops_before_repeat_jump() {
+        // |: M0 | M1[1.] :| M2[2.] | M3
+        // Plays: M0 M1 M0 M2 M3
+        let measure_len = 3840_u32;
+        let headers = vec![
+            make_header(960, true, 0),
+            MeasureHeader {
+                start: 960 + measure_len,
+                repeat_alternative: 1,
+                repeat_close: 1,
+                ..MeasureHeader::default()
+            },
+            MeasureHeader {
+                start: 960 + measure_len * 2,
+                repeat_alternative: 2,
+                ..MeasureHeader::default()
+            },
+            make_header(960 + measure_len * 3, false, 0),
+        ];
+        let order = compute_playback_order(&headers);
+        let first_ticks = first_playback_ticks(&headers, &order);
+        // looping the first ending alone must not replay M0
+        assert_eq!(
+            measure_loop_tick_range(&headers, &first_ticks, 1, 1),
+            Some((960 + measure_len, 960 + measure_len * 2))
+        );
     }
 }

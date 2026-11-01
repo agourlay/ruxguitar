@@ -52,8 +52,11 @@ impl MidiSequencer {
         self.last_tick
     }
 
-    pub fn last_event_tick(&self) -> u32 {
-        self.sorted_events.last().map_or(0, |event| event.tick)
+    /// Hold the position at `max_tick` so no event past it is returned,
+    /// never moving back behind the ticks already processed.
+    pub fn clamp_tick(&mut self, max_tick: u32) {
+        let max_tick = max_tick.max(self.last_tick);
+        self.tick_position = self.tick_position.min(f64::from(max_tick));
     }
 
     pub fn get_next_events(&self) -> Option<&[MidiEvent]> {
@@ -135,6 +138,19 @@ mod tests {
         assert!((result - 192.0).abs() < 1e-9);
     }
 
+    #[test]
+    fn clamp_tick_holds_position_without_going_back() {
+        let mut sequencer = MidiSequencer::new(vec![]);
+        sequencer.advance_tick(100);
+        sequencer.clamp_tick(50);
+        assert_eq!(sequencer.get_tick(), 50);
+
+        // already processed up to tick 50: a lower bound must not rewind
+        sequencer.advance_tick(10);
+        sequencer.clamp_tick(40);
+        assert_eq!(sequencer.get_tick(), 50);
+        assert!(sequencer.get_last_tick() <= sequencer.get_tick());
+    }
     #[test]
     fn fractional_ticks_accumulate_across_advances() {
         let mut sequencer = MidiSequencer::new(vec![]);

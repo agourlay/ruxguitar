@@ -36,7 +36,6 @@ pub struct AudioPlayer {
     beat_notify: Arc<Notify>,
     /// First playback tick per measure, for seeking.
     measure_playback_ticks: Vec<u32>,
-    last_playback_tick: u32,
 }
 
 impl AudioPlayer {
@@ -72,7 +71,6 @@ impl AudioPlayer {
 
         let synthesizer = Arc::new(Mutex::new(synthesizer));
         let sequencer = Arc::new(Mutex::new(MidiSequencer::new(events)));
-        let last_playback_tick = sequencer.lock().unwrap().last_event_tick();
         Ok(Self {
             is_playing: false,
             song,
@@ -84,7 +82,6 @@ impl AudioPlayer {
             current_tick,
             beat_notify,
             measure_playback_ticks,
-            last_playback_tick,
         })
     }
 
@@ -162,17 +159,22 @@ impl AudioPlayer {
     }
 
     pub fn set_measure_loop(&self, start_measure: usize, end_measure: usize) {
-        let (start_tick, end_tick) = measure_loop_tick_range(
+        let Some((start_tick, end_tick)) = measure_loop_tick_range(
             &self.song.measure_headers,
             &self.measure_playback_ticks,
-            self.last_playback_tick,
             start_measure,
             end_measure,
-        );
+        ) else {
+            log::warn!("Cannot loop measures {start_measure}..={end_measure}: empty range");
+            self.player_params.clear_loop();
+            return;
+        };
         log::info!(
             "Loop measures {start_measure}..={end_measure} (ticks {start_tick}..{end_tick})"
         );
-        self.player_params.set_loop_region(start_tick, end_tick);
+        let start_tempo = self.song.measure_headers[start_measure].tempo.value;
+        self.player_params
+            .set_loop_region(start_tick, end_tick, start_tempo);
     }
 
     pub fn clear_measure_loop(&self) {
@@ -387,6 +389,9 @@ fn new_output_stream(
                 count_in_next_click = 0.0;
             }
             let counting_in = count_in_left > 0.0;
+            let loop_end = player_params
+                .loop_enabled()
+                .then(|| player_params.loop_end_tick());
             if counting_in {
                 if count_in_next_click <= 0.0 {
                     // same layered click as the metronome
@@ -400,29 +405,18 @@ fn new_output_stream(
                 count_in_next_click -= ticks;
             } else {
                 sequencer_guard.advance(player_params.adjusted_tempo(), elapsed_secs);
-                if player_params.loop_enabled() {
-                    let tick = sequencer_guard.get_tick();
-                    if tick >= player_params.loop_end_tick() {
-                        sequencer_guard.set_tick(player_params.loop_start_tick());
-                        synthesizer_guard.note_off_all(false);
-                        synthesizer_guard.reset_all_controllers();
-                        player_params.set_finished(false);
-                    }
+                // hold at the loop end: the events before it still play below
+                if let Some(loop_end) = loop_end {
+                    sequencer_guard.clamp_tick(loop_end.saturating_sub(1));
                 }
             }
             // process midi events for current tick
-            let mut next_events = sequencer_guard.get_next_events();
+            let next_events = sequencer_guard.get_next_events();
+            let exhausted = next_events.is_none();
             // the sequence is exhausted: wake the UI once to stop the transport
-            if next_events.is_none() && !player_params.is_finished() {
-                if player_params.loop_enabled() {
-                    sequencer_guard.set_tick(player_params.loop_start_tick());
-                    synthesizer_guard.note_off_all(false);
-                    synthesizer_guard.reset_all_controllers();
-                    next_events = sequencer_guard.get_next_events();
-                } else {
-                    player_params.set_finished(true);
-                    beat_notify.notify_one();
-                }
+            if exhausted && loop_end.is_none() && !player_params.is_finished() {
+                player_params.set_finished(true);
+                beat_notify.notify_one();
             }
             if let Some(events) = next_events.filter(|_| !counting_in) {
                 let tick = sequencer_guard.get_tick();
@@ -501,6 +495,17 @@ fn new_output_stream(
                         }
                     }
                 }
+            }
+            // every event before the loop end was sent: start the next pass
+            if !counting_in
+                && let Some(loop_end) = loop_end
+                && (exhausted || sequencer_guard.get_tick().saturating_add(1) >= loop_end)
+            {
+                sequencer_guard.set_tick(player_params.loop_start_tick());
+                synthesizer_guard.note_off_all(false);
+                synthesizer_guard.reset_all_controllers();
+                player_params.set_tempo(player_params.loop_start_tempo());
+                player_params.set_finished(false);
             }
             if render_len < frame_count {
                 // debug level: runs on the real-time audio thread

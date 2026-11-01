@@ -60,7 +60,6 @@ pub struct RuxApplication {
     selection_press_position: Option<Point>,
     selection_focus_beat: usize,
     current_tab_path: Option<PathBuf>,
-    opening_tab_path: Option<PathBuf>,
     pending_session_restore: Option<SessionState>,
     deferred_session_restore: Option<SessionState>,
     saved_master_volume: f32,
@@ -208,8 +207,8 @@ pub enum Message {
     ToggleFullscreen,
     /// Master volume slider, in `0.0..=1.0`.
     MasterVolumeChanged(f32),
-    /// Flush session state to disk (e.g. on window close).
-    SaveSession,
+    /// The window is closing: save the session, then exit.
+    CloseRequested,
 }
 
 impl RuxApplication {
@@ -237,7 +236,6 @@ impl RuxApplication {
             selection_press_position: None,
             selection_focus_beat: 0,
             current_tab_path: None,
-            opening_tab_path: None,
             pending_session_restore: None,
             deferred_session_restore: None,
             saved_master_volume: session.master_volume.clamp(0.0, 1.0),
@@ -267,6 +265,17 @@ impl RuxApplication {
         self.tempo_selection = TempoSelection::default();
         self.saved_master_volume = 1.0;
         self.deferred_session_restore = None;
+    }
+
+    /// Loop the selected measures, or play through when nothing is selected.
+    fn sync_measure_loop(&self) {
+        let (Some(audio_player), Some(tablature)) = (&self.audio_player, &self.tablature) else {
+            return;
+        };
+        match tablature.selection_range() {
+            Some((start, end)) => audio_player.set_measure_loop(start, end),
+            None => audio_player.clear_measure_loop(),
+        }
     }
 
     fn persist_session(&mut self) {
@@ -382,6 +391,7 @@ impl RuxApplication {
             .font(ICONS_FONT)
             .window_size((1150.0, 768.0))
             .centered()
+            .exit_on_close_request(false)
             .antialiasing(antialiasing)
             .run()
     }
@@ -435,7 +445,6 @@ impl RuxApplication {
                 if self.tab_file_is_loading {
                     Task::none()
                 } else {
-                    self.opening_tab_path = Some(path.clone());
                     self.tab_file_is_loading = true;
                     Task::perform(load_file(path), Message::FileOpened)
                 }
@@ -449,6 +458,9 @@ impl RuxApplication {
                     audio_player.stop();
                 }
                 self.audio_player = None;
+                // a startup restore only applies to the file it reopened,
+                // whether or not that load succeeds
+                let restore_session = self.pending_session_restore.take();
                 match result {
                     Ok((contents, parent_folder, file_name, tab_path)) => {
                         if let Err(err) = self.config.set_tabs_folder(parent_folder) {
@@ -457,7 +469,6 @@ impl RuxApplication {
                             )));
                         }
                         if let Ok(song) = parse_gp_data(&contents) {
-                            let restore_session = self.pending_session_restore.take();
                             if restore_session.is_none() {
                                 self.reset_tab_defaults();
                             } else {
@@ -515,8 +526,7 @@ impl RuxApplication {
                                     audio_player.set_count_in(self.count_in_enabled);
                                     audio_player.set_master_volume(self.saved_master_volume);
                                     self.audio_player = Some(audio_player);
-                                    self.current_tab_path =
-                                        self.opening_tab_path.take().or(Some(tab_path));
+                                    self.current_tab_path = Some(tab_path);
                                     self.persist_session();
                                     Task::batch([
                                         scroll_to(
@@ -531,12 +541,10 @@ impl RuxApplication {
                                 ))),
                             }
                         } else {
-                            self.opening_tab_path = None;
                             Task::done(Message::ReportError("Failed to parse GP file".to_string()))
                         }
                     }
                     Err(err) => {
-                        self.opening_tab_path = None;
                         Task::done(Message::ReportError(format!("Failed to open file: {err}")))
                     }
                 }
@@ -584,8 +592,11 @@ impl RuxApplication {
                     if !dragged {
                         tablature.clear_selection();
                     }
-                    let measure_id = tablature.selection_anchor();
-                    let beat_id = self.selection_focus_beat;
+                    // a new loop range starts playing from its first measure
+                    let (measure_id, beat_id) = match tablature.selection_range() {
+                        Some((start, _)) => (start, 0),
+                        None => (tablature.selection_anchor(), self.selection_focus_beat),
+                    };
                     tablature.focus_on_measure_beat(measure_id, beat_id);
                     if let Some(audio_player) = &self.audio_player {
                         let beat_offset = tablature.beat_tick_offset(measure_id, beat_id);
@@ -603,6 +614,8 @@ impl RuxApplication {
                 } else {
                     Task::none()
                 };
+                // keep a running loop in step with the selection
+                self.sync_measure_loop();
                 self.persist_session();
                 focus_task
             }
@@ -650,16 +663,24 @@ impl RuxApplication {
                 if self.tab_file_is_loading {
                     return Task::none();
                 }
-                if let Some(audio_player) = &mut self.audio_player {
-                    let was_playing = audio_player.is_playing();
-                    if !was_playing && let Some(tablature) = &self.tablature {
-                        if let Some((start, end)) = tablature.selection_range() {
-                            audio_player.set_measure_loop(start, end);
-                            audio_player.focus_measure_at(start, 0);
-                        } else {
-                            audio_player.clear_measure_loop();
-                        }
+                let was_playing = self
+                    .audio_player
+                    .as_ref()
+                    .is_some_and(AudioPlayer::is_playing);
+                let mut scroll_task = Task::none();
+                if !was_playing {
+                    self.sync_measure_loop();
+                    // resume in place inside the loop, otherwise jump to its start
+                    let outside_loop = self.tablature.as_ref().and_then(|tablature| {
+                        let (start, end) = tablature.selection_range()?;
+                        let focused = tablature.focused_measure();
+                        (focused < start || focused > end).then_some(start)
+                    });
+                    if let Some(start) = outside_loop {
+                        scroll_task = self.focus_measure_with_scroll(start);
                     }
+                }
+                if let Some(audio_player) = &mut self.audio_player {
                     if let Some(err) = audio_player.toggle_play() {
                         return Task::done(Message::ReportError(err));
                     }
@@ -668,7 +689,7 @@ impl RuxApplication {
                     }
                 }
                 // Hack to make sure the tablature is aware of its size
-                Task::done(Message::WindowResized)
+                Task::batch([scroll_task, Task::done(Message::WindowResized)])
             }
             Message::StopPlayer => {
                 if self.audio_player.is_some() && self.tablature.is_some() {
@@ -797,9 +818,9 @@ impl RuxApplication {
                 self.persist_session();
                 Task::none()
             }
-            Message::SaveSession => {
+            Message::CloseRequested => {
                 self.persist_session();
-                Task::none()
+                iced::exit()
             }
             Message::ClearError => {
                 self.error_message = None;
@@ -1079,14 +1100,8 @@ impl RuxApplication {
         });
         subscriptions.push(file_dropped);
 
-        let window_close = window::events().filter_map(|(_, event)| {
-            if matches!(event, window::Event::CloseRequested) {
-                Some(Message::SaveSession)
-            } else {
-                None
-            }
-        });
-        subscriptions.push(window_close);
+        // closing is handled here so the session is saved before exiting
+        subscriptions.push(window::close_requests().map(|_| Message::CloseRequested));
 
         if self.measure_selection_dragging {
             let drag_release = event::listen_with(|event, _status, _id| {
