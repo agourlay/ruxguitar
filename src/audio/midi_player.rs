@@ -422,153 +422,28 @@ fn new_output_stream(
 
     log::info!("Audio output stream config: {stream_config:?}");
 
-    let mut synthesizer_guard = synthesizer.lock().unwrap();
-    if sample_rate != DEFAULT_SAMPLE_RATE {
-        // audio output is not using the default sample rate - recreate synthesizer with proper sample rate
-        let new_synthesizer = AudioPlayer::make_synthesizer(sound_font, sample_rate)?;
-        *synthesizer_guard = new_synthesizer;
+    {
+        let mut synthesizer_guard = synthesizer.lock().unwrap();
+        if sample_rate != DEFAULT_SAMPLE_RATE {
+            // audio output is not using the default sample rate - recreate synthesizer with proper sample rate
+            *synthesizer_guard = AudioPlayer::make_synthesizer(sound_font, sample_rate)?;
+        }
+        prime_synthesizer(&sequencer.lock().unwrap(), &mut synthesizer_guard);
     }
 
-    // Apply events at tick=FIRST_TICK to set up synthesizer state
-    // otherwise clicking on a measure *before* playing does not produce the correct instrument sound
-    sequencer
-        .lock()
-        .unwrap()
-        .events()
-        .iter()
-        .take_while(|event| event.tick == FIRST_TICK)
-        .filter(|event| event.is_midi_message())
-        .for_each(|event| {
-            if let MidiEventType::MidiMessage(channel, command, data1, data2) = event.event {
-                synthesizer_guard.process_midi_message(channel, command, data1, data2);
-            }
-        });
-
-    drop(synthesizer_guard);
-
-    // Size left and right buffers according to sample rate.
-    // The buffer accounts for 0.1 second of audio.
-    // e.g. 4410 samples at 44100 Hz is 0.1 second
-    let channel_sample_count = sample_rate / 10;
-
-    // reuse buffer for left and right channels across all calls
-    let mut left: Vec<f32> = vec![0_f32; channel_sample_count as usize];
-    let mut right: Vec<f32> = vec![0_f32; channel_sample_count as usize];
-
+    let mut renderer = StreamRenderer::new(
+        sequencer,
+        player_params,
+        synthesizer,
+        current_tick,
+        beat_notify,
+        sample_rate,
+        channel_count,
+    );
     let err_fn = |err| log::error!("an error occurred on stream: {err}");
-
-    let seconds_per_frame = 1.0 / f64::from(sample_rate);
-    // count-in state: remaining ticks and ticks until the next click
-    let mut count_in_left: f64 = 0.0;
-    let mut count_in_beat: f64 = 0.0;
-    let mut count_in_next_click: f64 = 0.0;
     let stream = device.build_output_stream(
         stream_config,
-        move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            // frames requested by the device for its channel layout
-            let frame_count = output.len() / channel_count;
-            let render_len = frame_count.min(left.len());
-            // advance by the audio about to be rendered so event scheduling
-            // stays locked to the output instead of a wall clock
-            let elapsed_secs = render_len as f64 * seconds_per_frame;
-            let mut sequencer_guard = sequencer.lock().unwrap();
-            let mut synthesizer_guard = synthesizer.lock().unwrap();
-
-            // a pending count-in clicks through one measure before playback
-            if let Some((total_ticks, beat_ticks)) = player_params.take_count_in_request() {
-                count_in_left = f64::from(total_ticks);
-                count_in_beat = f64::from(beat_ticks);
-                count_in_next_click = 0.0;
-            }
-            let counting_in = count_in_left > 0.0;
-            let loop_range = player_params.loop_enabled().then(|| {
-                (
-                    player_params.loop_start_tick(),
-                    player_params.loop_end_tick(),
-                )
-            });
-            let step = if counting_in {
-                if count_in_next_click <= 0.0 {
-                    // same layered click as the metronome
-                    for key in METRONOME_KEYS {
-                        synthesizer_guard.note_on(9, key, i32::from(METRONOME_VELOCITY));
-                    }
-                    count_in_next_click += count_in_beat;
-                }
-                let ticks = tick_increase(player_params.adjusted_tempo(), elapsed_secs);
-                count_in_left -= ticks;
-                count_in_next_click -= ticks;
-                sequencer_guard.pending_step()
-            } else {
-                sequencer_guard.step(player_params.adjusted_tempo(), elapsed_secs, loop_range)
-            };
-            // the sequence is exhausted: wake the UI once to stop the transport
-            if step.events.is_none() && loop_range.is_none() && !player_params.is_finished() {
-                player_params.set_finished(true);
-                beat_notify.notify_one();
-            }
-            // frames already rendered, before a loop restart
-            let mut rendered = 0;
-            if !counting_in {
-                let events = sequencer_guard.events();
-                if let Some(range) = step.events {
-                    play_events(
-                        &events[range],
-                        step.tick,
-                        &mut synthesizer_guard,
-                        &player_params,
-                        &current_tick,
-                        &beat_notify,
-                    );
-                }
-                // the loop end was crossed: render up to it, then start the
-                // next pass there, so the last notes of the pass still sound
-                if let Some(range) = step.restart {
-                    rendered = ((render_len as f64) * step.restart_at).round() as usize;
-                    rendered = rendered.min(render_len);
-                    synthesizer_guard.render(&mut left[..rendered], &mut right[..rendered]);
-                    synthesizer_guard.note_off_all(false);
-                    synthesizer_guard.reset_all_controllers();
-                    player_params.set_tempo(player_params.loop_start_tempo());
-                    player_params.set_finished(false);
-                    play_events(
-                        &events[range],
-                        sequencer_guard.get_tick(),
-                        &mut synthesizer_guard,
-                        &player_params,
-                        &current_tick,
-                        &beat_notify,
-                    );
-                }
-            }
-            if render_len < frame_count {
-                // debug level: runs on the real-time audio thread
-                log::debug!(
-                    "Output buffer larger than render buffer {frame_count} > {}",
-                    left.len()
-                );
-            }
-
-            // Render the waveform.
-            synthesizer_guard.render(
-                &mut left[rendered..render_len],
-                &mut right[rendered..render_len],
-            );
-
-            let master_volume = player_params.master_volume();
-
-            // Drop locks
-            drop(sequencer_guard);
-            drop(synthesizer_guard);
-
-            write_frames(
-                output,
-                &left[..render_len],
-                &right[..render_len],
-                channel_count,
-                master_volume,
-            );
-        },
+        move |output: &mut [f32], _: &cpal::OutputCallbackInfo| renderer.render(output),
         err_fn,
         None, // blocking stream
     );
@@ -577,6 +452,201 @@ fn new_output_stream(
         .play()
         .map_err(|e| AudioPlayerError::StreamError(e.to_string()))?;
     Ok(stream)
+}
+
+/// Apply the channel setup events at `FIRST_TICK`, so that seeking to a
+/// measure before playing already sounds with the right instruments.
+fn prime_synthesizer(sequencer: &MidiSequencer, synthesizer: &mut Synthesizer) {
+    sequencer
+        .events()
+        .iter()
+        .take_while(|event| event.tick == FIRST_TICK)
+        .filter(|event| event.is_midi_message())
+        .for_each(|event| {
+            if let MidiEventType::MidiMessage(channel, command, data1, data2) = event.event {
+                synthesizer.process_midi_message(channel, command, data1, data2);
+            }
+        });
+}
+
+/// A one measure count-in, clicking every beat before playback resumes.
+#[derive(Debug, Default)]
+struct CountIn {
+    /// Ticks left to count.
+    left: f64,
+    /// Ticks per beat.
+    beat: f64,
+    /// Ticks until the next click.
+    next_click: f64,
+}
+
+impl CountIn {
+    fn start(&mut self, total_ticks: u32, beat_ticks: u32) {
+        self.left = f64::from(total_ticks);
+        self.beat = f64::from(beat_ticks);
+        self.next_click = 0.0;
+    }
+
+    fn is_active(&self) -> bool {
+        self.left > 0.0
+    }
+
+    /// Advance by `ticks`: whether a click is due at the start of them.
+    fn advance(&mut self, ticks: f64) -> bool {
+        let click = self.next_click <= 0.0;
+        if click {
+            self.next_click += self.beat;
+        }
+        self.left -= ticks;
+        self.next_click -= ticks;
+        click
+    }
+}
+
+/// The audio callback's state: steps the sequencer, plays its events and
+/// renders the synthesizer into the device buffer.
+struct StreamRenderer {
+    sequencer: Arc<Mutex<MidiSequencer>>,
+    player_params: Arc<MidiPlayerParams>,
+    synthesizer: Arc<Mutex<Synthesizer>>,
+    current_tick: Arc<AtomicU32>,
+    beat_notify: Arc<Notify>,
+    /// Render buffers, reused across calls.
+    left: Vec<f32>,
+    right: Vec<f32>,
+    channel_count: usize,
+    seconds_per_frame: f64,
+    count_in: CountIn,
+}
+
+impl StreamRenderer {
+    fn new(
+        sequencer: Arc<Mutex<MidiSequencer>>,
+        player_params: Arc<MidiPlayerParams>,
+        synthesizer: Arc<Mutex<Synthesizer>>,
+        current_tick: Arc<AtomicU32>,
+        beat_notify: Arc<Notify>,
+        sample_rate: u32,
+        channel_count: usize,
+    ) -> Self {
+        // The buffers hold 0.1 second of audio,
+        // e.g. 4410 samples at 44100 Hz
+        let channel_sample_count = (sample_rate / 10) as usize;
+        Self {
+            sequencer,
+            player_params,
+            synthesizer,
+            current_tick,
+            beat_notify,
+            left: vec![0_f32; channel_sample_count],
+            right: vec![0_f32; channel_sample_count],
+            channel_count,
+            seconds_per_frame: 1.0 / f64::from(sample_rate),
+            count_in: CountIn::default(),
+        }
+    }
+
+    fn render(&mut self, output: &mut [f32]) {
+        let player_params = &self.player_params;
+        // frames requested by the device for its channel layout
+        let frame_count = output.len() / self.channel_count;
+        let render_len = frame_count.min(self.left.len());
+        // advance by the audio about to be rendered so event scheduling
+        // stays locked to the output instead of a wall clock
+        let elapsed_secs = render_len as f64 * self.seconds_per_frame;
+        let mut sequencer_guard = self.sequencer.lock().unwrap();
+        let mut synthesizer_guard = self.synthesizer.lock().unwrap();
+
+        // a pending count-in clicks through one measure before playback
+        if let Some((total_ticks, beat_ticks)) = player_params.take_count_in_request() {
+            self.count_in.start(total_ticks, beat_ticks);
+        }
+        let counting_in = self.count_in.is_active();
+        let loop_range = player_params.loop_enabled().then(|| {
+            (
+                player_params.loop_start_tick(),
+                player_params.loop_end_tick(),
+            )
+        });
+        let step = if counting_in {
+            let ticks = tick_increase(player_params.adjusted_tempo(), elapsed_secs);
+            if self.count_in.advance(ticks) {
+                // same layered click as the metronome
+                for key in METRONOME_KEYS {
+                    synthesizer_guard.note_on(9, key, i32::from(METRONOME_VELOCITY));
+                }
+            }
+            sequencer_guard.pending_step()
+        } else {
+            sequencer_guard.step(player_params.adjusted_tempo(), elapsed_secs, loop_range)
+        };
+        // the sequence is exhausted: wake the UI once to stop the transport
+        if step.events.is_none() && loop_range.is_none() && !player_params.is_finished() {
+            player_params.set_finished(true);
+            self.beat_notify.notify_one();
+        }
+        // frames already rendered, before a loop restart
+        let mut rendered = 0;
+        if !counting_in {
+            let events = sequencer_guard.events();
+            if let Some(range) = step.events {
+                play_events(
+                    &events[range],
+                    step.tick,
+                    &mut synthesizer_guard,
+                    player_params,
+                    &self.current_tick,
+                    &self.beat_notify,
+                );
+            }
+            // the loop end was crossed: render up to it, then start the
+            // next pass there, so the last notes of the pass still sound
+            if let Some(range) = step.restart {
+                rendered = ((render_len as f64) * step.restart_at).round() as usize;
+                rendered = rendered.min(render_len);
+                synthesizer_guard.render(&mut self.left[..rendered], &mut self.right[..rendered]);
+                synthesizer_guard.note_off_all(false);
+                synthesizer_guard.reset_all_controllers();
+                player_params.set_tempo(player_params.loop_start_tempo());
+                player_params.set_finished(false);
+                play_events(
+                    &events[range],
+                    sequencer_guard.get_tick(),
+                    &mut synthesizer_guard,
+                    player_params,
+                    &self.current_tick,
+                    &self.beat_notify,
+                );
+            }
+        }
+        if render_len < frame_count {
+            // debug level: runs on the real-time audio thread
+            log::debug!(
+                "Output buffer larger than render buffer {frame_count} > {}",
+                self.left.len()
+            );
+        }
+
+        // Render the waveform.
+        synthesizer_guard.render(
+            &mut self.left[rendered..render_len],
+            &mut self.right[rendered..render_len],
+        );
+
+        let master_volume = player_params.master_volume();
+
+        // Drop locks
+        drop(sequencer_guard);
+        drop(synthesizer_guard);
+
+        write_frames(
+            output,
+            &self.left[..render_len],
+            &self.right[..render_len],
+            self.channel_count,
+            master_volume,
+        );
+    }
 }
 
 /// Interleave rendered stereo samples into the device's frame layout.
@@ -616,6 +686,40 @@ fn write_frames(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Advance a count-in in steps of `ticks` until it ends, returning the
+    /// tick of each click.
+    fn count_in_clicks(total: u32, beat: u32, ticks: f64) -> Vec<f64> {
+        let mut count_in = CountIn::default();
+        count_in.start(total, beat);
+        let mut clicks = Vec::new();
+        let mut elapsed = 0.0;
+        while count_in.is_active() {
+            if count_in.advance(ticks) {
+                clicks.push(elapsed);
+            }
+            elapsed += ticks;
+        }
+        clicks
+    }
+
+    #[test]
+    fn a_count_in_clicks_every_beat_of_the_measure() {
+        let clicks = count_in_clicks(4 * 960, 960, 240.0);
+        assert_eq!(clicks, [0.0, 960.0, 1920.0, 2880.0]);
+    }
+
+    #[test]
+    fn a_count_in_with_coarse_steps_clicks_on_the_first_step_past_each_beat() {
+        // steps longer than a beat cannot click more than once each
+        let clicks = count_in_clicks(3 * 960, 960, 1000.0);
+        assert_eq!(clicks, [0.0, 1000.0, 2000.0]);
+    }
+
+    #[test]
+    fn no_count_in_until_one_is_requested() {
+        assert!(!CountIn::default().is_active());
+    }
 
     #[test]
     fn write_frames_stereo_applies_volume() {
