@@ -13,6 +13,7 @@ use crate::ui::icons::{
 };
 use crate::ui::selections::TempoSelection;
 use crate::ui::song_info::SongDisplayInfo;
+use crate::ui::track_picker::TrackPicker;
 use crate::ui::utils::{
     TablatureColors, action_gated, action_toggle, modal, untitled_text_table_box,
 };
@@ -128,7 +129,7 @@ impl RuxApplication {
             Message::ToggleSolo,
             self.audio_player
                 .as_ref()
-                .is_some_and(|p| p.solo_track_id().is_some()),
+                .is_some_and(AudioPlayer::is_solo_active),
         );
         let mute_mode = action_toggle(
             mute_icon(),
@@ -150,13 +151,34 @@ impl RuxApplication {
             Message::ToggleCountIn,
             self.prefs.count_in,
         );
-        let track_pick_list = pick_list(
+        let track_solos: Vec<bool> = song
+            .tracks
+            .iter()
+            .map(|track| {
+                self.audio_player
+                    .as_ref()
+                    .is_some_and(|p| p.is_track_solo(track.index))
+            })
+            .collect();
+        let track_mutes: Vec<bool> = song
+            .tracks
+            .iter()
+            .map(|track| {
+                self.audio_player
+                    .as_ref()
+                    .is_some_and(|p| p.is_track_muted(track.index))
+            })
+            .collect();
+        let track_pick_list = TrackPicker::new(
             song.tracks.as_slice(),
-            Some(&song.track),
+            &song.track,
+            move |index| track_solos.get(index).copied().unwrap_or(false),
+            move |index| track_mutes.get(index).copied().unwrap_or(false),
             Message::TrackSelected,
+            Message::ToggleTrackSolo,
+            Message::ToggleTrackMute,
         )
-        .text_size(14)
-        .padding([5, 10]);
+        .view();
         let current_volume = self
             .audio_player
             .as_ref()

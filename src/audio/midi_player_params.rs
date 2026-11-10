@@ -1,13 +1,12 @@
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
-
-const SOLO_NONE: i32 = -1;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 /// Playback parameters shared lock-free between UI and audio callback.
 pub struct MidiPlayerParams {
     tempo: AtomicU32,
     tempo_percentage: AtomicU32,
-    solo_track_id: AtomicI32, // -1 == None
-    mute_mask: AtomicU64,     // bit per muted track id
+    /// Bit per soloed track; when zero, no solo filtering.
+    solo_mask: AtomicU64,
+    mute_mask: AtomicU64, // bit per muted track id
     metronome: AtomicBool,
     count_in: AtomicBool,
     finished: AtomicBool, // the sequence ran past its last event
@@ -21,11 +20,11 @@ pub struct MidiPlayerParams {
 }
 
 impl MidiPlayerParams {
-    pub fn new(tempo: u32, tempo_percentage: u32, solo_track_id: Option<usize>) -> Self {
+    pub fn new(tempo: u32, tempo_percentage: u32) -> Self {
         Self {
             tempo: AtomicU32::new(tempo),
             tempo_percentage: AtomicU32::new(tempo_percentage),
-            solo_track_id: AtomicI32::new(solo_track_id.map_or(SOLO_NONE, |id| id as i32)),
+            solo_mask: AtomicU64::new(0),
             mute_mask: AtomicU64::new(0),
             metronome: AtomicBool::new(false),
             count_in: AtomicBool::new(false),
@@ -115,15 +114,30 @@ impl MidiPlayerParams {
         track_id < 64 && self.mute_mask.load(Ordering::Relaxed) & (1 << track_id) != 0
     }
 
+    pub fn toggle_track_solo(&self, track_id: usize) {
+        if track_id < 64 {
+            self.solo_mask.fetch_xor(1 << track_id, Ordering::Relaxed);
+        }
+    }
+
+    pub fn is_track_solo(&self, track_id: usize) -> bool {
+        track_id < 64 && self.solo_mask.load(Ordering::Relaxed) & (1 << track_id) != 0
+    }
+
+    pub fn is_solo_active(&self) -> bool {
+        self.solo_mask.load(Ordering::Relaxed) != 0
+    }
+
     /// Like TuxGuitar's `shouldSend`: mute wins, then solo excludes the rest.
     pub fn is_track_audible(&self, track_id: usize) -> bool {
         if self.is_track_muted(track_id) {
             return false;
         }
-        match self.solo_track_id() {
-            Some(solo_track_id) => solo_track_id == track_id,
-            None => true,
+        let solo_mask = self.solo_mask.load(Ordering::Relaxed);
+        if solo_mask != 0 {
+            return track_id < 64 && solo_mask & (1 << track_id) != 0;
         }
+        true
     }
 
     pub fn master_volume(&self) -> f32 {
@@ -133,20 +147,6 @@ impl MidiPlayerParams {
     pub fn set_master_volume(&self, volume: f32) {
         self.master_volume
             .store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
-    }
-
-    pub fn solo_track_id(&self) -> Option<usize> {
-        match self.solo_track_id.load(Ordering::Relaxed) {
-            SOLO_NONE => None,
-            id => Some(id as usize),
-        }
-    }
-
-    pub fn set_solo_track_id(&self, solo_track_id: Option<usize>) {
-        self.solo_track_id.store(
-            solo_track_id.map_or(SOLO_NONE, |id| id as i32),
-            Ordering::Relaxed,
-        );
     }
 
     pub fn adjusted_tempo(&self) -> u32 {
@@ -172,7 +172,7 @@ mod tests {
     use super::*;
 
     fn params() -> MidiPlayerParams {
-        MidiPlayerParams::new(120, 100, None)
+        MidiPlayerParams::new(120, 100)
     }
 
     #[test]
@@ -196,14 +196,27 @@ mod tests {
     fn mute_wins_over_solo() {
         let params = params();
         assert!(params.is_track_audible(0) && params.is_track_audible(1));
-        params.set_solo_track_id(Some(1));
+        params.toggle_track_solo(1);
         assert!(!params.is_track_audible(0));
         assert!(params.is_track_audible(1));
         params.toggle_track_mute(1);
         assert!(!params.is_track_audible(1));
         params.toggle_track_mute(1);
-        params.set_solo_track_id(None);
+        params.toggle_track_solo(1);
         assert!(params.is_track_audible(0) && params.is_track_audible(1));
+    }
+
+    #[test]
+    fn several_tracks_can_be_soloed_at_once() {
+        let params = params();
+        params.toggle_track_solo(0);
+        params.toggle_track_solo(2);
+        assert!(params.is_track_audible(0));
+        assert!(!params.is_track_audible(1));
+        assert!(params.is_track_audible(2));
+        params.toggle_track_solo(0);
+        assert!(!params.is_track_audible(0));
+        assert!(params.is_track_audible(2));
     }
 
     #[test]
