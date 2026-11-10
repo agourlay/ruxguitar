@@ -113,6 +113,10 @@ pub enum Message {
     ToggleSolo,
     /// Toggle mute of the currently selected track.
     ToggleMute,
+    /// Toggle solo for a specific track (from the track menu).
+    ToggleTrackSolo(usize),
+    /// Toggle mute for a specific track (from the track menu).
+    ToggleTrackMute(usize),
     ToggleMetronome,
     ToggleCountIn,
     WindowResized,
@@ -621,6 +625,18 @@ impl RuxApplication {
             Message::ToggleMute => {
                 if let (Some(audio_player), Some(song)) = (&self.audio_player, &self.song) {
                     audio_player.toggle_track_mute(song.track.index);
+                }
+                Task::none()
+            }
+            Message::ToggleTrackSolo(track_index) => {
+                if let Some(audio_player) = &self.audio_player {
+                    audio_player.toggle_solo_mode(track_index);
+                }
+                Task::none()
+            }
+            Message::ToggleTrackMute(track_index) => {
+                if let Some(audio_player) = &self.audio_player {
+                    audio_player.toggle_track_mute(track_index);
                 }
                 Task::none()
             }

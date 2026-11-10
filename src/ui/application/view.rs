@@ -12,6 +12,7 @@ use crate::ui::icons::{
     stop_icon,
 };
 use crate::ui::selections::TempoSelection;
+use crate::ui::track_picker::TrackPicker;
 use crate::ui::song_info::SongDisplayInfo;
 use crate::ui::utils::{
     TablatureColors, action_gated, action_toggle, modal, untitled_text_table_box,
@@ -150,13 +151,29 @@ impl RuxApplication {
             Message::ToggleCountIn,
             self.prefs.count_in,
         );
-        let track_pick_list = pick_list(
+        let solo_track = self
+            .audio_player
+            .as_ref()
+            .and_then(AudioPlayer::solo_track_id);
+        let track_mutes: Vec<bool> = song
+            .tracks
+            .iter()
+            .map(|track| {
+                self.audio_player
+                    .as_ref()
+                    .is_some_and(|p| p.is_track_muted(track.index))
+            })
+            .collect();
+        let track_pick_list = TrackPicker::new(
             song.tracks.as_slice(),
-            Some(&song.track),
+            &song.track,
+            move |index| solo_track == Some(index),
+            move |index| track_mutes.get(index).copied().unwrap_or(false),
             Message::TrackSelected,
+            Message::ToggleTrackSolo,
+            Message::ToggleTrackMute,
         )
-        .text_size(14)
-        .padding([5, 10]);
+        .view();
         let current_volume = self
             .audio_player
             .as_ref()
