@@ -6,10 +6,11 @@ use iced::advanced::text::Shaping;
 use iced::advanced::{
     Clipboard, Layout, Overlay, Renderer as GfxRenderer, Shell, Widget, layout, overlay, renderer,
     text,
+    text::{Renderer as TextRenderer, paragraph},
     widget::tree,
 };
 use iced::alignment;
-use iced::widget::overlay::menu::{Catalog as MenuCatalog};
+use iced::widget::overlay::menu::Catalog as MenuCatalog;
 use iced::widget::pick_list::{Catalog as PickListCatalog, Status};
 use iced::{
     Background, Border, Element, Event, Length, Padding, Pixels, Point, Rectangle, Size, Theme,
@@ -66,11 +67,14 @@ where
     }
 }
 
+type LabelParagraph = paragraph::Plain<<iced::Renderer as TextRenderer>::Paragraph>;
+
 #[derive(Debug)]
 struct State {
     is_open: bool,
     menu_tree: tree::Tree,
     hovered_index: Option<usize>,
+    labels: Vec<LabelParagraph>,
 }
 
 impl State {
@@ -79,6 +83,7 @@ impl State {
             is_open: false,
             menu_tree: tree::Tree::empty(),
             hovered_index: None,
+            labels: Vec::new(),
         }
     }
 }
@@ -104,29 +109,55 @@ where
 
     fn layout(
         &mut self,
-        _tree: &mut tree::Tree,
-        _renderer: &iced::Renderer,
+        tree: &mut tree::Tree,
+        renderer: &iced::Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
+        let state = tree.state.downcast_mut::<State>();
         let text_size = Pixels(TEXT_SIZE);
         let padding = Padding::from([5, 10]);
-        let line_height = text::LineHeight::default().to_absolute(text_size);
-        // Like `pick_list`: intrinsic width from the longest option, then let
-        // the parent row shrink the control to fit the toolbar.
-        let labels_width = self
-            .tracks
-            .iter()
-            .map(|t| t.to_string().len() as f32 * 7.0)
-            .fold(0.0_f32, f32::max);
+        let line_height = text::LineHeight::default();
+        let font = renderer.default_font();
+
+        state
+            .labels
+            .resize_with(self.tracks.len(), Default::default);
+
+        let option_text = text::Text {
+            content: "",
+            bounds: Size::new(f32::INFINITY, line_height.to_absolute(text_size).into()),
+            size: text_size,
+            line_height,
+            font,
+            align_x: text::Alignment::Default,
+            align_y: alignment::Vertical::Center,
+            shaping: Shaping::default(),
+            wrapping: text::Wrapping::default(),
+        };
+
+        for (track, paragraph) in self.tracks.iter().zip(state.labels.iter_mut()) {
+            let label = track.to_string();
+            let _ = paragraph.update(text::Text {
+                content: &label,
+                ..option_text
+            });
+        }
+
+        let labels_width = state.labels.iter().fold(0.0_f32, |width, paragraph| {
+            f32::max(width, paragraph.min_width())
+        });
+
         let intrinsic = Size::new(
-            labels_width + text_size.0 + padding.x(),
-            f32::from(line_height),
+            labels_width + text_size.0 + padding.left,
+            f32::from(line_height.to_absolute(text_size)),
         );
+
         let size = limits
             .width(Length::Shrink)
-            .height(Length::Shrink)
+            .shrink(padding)
             .resolve(Length::Shrink, Length::Shrink, intrinsic)
             .expand(padding);
+
         layout::Node::new(size)
     }
 
@@ -191,8 +222,7 @@ where
 
         let bounds = layout.bounds();
         let status = self.last_status.unwrap_or(Status::Active);
-        let style =
-            PickListCatalog::style(theme, &<Theme as PickListCatalog>::default(), status);
+        let style = PickListCatalog::style(theme, &<Theme as PickListCatalog>::default(), status);
         renderer.fill_quad(
             renderer::Quad {
                 bounds,
@@ -202,10 +232,7 @@ where
             style.background,
         );
         let text_size = Pixels(TEXT_SIZE);
-        let text_bounds = Size::new(
-            (bounds.width - text_size.0 - 20.0).max(0.0),
-            text_size.0,
-        );
+        let text_bounds = Size::new((bounds.width - text_size.0 - 20.0).max(0.0), text_size.0);
         renderer.fill_text(
             text::Text {
                 content: self.selected.to_string(),
@@ -255,9 +282,7 @@ where
         let bounds = layout.bounds();
         let hovered_index = &mut state.hovered_index;
         let is_open = &mut state.is_open;
-        let menu_width = MENU_MAX_WIDTH
-            .max(bounds.width)
-            .min(viewport.width - 8.0);
+        let menu_width = MENU_MAX_WIDTH.max(bounds.width).min(viewport.width - 8.0);
         let menu = TrackMenu {
             width: menu_width,
             tracks: self.tracks,

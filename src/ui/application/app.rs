@@ -618,7 +618,7 @@ impl RuxApplication {
             }
             Message::ToggleSolo => {
                 if let (Some(audio_player), Some(song)) = (&self.audio_player, &self.song) {
-                    audio_player.toggle_solo_mode(song.track.index);
+                    audio_player.toggle_track_solo(song.track.index);
                 }
                 Task::none()
             }
@@ -630,7 +630,7 @@ impl RuxApplication {
             }
             Message::ToggleTrackSolo(track_index) => {
                 if let Some(audio_player) = &self.audio_player {
-                    audio_player.toggle_solo_mode(track_index);
+                    audio_player.toggle_track_solo(track_index);
                 }
                 Task::none()
             }
