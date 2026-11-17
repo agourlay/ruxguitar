@@ -129,7 +129,7 @@ impl RuxApplication {
             Message::ToggleSolo,
             self.audio_player
                 .as_ref()
-                .is_some_and(AudioPlayer::is_solo_active),
+                .is_some_and(|p| p.is_track_solo(song.track.index)),
         );
         let mute_mode = action_toggle(
             mute_icon(),
@@ -151,29 +151,12 @@ impl RuxApplication {
             Message::ToggleCountIn,
             self.prefs.count_in,
         );
-        let track_solos: Vec<bool> = song
-            .tracks
-            .iter()
-            .map(|track| {
-                self.audio_player
-                    .as_ref()
-                    .is_some_and(|p| p.is_track_solo(track.index))
-            })
-            .collect();
-        let track_mutes: Vec<bool> = song
-            .tracks
-            .iter()
-            .map(|track| {
-                self.audio_player
-                    .as_ref()
-                    .is_some_and(|p| p.is_track_muted(track.index))
-            })
-            .collect();
+        let audio_player = self.audio_player.as_ref();
         let track_pick_list = TrackPicker::new(
             song.tracks.as_slice(),
             &song.track,
-            move |index| track_solos.get(index).copied().unwrap_or(false),
-            move |index| track_mutes.get(index).copied().unwrap_or(false),
+            move |index| audio_player.is_some_and(|p| p.is_track_solo(index)),
+            move |index| audio_player.is_some_and(|p| p.is_track_muted(index)),
             Message::TrackSelected,
             Message::ToggleTrackSolo,
             Message::ToggleTrackMute,

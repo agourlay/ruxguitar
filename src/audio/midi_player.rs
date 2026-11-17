@@ -52,7 +52,6 @@ impl AudioPlayer {
         beat_notify: Arc<Notify>,
         playback_order: &[(usize, i64)],
     ) -> Result<Self, AudioPlayerError> {
-        // no solo track by default
         let player_params = Arc::new(MidiPlayerParams::new(song_tempo, tempo_percentage));
 
         let events = MidiBuilder::new().build_for_song_with_order(&song, playback_order);
@@ -109,10 +108,6 @@ impl AudioPlayer {
 
     pub fn is_track_solo(&self, track_id: usize) -> bool {
         self.player_params.is_track_solo(track_id)
-    }
-
-    pub fn is_solo_active(&self) -> bool {
-        self.player_params.is_solo_active()
     }
 
     /// Whether playback reached the end of the song.

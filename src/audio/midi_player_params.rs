@@ -124,10 +124,6 @@ impl MidiPlayerParams {
         track_id < 64 && self.solo_mask.load(Ordering::Relaxed) & (1 << track_id) != 0
     }
 
-    pub fn is_solo_active(&self) -> bool {
-        self.solo_mask.load(Ordering::Relaxed) != 0
-    }
-
     /// Like TuxGuitar's `shouldSend`: mute wins, then solo excludes the rest.
     pub fn is_track_audible(&self, track_id: usize) -> bool {
         if self.is_track_muted(track_id) {

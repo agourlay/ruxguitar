@@ -14,7 +14,7 @@ use iced::widget::overlay::menu::Catalog as MenuCatalog;
 use iced::widget::pick_list::{Catalog as PickListCatalog, Status};
 use iced::{
     Background, Border, Element, Event, Length, Padding, Pixels, Point, Rectangle, Size, Theme,
-    Vector, mouse, touch, window,
+    Vector, keyboard, mouse, touch, window,
 };
 
 /// Open menu width (wider than the trigger when there is room).
@@ -72,8 +72,10 @@ type LabelParagraph = paragraph::Plain<<iced::Renderer as TextRenderer>::Paragra
 #[derive(Debug)]
 struct State {
     is_open: bool,
-    menu_tree: tree::Tree,
     hovered_index: Option<usize>,
+    /// Vertical scroll of the open menu, for songs with more tracks than fit.
+    scroll_offset: f32,
+    keyboard_modifiers: keyboard::Modifiers,
     labels: Vec<LabelParagraph>,
 }
 
@@ -81,10 +83,18 @@ impl State {
     fn new() -> Self {
         Self {
             is_open: false,
-            menu_tree: tree::Tree::empty(),
             hovered_index: None,
+            scroll_offset: 0.0,
+            keyboard_modifiers: keyboard::Modifiers::default(),
             labels: Vec::new(),
         }
+    }
+}
+
+fn wheel_delta_pixels(delta: mouse::ScrollDelta) -> f32 {
+    match delta {
+        mouse::ScrollDelta::Lines { y, .. } => y * ROW_HEIGHT,
+        mouse::ScrollDelta::Pixels { y, .. } => y,
     }
 }
 
@@ -132,7 +142,7 @@ where
             align_x: text::Alignment::Default,
             align_y: alignment::Vertical::Center,
             shaping: Shaping::default(),
-            wrapping: text::Wrapping::default(),
+            wrapping: text::Wrapping::None,
         };
 
         for (track, paragraph) in self.tracks.iter().zip(state.labels.iter_mut()) {
@@ -185,8 +195,33 @@ where
                         .tracks
                         .iter()
                         .position(|t| t.index == self.selected.index);
+                    // start with the selected track at the top, clamped by the menu layout
+                    state.scroll_offset = state.hovered_index.unwrap_or(0) as f32 * ROW_HEIGHT;
                     shell.capture_event();
                 }
+            }
+            // like the stock pick_list: Ctrl/Cmd + wheel cycles through the tracks
+            Event::Mouse(mouse::Event::WheelScrolled { delta })
+                if state.keyboard_modifiers.command()
+                    && !state.is_open
+                    && cursor.is_over(layout.bounds()) =>
+            {
+                let position = self
+                    .tracks
+                    .iter()
+                    .position(|t| t.index == self.selected.index);
+                let next = if wheel_delta_pixels(*delta) < 0.0 {
+                    position.map_or(Some(0), |p| Some(p + 1))
+                } else {
+                    position.and_then(|p| p.checked_sub(1))
+                };
+                if let Some(track) = next.and_then(|i| self.tracks.get(i)) {
+                    shell.publish((self.on_select)(track.clone()));
+                }
+                shell.capture_event();
+            }
+            Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+                state.keyboard_modifiers = *modifiers;
             }
             _ => {}
         }
@@ -243,7 +278,7 @@ where
                 align_x: text::Alignment::Default,
                 align_y: alignment::Vertical::Center,
                 shaping: Shaping::default(),
-                wrapping: text::Wrapping::default(),
+                wrapping: text::Wrapping::None,
             },
             Point::new(bounds.x + 10.0, bounds.center_y()),
             style.text_color,
@@ -280,29 +315,27 @@ where
             return None;
         }
         let bounds = layout.bounds();
-        let hovered_index = &mut state.hovered_index;
-        let is_open = &mut state.is_open;
         let menu_width = MENU_MAX_WIDTH.max(bounds.width).min(viewport.width - 8.0);
         let menu = TrackMenu {
             width: menu_width,
             tracks: self.tracks,
             selected: self.selected,
-            hovered_index,
+            hovered_index: &mut state.hovered_index,
+            scroll_offset: &mut state.scroll_offset,
             is_solo: &self.is_solo,
             is_muted: &self.is_muted,
             on_select: &self.on_select,
             on_solo: &self.on_solo,
             on_mute: &self.on_mute,
-            is_open,
+            is_open: &mut state.is_open,
         };
-        state.menu_tree.diff(&menu as &dyn Widget<_, _, _>);
         Some(overlay::Element::new(Box::new(TrackMenuOverlay {
             position: bounds.position() + translation,
             viewport: *viewport,
             target_width: bounds.width,
             target_height: bounds.height,
             menu_width,
-            tree: &mut state.menu_tree,
+            tree: tree::Tree::empty(),
             list: menu,
         })))
     }
@@ -313,6 +346,7 @@ struct TrackMenu<'a, Message> {
     tracks: &'a [TrackSelection],
     selected: &'a TrackSelection,
     hovered_index: &'a mut Option<usize>,
+    scroll_offset: &'a mut f32,
     is_solo: &'a dyn Fn(usize) -> bool,
     is_muted: &'a dyn Fn(usize) -> bool,
     on_select: &'a dyn Fn(TrackSelection) -> Message,
@@ -336,13 +370,20 @@ impl RowHit {
     }
 }
 
-impl<'a, Message> TrackMenu<'a, Message> {
-    fn row_hit(cursor: Point, bounds: Rectangle) -> Option<RowHit> {
+impl<Message> TrackMenu<'_, Message> {
+    fn content_height(&self) -> f32 {
+        ROW_HEIGHT * self.tracks.len() as f32
+    }
+
+    fn row_index_at(&self, y_in_bounds: f32) -> usize {
+        ((y_in_bounds + *self.scroll_offset) / ROW_HEIGHT) as usize
+    }
+
+    fn row_hit(&self, cursor: Point, bounds: Rectangle) -> Option<RowHit> {
         if !bounds.contains(cursor) {
             return None;
         }
-        let y = cursor.y - bounds.y;
-        let index = (y / ROW_HEIGHT) as usize;
+        let index = self.row_index_at(cursor.y - bounds.y);
         let local_x = cursor.x - bounds.x;
         let mute_start = bounds.width - ROW_PADDING - ACTION_WIDTH;
         let solo_start = mute_start - ACTION_GAP - ACTION_WIDTH;
@@ -353,6 +394,20 @@ impl<'a, Message> TrackMenu<'a, Message> {
         } else {
             Some(RowHit::Select(index))
         }
+    }
+}
+
+impl<Message> TrackMenu<'_, Message> {
+    /// Hover the row under the cursor; returns whether it changed.
+    fn update_hover(&mut self, cursor: mouse::Cursor, bounds: Rectangle) -> bool {
+        if let Some(cursor_position) = cursor.position_in(bounds) {
+            let index = self.row_index_at(cursor_position.y);
+            if *self.hovered_index != Some(index) && index < self.tracks.len() {
+                *self.hovered_index = Some(index);
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -383,6 +438,10 @@ where
                 Size::new(self.width, height),
             )
             .expand(Padding::ZERO);
+        // the limits may cut the menu short: keep the scroll within the hidden rows
+        *self.scroll_offset = self
+            .scroll_offset
+            .clamp(0.0, (self.content_height() - size.height).max(0.0));
         layout::Node::new(size)
     }
 
@@ -402,7 +461,7 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
                 if let Some(cursor_position) = cursor.position()
-                    && let Some(hit) = Self::row_hit(cursor_position, bounds)
+                    && let Some(hit) = self.row_hit(cursor_position, bounds)
                     && self.tracks.get(hit.index()).is_some()
                 {
                     match hit {
@@ -420,14 +479,19 @@ where
                     shell.capture_event();
                 }
             }
-            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if let Some(cursor_position) = cursor.position_in(bounds) {
-                    let index = (cursor_position.y / ROW_HEIGHT) as usize;
-                    if *self.hovered_index != Some(index) && index < self.tracks.len() {
-                        *self.hovered_index = Some(index);
-                        shell.request_redraw();
-                    }
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
+                let max_offset = (self.content_height() - bounds.height).max(0.0);
+                let offset =
+                    (*self.scroll_offset - wheel_delta_pixels(*delta)).clamp(0.0, max_offset);
+                if offset != *self.scroll_offset {
+                    *self.scroll_offset = offset;
+                    self.update_hover(cursor, bounds);
+                    shell.request_redraw();
                 }
+                shell.capture_event();
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) if self.update_hover(cursor, bounds) => {
+                shell.request_redraw();
             }
             _ => {}
         }
@@ -450,87 +514,104 @@ where
         let text_size = Pixels(TEXT_SIZE);
         let font = renderer.default_font();
         let palette = theme.extended_palette();
+        let mute_start = bounds.width - ROW_PADDING - ACTION_WIDTH;
+        let solo_start = mute_start - ACTION_GAP - ACTION_WIDTH;
+        let label_width = solo_start - ROW_PADDING;
+        let first_visible = self.row_index_at(0.0);
+        let visible_rows = (bounds.height / ROW_HEIGHT).ceil() as usize + 1;
 
-        for (index, track) in self.tracks.iter().enumerate() {
-            let row_bounds = Rectangle {
-                x: bounds.x,
-                y: bounds.y + ROW_HEIGHT * index as f32,
-                width: bounds.width,
-                height: ROW_HEIGHT,
-            };
+        // clip the rows scrolled out of the menu
+        renderer.with_layer(bounds, |renderer| {
+            for (index, track) in self
+                .tracks
+                .iter()
+                .enumerate()
+                .skip(first_visible)
+                .take(visible_rows)
+            {
+                let row_bounds = Rectangle {
+                    x: bounds.x,
+                    y: bounds.y + ROW_HEIGHT * index as f32 - *self.scroll_offset,
+                    width: bounds.width,
+                    height: ROW_HEIGHT,
+                };
 
-            let is_hovered = *self.hovered_index == Some(index);
-            let is_current = track.index == self.selected.index;
-            if is_hovered || is_current {
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: Rectangle {
-                            x: row_bounds.x + style.border.width,
-                            width: row_bounds.width - style.border.width * 2.0,
-                            ..row_bounds
+                let is_hovered = *self.hovered_index == Some(index);
+                let is_current = track.index == self.selected.index;
+                if is_hovered || is_current {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: row_bounds.x + style.border.width,
+                                width: row_bounds.width - style.border.width * 2.0,
+                                ..row_bounds
+                            },
+                            ..renderer::Quad::default()
                         },
-                        ..renderer::Quad::default()
+                        if is_current {
+                            style.selected_background
+                        } else {
+                            palette.primary.weak.color.into()
+                        },
+                    );
+                }
+
+                // clip long track names before the solo/mute buttons
+                let label_bounds = Rectangle {
+                    x: row_bounds.x + ROW_PADDING,
+                    width: label_width,
+                    ..row_bounds
+                };
+                renderer.fill_text(
+                    text::Text {
+                        content: track.to_string(),
+                        size: text_size,
+                        line_height: text::LineHeight::default(),
+                        font,
+                        bounds: label_bounds.size(),
+                        align_x: text::Alignment::Default,
+                        align_y: alignment::Vertical::Center,
+                        shaping: Shaping::default(),
+                        wrapping: text::Wrapping::None,
                     },
+                    Point::new(label_bounds.x, label_bounds.center_y()),
                     if is_current {
-                        style.selected_background
+                        style.selected_text_color
                     } else {
-                        palette.primary.weak.color.into()
+                        style.text_color
                     },
+                    label_bounds.intersection(viewport).unwrap_or_default(),
+                );
+
+                let action_y = row_bounds.y + (ROW_HEIGHT - ACTION_WIDTH) / 2.0;
+                draw_action_button(
+                    renderer,
+                    theme,
+                    viewport,
+                    Rectangle {
+                        x: row_bounds.x + solo_start,
+                        y: action_y,
+                        width: ACTION_WIDTH,
+                        height: ACTION_WIDTH,
+                    },
+                    "S",
+                    (self.is_solo)(track.index),
+                );
+                draw_action_button(
+                    renderer,
+                    theme,
+                    viewport,
+                    Rectangle {
+                        x: row_bounds.x + mute_start,
+                        y: action_y,
+                        width: ACTION_WIDTH,
+                        height: ACTION_WIDTH,
+                    },
+                    "M",
+                    (self.is_muted)(track.index),
                 );
             }
-
-            let mute_start = row_bounds.width - ROW_PADDING - ACTION_WIDTH;
-            let solo_start = mute_start - ACTION_GAP - ACTION_WIDTH;
-            let label_width = solo_start - ROW_PADDING;
-
-            renderer.fill_text(
-                text::Text {
-                    content: track.to_string(),
-                    size: text_size,
-                    line_height: text::LineHeight::default(),
-                    font,
-                    bounds: Size::new(label_width, ROW_HEIGHT),
-                    align_x: text::Alignment::Default,
-                    align_y: alignment::Vertical::Center,
-                    shaping: Shaping::default(),
-                    wrapping: text::Wrapping::default(),
-                },
-                Point::new(row_bounds.x + ROW_PADDING, row_bounds.center_y()),
-                if is_current {
-                    style.selected_text_color
-                } else {
-                    style.text_color
-                },
-                *viewport,
-            );
-
-            draw_action_button(
-                renderer,
-                theme,
-                viewport,
-                Rectangle {
-                    x: row_bounds.x + solo_start,
-                    y: row_bounds.y + (ROW_HEIGHT - ACTION_WIDTH) / 2.0,
-                    width: ACTION_WIDTH,
-                    height: ACTION_WIDTH,
-                },
-                "S",
-                (self.is_solo)(track.index),
-            );
-            draw_action_button(
-                renderer,
-                theme,
-                viewport,
-                Rectangle {
-                    x: row_bounds.x + mute_start,
-                    y: row_bounds.y + (ROW_HEIGHT - ACTION_WIDTH) / 2.0,
-                    width: ACTION_WIDTH,
-                    height: ACTION_WIDTH,
-                },
-                "M",
-                (self.is_muted)(track.index),
-            );
-        }
+        });
     }
 }
 
@@ -592,7 +673,7 @@ struct TrackMenuOverlay<'a, Message> {
     target_width: f32,
     target_height: f32,
     menu_width: f32,
-    tree: &'a mut tree::Tree,
+    tree: tree::Tree,
     list: TrackMenu<'a, Message>,
 }
 
@@ -616,7 +697,7 @@ where
         )
         .width(self.menu_width);
 
-        let node = self.list.layout(self.tree, renderer, &limits);
+        let node = self.list.layout(&mut self.tree, renderer, &limits);
         let size = node.size();
         let mut x = self.position.x + self.target_width - size.width;
         x = x.clamp(0.0, (bounds.width - size.width).max(0.0));
@@ -638,7 +719,7 @@ where
         shell: &mut Shell<'_, Message>,
     ) {
         self.list.update(
-            self.tree,
+            &mut self.tree,
             event,
             layout,
             cursor,
@@ -668,7 +749,7 @@ where
             style.background,
         );
         self.list.draw(
-            self.tree,
+            &self.tree,
             renderer,
             theme,
             defaults,
