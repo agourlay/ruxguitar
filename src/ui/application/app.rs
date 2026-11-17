@@ -36,6 +36,8 @@ pub struct RuxApplication {
     config: Config,
     pub(super) error_message: Option<String>,
     pub(super) is_fullscreen: bool,
+    /// Whether the track menu under the toolbar's track picker is open.
+    pub(super) track_menu_open: bool,
     pub(super) selection_drag: SelectionDrag,
     current_tab_path: Option<PathBuf>,
     session_restore: Option<SessionRestore>,
@@ -102,6 +104,9 @@ pub enum Message {
     /// File content, parent folder and file name.
     FileOpened(Result<(Vec<u8>, Option<PathBuf>, String, PathBuf), FilePickerError>),
     TrackSelected(TrackSelection),
+    /// Open or close the track menu.
+    ToggleTrackMenu,
+    CloseTrackMenu,
     SelectionDragStart(usize, usize, Point),
     SelectionDragTo(usize, Point),
     SelectionDragEnd,
@@ -113,6 +118,10 @@ pub enum Message {
     ToggleSolo,
     /// Toggle mute of the currently selected track.
     ToggleMute,
+    /// Toggle solo for a specific track (from the track menu).
+    ToggleTrackSolo(usize),
+    /// Toggle mute for a specific track (from the track menu).
+    ToggleTrackMute(usize),
     ToggleMetronome,
     ToggleCountIn,
     WindowResized,
@@ -150,6 +159,7 @@ impl RuxApplication {
             config,
             error_message: None,
             is_fullscreen: false,
+            track_menu_open: false,
             selection_drag: SelectionDrag::Idle,
             current_tab_path: None,
             session_restore: None,
@@ -390,6 +400,7 @@ impl RuxApplication {
             tablature_scroll_id.clone(),
             &playback_order,
         );
+        self.track_menu_open = false;
         self.song = Some(LoadedSong {
             info,
             tracks: track_selections,
@@ -503,6 +514,7 @@ impl RuxApplication {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TrackSelected(selection) => {
+                self.track_menu_open = false;
                 if let Some(song) = &mut self.song {
                     song.tablature.update_track(selection.index);
                     song.track = selection;
@@ -614,13 +626,33 @@ impl RuxApplication {
             }
             Message::ToggleSolo => {
                 if let (Some(audio_player), Some(song)) = (&self.audio_player, &self.song) {
-                    audio_player.toggle_solo_mode(song.track.index);
+                    audio_player.toggle_track_solo(song.track.index);
                 }
                 Task::none()
             }
             Message::ToggleMute => {
                 if let (Some(audio_player), Some(song)) = (&self.audio_player, &self.song) {
                     audio_player.toggle_track_mute(song.track.index);
+                }
+                Task::none()
+            }
+            Message::ToggleTrackMenu => {
+                self.track_menu_open = !self.track_menu_open;
+                Task::none()
+            }
+            Message::CloseTrackMenu => {
+                self.track_menu_open = false;
+                Task::none()
+            }
+            Message::ToggleTrackSolo(track_index) => {
+                if let Some(audio_player) = &self.audio_player {
+                    audio_player.toggle_track_solo(track_index);
+                }
+                Task::none()
+            }
+            Message::ToggleTrackMute(track_index) => {
+                if let Some(audio_player) = &self.audio_player {
+                    audio_player.toggle_track_mute(track_index);
                 }
                 Task::none()
             }
@@ -690,6 +722,7 @@ impl RuxApplication {
             }
             Message::ToggleFullscreen => {
                 self.is_fullscreen = !self.is_fullscreen;
+                self.track_menu_open = false;
                 let mode = if self.is_fullscreen {
                     window::Mode::Fullscreen
                 } else {

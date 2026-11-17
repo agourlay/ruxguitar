@@ -52,8 +52,7 @@ impl AudioPlayer {
         beat_notify: Arc<Notify>,
         playback_order: &[(usize, i64)],
     ) -> Result<Self, AudioPlayerError> {
-        // no solo track by default
-        let player_params = Arc::new(MidiPlayerParams::new(song_tempo, tempo_percentage, None));
+        let player_params = Arc::new(MidiPlayerParams::new(song_tempo, tempo_percentage));
 
         let events = MidiBuilder::new().build_for_song_with_order(&song, playback_order);
         let measure_playback_ticks = first_playback_ticks(&song.measure_headers, playback_order);
@@ -107,8 +106,8 @@ impl AudioPlayer {
         self.is_playing
     }
 
-    pub fn solo_track_id(&self) -> Option<usize> {
-        self.player_params.solo_track_id()
+    pub fn is_track_solo(&self, track_id: usize) -> bool {
+        self.player_params.is_track_solo(track_id)
     }
 
     /// Whether playback reached the end of the song.
@@ -150,14 +149,13 @@ impl AudioPlayer {
         self.player_params.toggle_track_mute(track_id);
     }
 
-    pub fn toggle_solo_mode(&self, new_track_id: usize) {
-        if self.player_params.solo_track_id() == Some(new_track_id) {
-            log::info!("Disable solo mode on track {new_track_id}");
-            self.player_params.set_solo_track_id(None);
-        } else {
-            log::info!("Enable solo mode on track {new_track_id}");
-            self.player_params.set_solo_track_id(Some(new_track_id));
-        }
+    pub fn toggle_track_solo(&self, track_id: usize) {
+        let enabled = !self.player_params.is_track_solo(track_id);
+        log::info!(
+            "{} solo on track {track_id}",
+            if enabled { "Enable" } else { "Disable" }
+        );
+        self.player_params.toggle_track_solo(track_id);
     }
 
     pub fn set_tempo_percentage(&self, new_tempo_percentage: u32) {
@@ -815,7 +813,7 @@ mod tests {
         let tempo = song.tempo.value;
         let song = Rc::new(song);
         let events = MidiBuilder::new().build_for_song(&song);
-        let params = MidiPlayerParams::new(tempo, 100, None);
+        let params = MidiPlayerParams::new(tempo, 100);
         params.set_metronome(true);
 
         let mut sequencer = MidiSequencer::new(events);

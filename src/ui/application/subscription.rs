@@ -4,7 +4,7 @@
 use iced::{Subscription, event, keyboard, mouse, stream, window};
 
 use iced::futures::{SinkExt, Stream};
-use iced::keyboard::key::Named::{ArrowDown, ArrowLeft, ArrowRight, ArrowUp, F11, Space};
+use iced::keyboard::key::Named::{ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Escape, F11, Space};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::Notify;
@@ -59,6 +59,7 @@ impl RuxApplication {
                     Some(Message::ToggleMute)
                 }
                 keyboard::Key::Named(F11) => Some(Message::ToggleFullscreen),
+                keyboard::Key::Named(Escape) => Some(Message::CloseTrackMenu),
                 _ => None,
             }
         });

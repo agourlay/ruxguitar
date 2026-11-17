@@ -2,3 +2,4 @@
 .idea
 /test-files/
 /_site
+.DS_Store
