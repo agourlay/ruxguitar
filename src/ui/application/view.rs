@@ -13,12 +13,14 @@ use crate::ui::icons::{
 };
 use crate::ui::selections::TempoSelection;
 use crate::ui::song_info::SongDisplayInfo;
-use crate::ui::track_picker::TrackPicker;
 use crate::ui::utils::{
     TablatureColors, action_gated, action_toggle, modal, untitled_text_table_box,
 };
 
 use super::app::{Message, RuxApplication};
+
+/// Vertical space between the control bar, tablature and status bar.
+const SECTION_SPACING: f32 = 20.0;
 
 impl RuxApplication {
     pub(super) fn view(&self) -> Element<'_, Message> {
@@ -29,15 +31,18 @@ impl RuxApplication {
         let tablature = container(tablature_view).id(self.tablature_id.clone());
 
         let base: Element<Message> = if self.is_fullscreen {
-            column![tablature].spacing(20).padding(10).into()
+            column![tablature]
+                .spacing(SECTION_SPACING)
+                .padding(10)
+                .into()
         } else {
             column![
                 self.control_bar(),
-                tablature,
+                self.with_track_menu(tablature, SECTION_SPACING),
                 rule::horizontal(1),
                 self.status_bar(),
             ]
-            .spacing(20)
+            .spacing(SECTION_SPACING)
             .padding(10)
             .into()
         };
@@ -151,17 +156,7 @@ impl RuxApplication {
             Message::ToggleCountIn,
             self.prefs.count_in,
         );
-        let audio_player = self.audio_player.as_ref();
-        let track_pick_list = TrackPicker::new(
-            song.tracks.as_slice(),
-            &song.track,
-            move |index| audio_player.is_some_and(|p| p.is_track_solo(index)),
-            move |index| audio_player.is_some_and(|p| p.is_track_muted(index)),
-            Message::TrackSelected,
-            Message::ToggleTrackSolo,
-            Message::ToggleTrackMute,
-        )
-        .view();
+        let track_picker = self.track_picker(song);
         let current_volume = self
             .audio_player
             .as_ref()
@@ -179,7 +174,7 @@ impl RuxApplication {
             count_in_mode,
             solo_mode,
             mute_mode,
-            track_pick_list,
+            track_picker,
         ]
         .spacing(10)
         .align_y(Alignment::Center)
