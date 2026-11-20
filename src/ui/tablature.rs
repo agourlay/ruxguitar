@@ -363,7 +363,8 @@ impl Tablature {
 
         let content: Element<Message> = if has_layout {
             // Build explicit rows using LineTracker line assignments.
-            // Each measure uses FillPortion to stretch and fill the row width.
+            // The measures of a full line use FillPortion to stretch and fill
+            // the row width, the last line keeps their natural width.
             let row_width = self.line_tracker.tablature_container_width;
             let mut rows: Vec<Element<Message>> = Vec::new();
             let mut current_row: Vec<Element<Message>> = Vec::new();
@@ -379,7 +380,11 @@ impl Tablature {
                     );
                 }
                 current_line = line;
-                current_row.push(cm.view_fill());
+                current_row.push(if self.line_tracker.is_stretched(cm.measure_id) {
+                    cm.view_fill()
+                } else {
+                    cm.view()
+                });
             }
             if !current_row.is_empty() {
                 rows.push(Row::with_children(current_row).width(row_width).into());
@@ -456,6 +461,8 @@ fn lyric_syllables(song: &Song, track_id: usize) -> Vec<Vec<String>> {
 struct LineTracker {
     measure_to_line: Vec<u32>, // measure id to line number
     tablature_container_width: f32,
+    /// Whether the last line's measures fit the width at their natural size.
+    last_line_fits: bool,
 }
 
 impl LineTracker {
@@ -468,6 +475,7 @@ impl LineTracker {
         let mut line_tracker = Self {
             measure_to_line: vec![0; widths.len()],
             tablature_container_width,
+            last_line_fits: false,
         };
         let mut current_line = 1;
         let mut horizontal_cursor = 0.0;
@@ -479,7 +487,16 @@ impl LineTracker {
             }
             line_tracker.measure_to_line[i] = current_line;
         }
+        line_tracker.last_line_fits = horizontal_cursor <= tablature_container_width;
         line_tracker
+    }
+
+    /// Whether the measure stretches to fill its line. Like TuxGuitar, only
+    /// full lines are justified: the last line keeps its natural width, unless
+    /// it holds a measure too wide to fit, which shrinks to the line instead.
+    pub fn is_stretched(&self, measure_id: usize) -> bool {
+        let last_line = self.measure_to_line.last().copied();
+        Some(self.get_line(measure_id)) != last_line || !self.last_line_fits
     }
 
     pub fn get_line(&self, measure_id: usize) -> u32 {
@@ -751,6 +768,32 @@ mod tests {
         assert_eq!(tracker.get_line(2), 2);
         assert_eq!(tracker.get_line(3), 2);
         assert_eq!(tracker.get_line(4), 3);
+    }
+
+    #[test]
+    fn only_full_lines_are_stretched() {
+        let widths = vec![100.0, 100.0, 100.0];
+        let tracker = LineTracker::make_from_widths(&widths, 250.0);
+        // lines: [1, 1, 2]; the last line keeps its natural width
+        assert!(tracker.is_stretched(0));
+        assert!(tracker.is_stretched(1));
+        assert!(!tracker.is_stretched(2));
+    }
+
+    #[test]
+    fn a_single_line_song_is_not_stretched() {
+        let widths = vec![100.0, 100.0];
+        let tracker = LineTracker::make_from_widths(&widths, 500.0);
+        assert!(!tracker.is_stretched(0));
+        assert!(!tracker.is_stretched(1));
+    }
+
+    #[test]
+    fn a_last_measure_too_wide_for_the_line_shrinks_to_it() {
+        let widths = vec![100.0, 300.0];
+        let tracker = LineTracker::make_from_widths(&widths, 200.0);
+        // lines: [1, 2]; the last line overflows at its natural width
+        assert!(tracker.is_stretched(1));
     }
 
     #[test]
