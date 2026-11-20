@@ -48,9 +48,10 @@ fn make_string(i: &[u8]) -> String {
     }
 }
 
-/// Parse string of length `len`.
+/// Parse string of length `len`; a negative length reads nothing.
 fn parse_string(len: i32) -> impl FnMut(&[u8]) -> IResult<&[u8], String> {
-    parse_string_field(len as usize, len as usize)
+    let len = usize::try_from(len).unwrap_or(0);
+    parse_string_field(len, len)
 }
 
 /// Parse string field of length `string_len` with total size to consume `field_size`
@@ -90,12 +91,20 @@ pub fn parse_byte_size_string(size: usize) -> impl FnMut(&[u8]) -> IResult<&[u8]
     }
 }
 
-/// Size of string encoded as Int, but the size is encoded as a byte.
+/// String whose field size is encoded as an Int (plus one), followed by its
+/// length as a byte: [i32 field_size + 1][u8 string_len][field_size bytes].
+///
+/// Like TuxGuitar's `readStringByteSizeOfInteger`, when the Int gives no field
+/// size (0 or 1) the field is as long as the string.
 pub fn parse_int_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
     flat_map(parse_int, |len| {
         flat_map(parse_u8, move |str_len| {
             log::debug!("Parsing int byte sized string int_len={len} u8_len={str_len}");
-            parse_string_field(len.saturating_sub(1) as usize, str_len as usize)
+            let field_size = usize::try_from(len.saturating_sub(1))
+                .ok()
+                .filter(|&size| size > 0)
+                .unwrap_or(usize::from(str_len));
+            parse_string_field(field_size, usize::from(str_len))
         })
     })
     .parse(i)
@@ -103,7 +112,54 @@ pub fn parse_int_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::gp345::primitive_parser::{parse_byte_size_string, skip};
+    use crate::parser::gp345::primitive_parser::{
+        parse_byte_size_string, parse_int_byte_sized_string, parse_int_sized_string, skip,
+    };
+
+    /// An int byte sized string: the Int, the length byte, then the field.
+    fn int_byte_sized(int: i32, str_len: u8, field: &[u8]) -> Vec<u8> {
+        let mut data = int.to_le_bytes().to_vec();
+        data.push(str_len);
+        data.extend_from_slice(field);
+        data
+    }
+
+    #[test]
+    fn an_int_byte_sized_string_reads_its_whole_field() {
+        // a field of 4 bytes holding a 3 char string, then the next value
+        let data = int_byte_sized(5, 3, b"abc\0\x7F");
+        let (rest, string) = parse_int_byte_sized_string(&data).unwrap();
+        assert_eq!(string, "abc");
+        assert_eq!(rest, [0x7F]);
+    }
+
+    #[test]
+    fn an_int_byte_sized_string_without_field_size_reads_its_length() {
+        // like TuxGuitar, an Int of 1 or 0 leaves the size to the length byte
+        for int in [1, 0, -3] {
+            let data = int_byte_sized(int, 3, b"abc\x7F");
+            let (rest, string) = parse_int_byte_sized_string(&data).unwrap();
+            assert_eq!(string, "abc", "int {int}");
+            assert_eq!(rest, [0x7F], "int {int}");
+        }
+    }
+
+    #[test]
+    fn an_int_byte_sized_string_longer_than_its_field_is_cut() {
+        let data = int_byte_sized(3, 5, b"ab\x7F");
+        let (rest, string) = parse_int_byte_sized_string(&data).unwrap();
+        assert_eq!(string, "ab");
+        assert_eq!(rest, [0x7F]);
+    }
+
+    #[test]
+    fn a_negative_int_sized_string_is_empty() {
+        let mut data = (-1_i32).to_le_bytes().to_vec();
+        data.push(0x7F);
+        let (rest, string) = parse_int_sized_string(&data).unwrap();
+        assert_eq!(string, "");
+        assert_eq!(rest, [0x7F]);
+    }
 
     #[test]
     fn skip_is_lenient_on_truncated_input() {
