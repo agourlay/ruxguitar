@@ -1,0 +1,55 @@
+<GPIF>
+<Tracks>
+  <Track id="0">
+    <Name>Guitar</Name>
+    <GeneralMidi><Program>29</Program><PrimaryChannel>0</PrimaryChannel><SecondaryChannel>1</SecondaryChannel></GeneralMidi>
+    <Properties>
+      <Property name="Tuning"><Pitches>40 45 50 55 59 64</Pitches></Property>
+      <Property name="DiagramCollection"><Items>
+        <Item id="0" name="Asus4">
+          <Diagram stringCount="6" fretCount="5" baseFret="4">
+            <Fret string="1" fret="0"/>
+            <Fret string="2" fret="3"/>
+            <Fret string="3" fret="3"/>
+            <Fret string="4" fret="1"/>
+          </Diagram>
+        </Item>
+      </Items></Property>
+    </Properties>
+  </Track>
+  <Track id="1">
+    <Name>Bass</Name>
+    <GeneralMidi><Program>33</Program><PrimaryChannel>2</PrimaryChannel><SecondaryChannel>3</SecondaryChannel></GeneralMidi>
+    <Properties>
+      <Property name="Tuning"><Pitches>28 33 38 43</Pitches></Property>
+      <Property name="DiagramCollection"><Items>
+        <Item id="0" name="A5">
+          <Diagram stringCount="4" fretCount="5" baseFret="5">
+            <!-- differs from the fingering, which takes precedence -->
+            <Fret string="1" fret="1"/>
+            <Fret string="2" fret="3"/>
+            <Fingering>
+              <Position finger="None" fret="0" string="1"/>
+              <Position finger="Index" fret="2" string="2"/>
+            </Fingering>
+          </Diagram>
+        </Item>
+      </Items></Property>
+    </Properties>
+  </Track>
+</Tracks>
+<MasterBars><MasterBar><Time>4/4</Time><Bars>0 1</Bars></MasterBar></MasterBars>
+<Bars>
+  <Bar id="0"><Voices>0 -1 -1 -1</Voices></Bar>
+  <Bar id="1"><Voices>1 -1 -1 -1</Voices></Bar>
+</Bars>
+<Voices>
+  <Voice id="0"><Beats>0</Beats></Voice>
+  <Voice id="1"><Beats>1</Beats></Voice>
+</Voices>
+<Beats>
+  <Beat id="0"><Rhythm ref="0"/><Chord>0</Chord></Beat>
+  <Beat id="1"><Rhythm ref="0"/><Chord>0</Chord></Beat>
+</Beats>
+<Rhythms><Rhythm id="0"><NoteValue>Whole</NoteValue></Rhythm></Rhythms>
+</GPIF>

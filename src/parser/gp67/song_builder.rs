@@ -7,7 +7,7 @@
 use crate::RuxError;
 use crate::parser::gp67::archive::read_gp7_gpif;
 use crate::parser::gp67::document::{
-    DEFAULT_PERCUSSION_CHANNEL, GpxBar, GpxBeat, GpxBendCurve, GpxDirection, GpxDocument,
+    DEFAULT_PERCUSSION_CHANNEL, GpxBar, GpxBeat, GpxBendCurve, GpxChord, GpxDirection, GpxDocument,
     GpxDynamic, GpxHarmonicType, GpxMasterBar, GpxNote, GpxRhythm,
 };
 use crate::parser::gp67::document_reader::{GpifVersion, read_document};
@@ -227,16 +227,17 @@ fn build_measures(doc: &GpxDocument, song: &mut Song, tracks: &mut [Track]) {
             };
 
             let gp_bar = resolve_bar(doc, index, track_index);
+            let context = TrackContext {
+                strings: &track.strings,
+                is_percussion,
+                // chord ids are only unique within their track
+                chords: doc
+                    .tracks
+                    .get(track_index)
+                    .map_or(&[], |t| t.chords.as_slice()),
+            };
             for voice_slot in 0..MAX_VOICES as usize {
-                let voice = build_voice(
-                    doc,
-                    gp_bar,
-                    voice_slot,
-                    index,
-                    start,
-                    &track.strings,
-                    is_percussion,
-                );
+                let voice = build_voice(doc, &context, gp_bar, voice_slot, index, start);
                 measure.voices.push(voice);
             }
 
@@ -357,7 +358,13 @@ fn resolve_bar(doc: &GpxDocument, master_index: usize, track_index: usize) -> Op
     bar
 }
 
-/// Build one voice (`voice_slot`) of a measure.
+/// Track-level data needed to build the track's beats.
+struct TrackContext<'a> {
+    strings: &'a [(i32, i32)],
+    is_percussion: bool,
+    chords: &'a [GpxChord],
+}
+
 /// The beat before the one being built. GPX puts grace notes on a beat of
 /// their own, before the beat they belong to.
 #[derive(Default)]
@@ -368,14 +375,14 @@ struct PreviousBeat<'a> {
     duration: Duration,
 }
 
+/// Build one voice (`voice_slot`) of a measure.
 fn build_voice(
     doc: &GpxDocument,
+    context: &TrackContext,
     gp_bar: Option<&GpxBar>,
     voice_slot: usize,
     measure_index: usize,
     measure_start: u32,
-    strings: &[(i32, i32)],
-    is_percussion: bool,
 ) -> Voice {
     let mut voice = Voice {
         measure_index: measure_index as i16,
@@ -415,15 +422,7 @@ fn build_voice(
             continue;
         }
 
-        let beat = build_beat(
-            doc,
-            gp_beat,
-            start,
-            &duration,
-            strings,
-            is_percussion,
-            &previous,
-        );
+        let beat = build_beat(doc, context, gp_beat, start, &duration, &previous);
         start += beat.duration.time();
         voice.beats.push(beat);
         previous = PreviousBeat {
@@ -438,11 +437,10 @@ fn build_voice(
 
 fn build_beat(
     doc: &GpxDocument,
+    context: &TrackContext,
     gp_beat: &GpxBeat,
     start: u32,
     duration: &Duration,
-    strings: &[(i32, i32)],
-    is_percussion: bool,
     previous: &PreviousBeat,
 ) -> Beat {
     let mut beat = Beat {
@@ -453,7 +451,7 @@ fn build_beat(
         effect: BeatEffects {
             stroke: stroke_of(gp_beat),
             pick_stroke: stroke_direction(gp_beat.pick_stroke),
-            chord: chord_of(doc, gp_beat),
+            chord: chord_of(context.chords, gp_beat),
         },
         notes: Vec::new(),
     };
@@ -466,7 +464,7 @@ fn build_beat(
     // sounds want the same string the higher one on the staff wins
     // it, like TuxGuitar's allocatePercussionNotesToStrings
     let mut note_ids = note_ids.clone();
-    if is_percussion {
+    if context.is_percussion {
         note_ids.sort_by_key(|&id| {
             doc.note(id)
                 .and_then(midi_value_of)
@@ -477,8 +475,8 @@ fn build_beat(
         if let Some(gp_note) = doc.note(id)
             && let Some(note) = build_note(
                 gp_note,
-                strings,
-                is_percussion,
+                context.strings,
+                context.is_percussion,
                 &beat.notes,
                 velocity,
                 gp_beat,
@@ -530,8 +528,9 @@ fn stroke_of(gp_beat: &GpxBeat) -> BeatStroke {
     }
 }
 
-fn chord_of(doc: &GpxDocument, gp_beat: &GpxBeat) -> Option<Chord> {
-    let gp_chord = doc.chord(gp_beat.chord_id?)?;
+fn chord_of(chords: &[GpxChord], gp_beat: &GpxBeat) -> Option<Chord> {
+    let chord_id = gp_beat.chord_id?;
+    let gp_chord = chords.iter().find(|c| c.id == chord_id)?;
     let string_count = gp_chord.frets.len();
     let base_fret = gp_chord.base_fret.unwrap_or(0);
     let mut chord = Chord {
@@ -543,9 +542,11 @@ fn chord_of(doc: &GpxDocument, gp_beat: &GpxBeat) -> Option<Chord> {
     };
     for (i, fret) in gp_chord.frets.iter().enumerate() {
         if let Some(value) = fret {
-            // gpx frets are relative to the base fret and stored in reverse
-            // string order compared to the engine model, like TuxGuitar
-            chord.strings[string_count - i - 1] = (*value + base_fret) as i8;
+            // gpx frets are relative to the base fret, except 0 which is an
+            // open string, and stored in reverse string order compared to the
+            // engine model, like TuxGuitar
+            let absolute = if *value == 0 { 0 } else { value + base_fret };
+            chord.strings[string_count - i - 1] = absolute as i8;
         }
     }
     Some(chord)
@@ -1107,5 +1108,54 @@ mod tests {
         assert_eq!(stroke.direction, BeatStrokeDirection::Down);
         assert_eq!(stroke.value, BRUSH_STROKE_VALUE);
         assert_eq!(GpxDirection::parse("Sideways"), None);
+    }
+
+    /// Two tracks whose diagram collections both define chord id 0: a guitar
+    /// chord read from `<Fret>` and a bass chord read from `<Fingering>`.
+    /// Both have an open string above their base fret. The guitar one is the
+    /// Asus4 from a real GP7 file, played as x-0-7-7-5-x.
+    const TWO_TRACK_CHORDS: &str = include_str!("../../../test-files/two_track_chords.gpif");
+
+    fn first_chord(song: &Song, track: usize) -> &Chord {
+        song.tracks[track].measures[0].voices[0].beats[0]
+            .effect
+            .chord
+            .as_ref()
+            .expect("chord")
+    }
+
+    #[test]
+    fn chords_are_looked_up_in_their_own_track() {
+        let doc = read_document(TWO_TRACK_CHORDS, GpifVersion::Gp6).unwrap();
+        let song = build_song(&doc, GpVersion::GP6);
+
+        let guitar = first_chord(&song, 0);
+        assert_eq!(guitar.name, "Asus4");
+        assert_eq!(guitar.length, 6);
+
+        let bass = first_chord(&song, 1);
+        assert_eq!(bass.name, "A5");
+        assert_eq!(bass.length, 4);
+    }
+
+    // gpx strings are stored in reverse order compared to the engine model
+
+    #[test]
+    fn an_open_fret_stays_open_above_the_base_fret() {
+        let doc = read_document(TWO_TRACK_CHORDS, GpifVersion::Gp6).unwrap();
+        let song = build_song(&doc, GpVersion::GP6);
+
+        let guitar = first_chord(&song, 0);
+        assert_eq!(guitar.first_fret, Some(4));
+        assert_eq!(guitar.strings, vec![-1, 5, 7, 7, 0, -1]);
+    }
+
+    #[test]
+    fn fingering_is_preferred_over_frets() {
+        let doc = read_document(TWO_TRACK_CHORDS, GpifVersion::Gp6).unwrap();
+        let song = build_song(&doc, GpVersion::GP6);
+
+        let bass = first_chord(&song, 1);
+        assert_eq!(bass.strings, vec![-1, 7, 0, -1]);
     }
 }

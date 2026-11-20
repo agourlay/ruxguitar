@@ -42,6 +42,9 @@ pub struct GpxTrack {
     pub gm_program: i32,
     pub gm_channel_1: i32,
     pub gm_channel_2: i32,
+    /// Chord diagrams are defined per track: ids restart in each track and
+    /// tracks can have different string counts.
+    pub chords: Vec<GpxChord>,
 }
 
 #[derive(Debug, Default)]
@@ -259,7 +262,6 @@ pub struct GpxDocument {
     pub voices: Vec<GpxVoice>,
     pub beats: Vec<GpxBeat>,
     pub notes: Vec<GpxNote>,
-    pub chords: Vec<GpxChord>,
     pub rhythms: Vec<GpxRhythm>,
     pub automations: Vec<GpxAutomation>,
 }
@@ -279,10 +281,6 @@ impl GpxDocument {
 
     pub fn note(&self, id: i32) -> Option<&GpxNote> {
         self.notes.iter().find(|n| n.id == id)
-    }
-
-    pub fn chord(&self, id: i32) -> Option<&GpxChord> {
-        self.chords.iter().find(|c| c.id == id)
     }
 
     pub fn rhythm(&self, id: i32) -> Option<&GpxRhythm> {

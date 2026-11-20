@@ -170,7 +170,7 @@ fn read_tracks(root: Node, gpx: &mut GpxDocument, version: GpifVersion) {
                     _ => {}
                 }
             }
-            read_chords(properties, gpx);
+            read_chords(properties, &mut track);
         }
 
         gpx.tracks.push(track);
@@ -229,7 +229,8 @@ fn read_track_midi_gp7(node: Node, track: &mut GpxTrack, gpx: &GpxDocument) {
     }
 }
 
-fn read_chords(properties: Node, gpx: &mut GpxDocument) {
+/// Chord diagrams belong to the track whose properties define them.
+fn read_chords(properties: Node, track: &mut GpxTrack) {
     for property in element_children(properties, "Property") {
         if attr(property, "name") != Some("DiagramCollection") {
             continue;
@@ -244,26 +245,55 @@ fn read_chords(properties: Node, gpx: &mut GpxDocument) {
             let Some(string_count) = attr_int_opt(diagram, "stringCount") else {
                 continue;
             };
+            let base_fret = attr_int_opt(diagram, "baseFret");
             // one entry per string, like TuxGuitar
             let mut chord = GpxChord {
                 id: attr_int(item, "id"),
                 name: attr(item, "name").map(str::to_string),
                 string_count: Some(string_count),
                 fret_count: attr_int_opt(diagram, "fretCount"),
-                base_fret: attr_int_opt(diagram, "baseFret"),
+                base_fret,
                 frets: vec![None; string_count.max(0) as usize],
             };
-            for fret in element_children(diagram, "Fret") {
-                // the string attribute is zero-based
-                if let Some(string) = attr_int_opt(fret, "string")
-                    && (0..string_count).contains(&string)
-                {
-                    chord.frets[string as usize] = attr_int_opt(fret, "fret");
+            // prefer the fingering positions and fall back to the frets, like TuxGuitar
+            if !read_chord_fingering(diagram, &mut chord.frets) {
+                for fret in element_children(diagram, "Fret") {
+                    // the string attribute is zero-based
+                    if let Some(string) = attr_int_opt(fret, "string")
+                        && (0..string_count).contains(&string)
+                    {
+                        chord.frets[string as usize] = attr_int_opt(fret, "fret");
+                    }
                 }
             }
-            gpx.chords.push(chord);
+            track.chords.push(chord);
         }
     }
+}
+
+/// Reads `<Fingering><Position>` into `frets`, which like `<Fret>` are relative
+/// to the base fret. Returns whether any position was found.
+fn read_chord_fingering(diagram: Node, frets: &mut [Option<i32>]) -> bool {
+    let Some(fingering) = child(diagram, "Fingering") else {
+        return false;
+    };
+    let mut found = false;
+    for position in element_children(fingering, "Position") {
+        let (Some(fret), Some(string)) = (
+            attr_int_opt(position, "fret"),
+            attr_int_opt(position, "string"),
+        ) else {
+            continue;
+        };
+        let Some(slot) = usize::try_from(string).ok().and_then(|s| frets.get_mut(s)) else {
+            continue;
+        };
+        if fret >= 0 {
+            *slot = Some(fret);
+            found = true;
+        }
+    }
+    found
 }
 
 fn read_master_bars(root: Node, gpx: &mut GpxDocument) {
