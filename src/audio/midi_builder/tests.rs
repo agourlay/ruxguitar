@@ -1,6 +1,6 @@
 use super::MidiBuilder;
 use super::effects::{apply_triplet_feel, compute_stroke_offsets};
-use crate::audio::midi_event::{MidiEvent, MidiEventType};
+use crate::audio::midi_event::{FIRST_TICK, MidiEvent, MidiEventType};
 use crate::audio::playback_order::compute_playback_order;
 use crate::parser::song_parser::{
     Beat, BeatStrokeDirection, DURATION_EIGHTH, DURATION_SIXTEENTH, Note, NoteEffect, NoteType,
@@ -86,7 +86,7 @@ fn test_midi_events_for_demo_song() {
     let builder = MidiBuilder::new();
     let events = builder.build_for_song(&song);
 
-    assert_eq!(events.len(), 5676);
+    assert_eq!(events.len(), 5728);
     assert_eq!(events[0].tick, 1);
 
     // assert number of tracks
@@ -94,11 +94,10 @@ fn test_midi_events_for_demo_song() {
     let unique_tracks: HashSet<_> = events.iter().map(|event| event.track).collect();
     assert_eq!(unique_tracks.len(), track_count + 2); // plus None for info events and the metronome
 
-    // skip MIDI program messages
+    // skip the channel setup messages
     let rhythm_track_events: Vec<_> = events
         .iter()
-        .filter(|e| e.track == Some(0))
-        .skip(13)
+        .filter(|e| e.track == Some(0) && e.tick != FIRST_TICK)
         .collect();
 
     // C5 ON
@@ -173,11 +172,10 @@ fn test_midi_events_for_demo_song() {
     assert_eq!(event.track, Some(0));
     assert!(matches!(event.event, MidiEventType::NoteOn(0, 48, 127)));
 
-    // skip MIDI program messages
+    // skip the channel setup messages
     let solo_track_events: Vec<_> = events
         .iter()
-        .filter(|e| e.track == Some(1))
-        .skip(13)
+        .filter(|e| e.track == Some(1) && e.tick != FIRST_TICK)
         .collect();
 
     // trill ON
@@ -268,6 +266,37 @@ fn test_midi_events_for_demo_song() {
 }
 
 #[test]
+fn pitch_bends_stay_on_the_effect_channel() {
+    // each track has a main channel and an effect channel: 0/1, 2/3, 6/7, 4/5
+    // and the drums on 9
+    const FILE_PATH: &str = "test-files/Demo v5.gp5";
+    let song = Rc::new(parse_gp_file(FILE_PATH).unwrap());
+    let events = MidiBuilder::new().build_for_song(&song);
+    let main_channels: HashSet<i32> = [0, 2, 4, 6, 9].into();
+
+    let pitch_bend_channels: HashSet<i32> = events
+        .iter()
+        .filter_map(|e| match e.event {
+            MidiEventType::MidiMessage(channel, 0xE0, ..) => Some(channel),
+            _ => None,
+        })
+        .collect();
+    assert!(!pitch_bend_channels.is_empty());
+    assert!(pitch_bend_channels.is_disjoint(&main_channels));
+
+    // the solo track plays its plain notes on 2 and its bent ones on 3
+    let solo_note_channels: HashSet<i32> = events
+        .iter()
+        .filter(|e| e.track == Some(1))
+        .filter_map(|e| match e.event {
+            MidiEventType::NoteOn(channel, ..) => Some(channel),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(solo_note_channels, [2, 3].into());
+}
+
+#[test]
 fn test_midi_events_for_bleed() {
     const FILE_PATH: &str = "test-files/Meshuggah - Bleed.gp5";
     let song = parse_gp_file(FILE_PATH).unwrap();
@@ -275,7 +304,7 @@ fn test_midi_events_for_bleed() {
     let builder = MidiBuilder::new();
     let events = builder.build_for_song(&song);
 
-    assert_eq!(events.len(), 49509);
+    assert_eq!(events.len(), 49587);
     assert_eq!(events[0].tick, 1);
 
     // assert number of tracks
@@ -283,11 +312,10 @@ fn test_midi_events_for_bleed() {
     let unique_tracks: HashSet<_> = events.iter().map(|event| event.track).collect();
     assert_eq!(unique_tracks.len(), track_count + 1); // plus the metronome
 
-    // skip MIDI program messages
+    // skip the channel setup messages
     let rhythm_track_events: Vec<_> = events
         .iter()
-        .filter(|e| e.track == Some(0))
-        .skip(13)
+        .filter(|e| e.track == Some(0) && e.tick != FIRST_TICK)
         .collect();
 
     let event = &rhythm_track_events[44];

@@ -40,7 +40,10 @@ pub const METRONOME_TRACK: u8 = u8::MAX;
 /// key is too quiet in TimGM6mb to cut through the mix, and the side
 /// stick (TuxGuitar's choice) sounds like a drum hit.
 pub const METRONOME_KEYS: [i32; 3] = [75, 76, 77];
-const METRONOME_CHANNEL: i32 = 9;
+const PERCUSSION_CHANNEL: u8 = 9;
+const METRONOME_CHANNEL: i32 = PERCUSSION_CHANNEL as i32;
+/// The synthesizer's channel count.
+const MAX_CHANNELS: u8 = 16;
 pub const METRONOME_VELOCITY: i16 = 127;
 
 /// Scale a raw Guitar Pro channel byte (0-16) to a MIDI value (0-127),
@@ -54,13 +57,45 @@ pub struct MidiBuilder {
     events: Vec<MidiEvent>,
 }
 
-/// Where events go: the track they belong to, and the MIDI channel it plays on.
+/// Where events go: the track they belong to, and the MIDI channels it plays on.
 #[derive(Debug, Clone, Copy)]
 struct Output {
     track_id: usize,
     channel_id: i32,
+    /// The track's second channel, for notes that bend the pitch wheel, so
+    /// that they don't bend the other notes ringing on the main channel. Like
+    /// TuxGuitar's `GMChannel`, it gets the same setup as the main channel.
+    effect_channel_id: i32,
     /// Whether the channel plays drums, which take no pitch effects.
     percussion: bool,
+    /// Whether the notes being played go to the effect channel.
+    bend_mode: bool,
+}
+
+impl Output {
+    fn for_channel(track_id: usize, midi_channel: &MidiChannel) -> Self {
+        Self {
+            track_id,
+            channel_id: i32::from(midi_channel.channel_id),
+            effect_channel_id: i32::from(midi_channel.effect_channel_id),
+            percussion: midi_channel.is_percussion(),
+            bend_mode: false,
+        }
+    }
+
+    const fn note_channel(self) -> i32 {
+        if self.bend_mode {
+            self.effect_channel_id
+        } else {
+            self.channel_id
+        }
+    }
+
+    /// The channels that control changes and programs go to.
+    fn setup_channels(self) -> impl Iterator<Item = i32> {
+        let effect = (self.effect_channel_id != self.channel_id).then_some(self.effect_channel_id);
+        std::iter::once(self.channel_id).chain(effect)
+    }
 }
 
 /// When a note sounds, in ticks.
@@ -105,32 +140,17 @@ impl MidiBuilder {
         song: &Rc<Song>,
         playback_order: &[(usize, i64)],
     ) -> Vec<MidiEvent> {
+        let mut track_channels: Vec<Option<MidiChannel>> = song
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(track_id, track)| track_midi_channel(song, track_id, track))
+            .collect();
+        route_effect_channels(track_channels.iter_mut().flatten());
         for (track_id, track) in song.tracks.iter().enumerate() {
             log::debug!("building events for track {track_id}");
-            // like TuxGuitar, skip tracks with an unresolvable channel
-            let Some(midi_channel) = song
-                .midi_channels
-                .iter()
-                .find(|c| c.channel_id == track.channel_id)
-            else {
-                log::warn!(
-                    "midi channel {} not found for track {track_id} - skipping track",
-                    track.channel_id
-                );
+            let Some(midi_channel) = &track_channels[track_id] else {
                 continue;
-            };
-            // the synthesizer only has 16 channels: clamp out-of-range channels
-            // (GP files can reference more) instead of crashing
-            let midi_channel = if midi_channel.channel_id < 16 {
-                midi_channel.clone()
-            } else {
-                log::warn!(
-                    "clamping out-of-range midi channel {} for track {track_id}",
-                    midi_channel.channel_id
-                );
-                let mut clamped = midi_channel.clone();
-                clamped.channel_id = 15;
-                clamped
             };
             self.add_track_events(
                 song.tempo.value,
@@ -138,7 +158,7 @@ impl MidiBuilder {
                 track,
                 &song.measure_headers,
                 playback_order,
-                &midi_channel,
+                midi_channel,
             );
         }
         self.add_metronome_events(&song.measure_headers, playback_order);
@@ -157,7 +177,9 @@ impl MidiBuilder {
         let output = Output {
             track_id: usize::from(METRONOME_TRACK),
             channel_id: METRONOME_CHANNEL,
+            effect_channel_id: METRONOME_CHANNEL,
             percussion: true,
+            bend_mode: false,
         };
         for (measure_index, tick_offset) in playback_order {
             let header = &measure_headers[*measure_index];
@@ -186,7 +208,7 @@ impl MidiBuilder {
         playback_order: &[(usize, i64)],
         midi_channel: &MidiChannel,
     ) {
-        // add MIDI control events for the track channel
+        // add MIDI control events for the track channels
         self.add_track_channel_midi_control(track_id, midi_channel);
 
         let mut prev_tempo = song_tempo;
@@ -272,12 +294,7 @@ impl MidiBuilder {
             playback_order,
             playback_index,
         } = *context;
-        // GP files define an effect channel per track, but TuxGuitar doesn't use it for playback.
-        let output = Output {
-            track_id,
-            channel_id: i32::from(midi_channel.channel_id),
-            percussion: midi_channel.is_percussion(),
-        };
+        let output = Output::for_channel(track_id, midi_channel);
         let strings = &track.strings;
         let tempo = header.tempo.value;
         let beat_duration = triplet_adj.duration;
@@ -360,6 +377,10 @@ impl MidiBuilder {
 
                 // apply effects on key
                 let base_key = track.offset + string_tuning;
+                let output = Output {
+                    bend_mode: bend_mode(note, output.percussion),
+                    ..output
+                };
                 if let Some(key) = self.add_key_effect(
                     output,
                     base_key,
@@ -671,19 +692,20 @@ impl MidiBuilder {
         // clamp like TuxGuitar: harmonics can push the key past the MIDI
         // range, and the synthesizer silently drops out-of-range keys
         let key = key.clamp(0, 127);
+        let channel = output.note_channel();
         self.add_event(MidiEvent::new_note_on(
             span.start,
             output.track_id,
             key,
             velocity,
-            output.channel_id,
+            channel,
         ));
         if span.duration > 0 {
             self.add_event(MidiEvent::new_note_off(
                 span.end(),
                 output.track_id,
                 key,
-                output.channel_id,
+                channel,
             ));
         }
     }
@@ -692,16 +714,19 @@ impl MidiBuilder {
         self.add_event(MidiEvent::new_tempo_change(tick, tempo));
     }
 
-    /// Emit a control change (0xB0) for the given controller number.
+    /// Emit a control change (0xB0) for the given controller number, on
+    /// both of the track's channels.
     fn add_control_change(&mut self, output: Output, tick: u32, controller: i32, value: i32) {
-        self.add_event(MidiEvent::new_midi_message(
-            tick,
-            output.track_id,
-            output.channel_id,
-            0xB0,
-            controller,
-            value,
-        ));
+        for channel in output.setup_channels() {
+            self.add_event(MidiEvent::new_midi_message(
+                tick,
+                output.track_id,
+                channel,
+                0xB0,
+                controller,
+                value,
+            ));
+        }
     }
 
     fn add_pitch_bend(&mut self, output: Output, tick: u32, value: i32) {
@@ -718,7 +743,7 @@ impl MidiBuilder {
         self.add_event(MidiEvent::new_midi_message(
             tick,
             output.track_id,
-            output.channel_id,
+            output.note_channel(),
             0xE0,
             data1,
             data2,
@@ -726,14 +751,16 @@ impl MidiBuilder {
     }
 
     fn add_program_selection(&mut self, output: Output, tick: u32, program: i32) {
-        self.add_event(MidiEvent::new_midi_message(
-            tick,
-            output.track_id,
-            output.channel_id,
-            0xC0,
-            program,
-            0,
-        ));
+        for channel in output.setup_channels() {
+            self.add_event(MidiEvent::new_midi_message(
+                tick,
+                output.track_id,
+                channel,
+                0xC0,
+                program,
+                0,
+            ));
+        }
     }
 
     /// Set the pitch bend range to 12 semitones through RPN 0/0.
@@ -749,13 +776,9 @@ impl MidiBuilder {
     }
 
     fn add_track_channel_midi_control(&mut self, track_id: usize, midi_channel: &MidiChannel) {
-        // publish MIDI control messages for the track channel at the start
+        // publish MIDI control messages for the track channels at the start
         let tick = FIRST_TICK;
-        let output = Output {
-            track_id,
-            channel_id: i32::from(midi_channel.channel_id),
-            percussion: midi_channel.is_percussion(),
-        };
+        let output = Output::for_channel(track_id, midi_channel);
         let mut control = |controller, value| {
             self.add_control_change(output, tick, controller, value);
         };
@@ -773,6 +796,97 @@ impl MidiBuilder {
 
     fn add_event(&mut self, event: MidiEvent) {
         self.events.push(event);
+    }
+}
+
+/// Whether a note plays on its track's effect channel, like TuxGuitar's
+/// `bendMode`: the effects that move the pitch wheel, and grace notes. A trill
+/// or tremolo picking plays repeated notes instead of its pitch effect.
+fn bend_mode(note: &Note, percussion: bool) -> bool {
+    if percussion {
+        return false;
+    }
+    let effect = &note.effect;
+    let repeated = effect.trill.is_some() || effect.tremolo_picking.is_some();
+    let pitch_effect = effect.bend.is_some()
+        || effect.tremolo_bar.is_some()
+        || effect.slide.is_some()
+        || effect.vibrato;
+    effect.grace.is_some() || (!repeated && pitch_effect)
+}
+
+/// The MIDI channel a track plays on, or `None` when the song does not define
+/// it, in which case the track is skipped like in TuxGuitar.
+fn track_midi_channel(song: &Song, track_id: usize, track: &Track) -> Option<MidiChannel> {
+    let Some(midi_channel) = song
+        .midi_channels
+        .iter()
+        .find(|c| c.channel_id == track.channel_id)
+    else {
+        log::warn!(
+            "midi channel {} not found for track {track_id} - skipping track",
+            track.channel_id
+        );
+        return None;
+    };
+    // the synthesizer only has 16 channels: clamp out-of-range channels
+    // (GP files can reference more) instead of crashing
+    let mut midi_channel = midi_channel.clone();
+    if midi_channel.channel_id >= MAX_CHANNELS {
+        log::warn!(
+            "clamping out-of-range midi channel {} for track {track_id}",
+            midi_channel.channel_id
+        );
+        midi_channel.channel_id = MAX_CHANNELS - 1;
+    }
+    Some(midi_channel)
+}
+
+/// Set the effect channel of each track's channel.
+///
+/// Like TuxGuitar's `GMChannelRouter`, the effect channel must not be shared
+/// with another track, or its pitch bends and program would reach that track's
+/// notes. The file's choices are kept when free, then the channels left
+/// without one get the first free channel, else their main channel (their
+/// effects then bend the whole channel). Percussion never bends, so it keeps a
+/// single channel. Tracks sharing a main channel share its effect channel.
+fn route_effect_channels<'a>(channels: impl Iterator<Item = &'a mut MidiChannel>) {
+    let mut channels: Vec<&mut MidiChannel> = channels.collect();
+    let mut taken: Vec<u8> = channels.iter().map(|c| c.channel_id).collect();
+    taken.push(PERCUSSION_CHANNEL);
+    let is_free = |channel: u8, taken: &[u8]| {
+        channel < MAX_CHANNELS && channel != PERCUSSION_CHANNEL && !taken.contains(&channel)
+    };
+
+    // (main, effect) for each main channel, in track order
+    let mut routes: Vec<(u8, Option<u8>)> = Vec::new();
+    for channel in &channels {
+        let main = channel.channel_id;
+        if routes.iter().any(|(m, _)| *m == main) {
+            continue;
+        }
+        let effect = if channel.is_percussion() {
+            Some(main)
+        } else if is_free(channel.effect_channel_id, &taken) {
+            taken.push(channel.effect_channel_id);
+            Some(channel.effect_channel_id)
+        } else {
+            None
+        };
+        routes.push((main, effect));
+    }
+    for (main, effect) in &mut routes {
+        if effect.is_none() {
+            let free = (0..MAX_CHANNELS).find(|&c| is_free(c, &taken));
+            taken.extend(free);
+            *effect = Some(free.unwrap_or(*main));
+        }
+    }
+
+    for channel in &mut channels {
+        if let Some(&(_, Some(effect))) = routes.iter().find(|(m, _)| *m == channel.channel_id) {
+            channel.effect_channel_id = effect;
+        }
     }
 }
 
@@ -809,12 +923,16 @@ fn harmonic_key(harmonic: &HarmonicEffect, note_value: i16, initial_key: i32) ->
 mod tests {
     use super::*;
     use crate::audio::midi_event::MidiEventType;
-    use crate::parser::song_parser::DEFAULT_VELOCITY;
+    use crate::parser::song_parser::{
+        DEFAULT_BANK, DEFAULT_PERCUSSION_BANK, DEFAULT_VELOCITY, NoteEffect, SlideType, TrillEffect,
+    };
 
     const OUTPUT: Output = Output {
         track_id: 0,
         channel_id: 0,
+        effect_channel_id: 0,
         percussion: false,
+        bend_mode: false,
     };
 
     const fn span(start: u32, duration: u32) -> Span {
@@ -1003,5 +1121,130 @@ mod tests {
         // Out-of-range values are clamped.
         assert_eq!(to_channel_short(-1), 0);
         assert_eq!(to_channel_short(127), 127);
+    }
+
+    /// A channel as the file defines it: its main and effect channel.
+    fn file_channel(channel_id: u8, effect_channel_id: u8) -> MidiChannel {
+        MidiChannel {
+            channel_id,
+            effect_channel_id,
+            instrument: 0,
+            volume: 0,
+            balance: 0,
+            chorus: 0,
+            reverb: 0,
+            phaser: 0,
+            tremolo: 0,
+            bank: if channel_id == PERCUSSION_CHANNEL {
+                DEFAULT_PERCUSSION_BANK
+            } else {
+                DEFAULT_BANK
+            },
+        }
+    }
+
+    /// The (main, effect) channels after routing.
+    fn routed(mut channels: Vec<MidiChannel>) -> Vec<(u8, u8)> {
+        route_effect_channels(channels.iter_mut());
+        channels
+            .iter()
+            .map(|c| (c.channel_id, c.effect_channel_id))
+            .collect()
+    }
+
+    #[test]
+    fn the_file_effect_channels_are_kept() {
+        let channels = vec![file_channel(0, 1), file_channel(2, 3)];
+        assert_eq!(routed(channels), vec![(0, 1), (2, 3)]);
+    }
+
+    #[test]
+    fn percussion_keeps_a_single_channel() {
+        let channels = vec![file_channel(9, 0)];
+        assert_eq!(routed(channels), vec![(9, 9)]);
+    }
+
+    #[test]
+    fn a_missing_effect_channel_takes_a_free_one() {
+        // GPX songs set the effect channel to the main channel
+        let channels = vec![file_channel(0, 0), file_channel(1, 1)];
+        assert_eq!(routed(channels), vec![(0, 2), (1, 3)]);
+    }
+
+    #[test]
+    fn an_effect_channel_used_by_another_track_is_not_shared() {
+        // channel 2 is the second track's main channel
+        let channels = vec![file_channel(0, 2), file_channel(2, 3)];
+        assert_eq!(routed(channels), vec![(0, 1), (2, 3)]);
+    }
+
+    #[test]
+    fn the_file_effect_channels_are_kept_before_free_ones_are_handed_out() {
+        // the first track has no effect channel; the free channel it gets
+        // must not be the second track's effect channel
+        let channels = vec![file_channel(15, 15), file_channel(6, 7)];
+        assert_eq!(routed(channels), vec![(15, 0), (6, 7)]);
+    }
+
+    #[test]
+    fn without_a_free_channel_the_main_channel_is_used() {
+        let channels = (0..MAX_CHANNELS)
+            .filter(|&c| c != PERCUSSION_CHANNEL)
+            .map(|c| file_channel(c, c))
+            .collect();
+        assert!(routed(channels).iter().all(|(main, effect)| main == effect));
+    }
+
+    #[test]
+    fn tracks_sharing_a_channel_share_its_effect_channel() {
+        let channels = vec![file_channel(0, 0), file_channel(0, 0)];
+        assert_eq!(routed(channels), vec![(0, 1), (0, 1)]);
+    }
+
+    #[test]
+    fn pitch_effects_and_grace_notes_play_on_the_effect_channel() {
+        let with = |set: fn(&mut NoteEffect)| {
+            let mut note = Note::new(NoteEffect::default());
+            set(&mut note.effect);
+            note
+        };
+        assert!(!bend_mode(&with(|_| {}), false));
+        assert!(bend_mode(&with(|e| e.vibrato = true), false));
+        assert!(bend_mode(
+            &with(|e| e.slide = Some(SlideType::IntoFromBelow)),
+            false
+        ));
+        assert!(bend_mode(
+            &with(|e| e.grace = Some(GraceEffect::default())),
+            false
+        ));
+        // drums never bend
+        assert!(!bend_mode(&with(|e| e.vibrato = true), true));
+        // a trill plays repeated notes instead of its vibrato
+        let trill_and_vibrato = with(|e| {
+            e.vibrato = true;
+            e.trill = Some(TrillEffect::default());
+        });
+        assert!(!bend_mode(&trill_and_vibrato, false));
+    }
+
+    #[test]
+    fn effect_channel_setup_matches_the_main_channel() {
+        let output = Output {
+            effect_channel_id: 1,
+            ..OUTPUT
+        };
+        let mut builder = MidiBuilder::new();
+        builder.add_program_selection(output, FIRST_TICK, 30);
+        builder.add_control_change(output, FIRST_TICK, CC_VOLUME, 100);
+        let on_channel = |channel| {
+            builder
+                .events
+                .iter()
+                .filter(|e| matches!(e.event, MidiEventType::MidiMessage(c, ..) if c == channel))
+                .count()
+        };
+        assert_eq!(on_channel(0), 2);
+        assert_eq!(on_channel(1), 2);
     }
 }
