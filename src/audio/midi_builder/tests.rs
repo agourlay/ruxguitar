@@ -7,7 +7,7 @@ use crate::parser::song_parser::{
     TripletFeel,
 };
 use crate::parser::song_parser_tests::parse_gp_file;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -45,6 +45,9 @@ fn test_midi_events_for_all_files() {
         assert!(events.windows(2).all(|w| w[0].tick <= w[1].tick));
         assert_eq!(events[0].tick, 1);
 
+        // every note played is released: a missing note-off rings on
+        assert_notes_released(&events, file_name);
+
         // check against golden file
         let gold_file_path = gold_dir.join(format!("{file_name}.txt"));
         if !gold_file_path.exists() {
@@ -58,6 +61,27 @@ fn test_midi_events_for_all_files() {
         // verify against gold file
         validate_gold_rendered_result(&events, gold_file_path);
     }
+}
+
+/// Each key started on a channel is stopped as many times on that channel.
+fn assert_notes_released(events: &[MidiEvent], file_name: &str) {
+    let mut balance: HashMap<(i32, i32), i64> = HashMap::new();
+    for event in events {
+        match event.event {
+            MidiEventType::NoteOn(channel, key, _) => {
+                *balance.entry((channel, key)).or_default() += 1;
+            }
+            MidiEventType::NoteOff(channel, key) => {
+                *balance.entry((channel, key)).or_default() -= 1;
+            }
+            _ => {}
+        }
+    }
+    let unreleased: Vec<_> = balance.iter().filter(|(_, count)| **count != 0).collect();
+    assert!(
+        unreleased.is_empty(),
+        "{file_name}: unbalanced (channel, key) notes {unreleased:?}"
+    );
 }
 
 fn print_event(event: &MidiEvent) -> String {

@@ -700,14 +700,12 @@ impl MidiBuilder {
             velocity,
             channel,
         ));
-        if span.duration > 0 {
-            self.add_event(MidiEvent::new_note_off(
-                span.end(),
-                output.track_id,
-                key,
-                channel,
-            ));
-        }
+        // always release the key, at least a tick later: a note left without
+        // a duration (e.g. one an on-beat grace note took all the time of)
+        // would otherwise ring until a later note-off on the same key and
+        // channel, which may never come on a track's effect channel
+        let end = span.end().max(span.start + 1);
+        self.add_event(MidiEvent::new_note_off(end, output.track_id, key, channel));
     }
 
     fn add_tempo_change(&mut self, tick: u32, tempo: u32) {
@@ -1037,6 +1035,13 @@ mod tests {
                 (400, 42, 99)
             ]
         );
+    }
+
+    #[test]
+    fn a_note_without_duration_is_still_released() {
+        let mut builder = MidiBuilder::new();
+        builder.add_note(OUTPUT, 40, span(100, 0), DEFAULT_VELOCITY);
+        assert_eq!(notes_played(&builder.events), vec![(100, 40, 1)]);
     }
 
     #[test]
