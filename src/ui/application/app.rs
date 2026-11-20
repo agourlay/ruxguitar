@@ -41,6 +41,9 @@ pub struct RuxApplication {
     pub(super) selection_drag: SelectionDrag,
     current_tab_path: Option<PathBuf>,
     session_restore: Option<SessionRestore>,
+    /// The track asked for on the command line (numbered from 1), for the
+    /// tab file opened at startup only.
+    startup_track: Option<usize>,
 }
 
 /// A parsed song, with its tablature and the track it shows.
@@ -66,6 +69,23 @@ impl PlaybackPrefs {
         audio_player.set_metronome(self.metronome);
         audio_player.set_count_in(self.count_in);
         audio_player.set_master_volume(self.master_volume);
+    }
+}
+
+/// The track a song opens on, as an index: the one asked for on the command
+/// line (numbered from 1) when the song has it, else the first, with the
+/// error to show.
+fn opening_track(requested: Option<usize>, track_count: usize) -> (usize, Option<String>) {
+    match requested {
+        Some(number) if (1..=track_count).contains(&number) => (number - 1, None),
+        Some(number) => (
+            0,
+            Some(format!(
+                "Track {number} not found: the song has {track_count} track{}",
+                if track_count == 1 { "" } else { "s" }
+            )),
+        ),
+        None => (0, None),
     }
 }
 
@@ -163,6 +183,7 @@ impl RuxApplication {
             selection_drag: SelectionDrag::Idle,
             current_tab_path: None,
             session_restore: None,
+            startup_track: None,
         }
     }
 
@@ -170,6 +191,7 @@ impl RuxApplication {
         let mut app = Self::new(args.sound_font_bank.clone(), args.local_config.clone());
 
         let init_task = if let Some(path) = &args.tab_file_path {
+            app.startup_track = args.track;
             Task::done(Message::OpenFile(path.clone()))
         } else if let Some(path) = app.config.session().last_tab_file.clone() {
             if path.is_file() {
@@ -358,9 +380,11 @@ impl RuxApplication {
             audio_player.stop();
         }
         self.audio_player = None;
-        // a startup restore only applies to the file it reopened,
-        // whether or not that load succeeds
+        // a startup restore, like a track asked for on the command line,
+        // only applies to the file opened at startup, whether or not that
+        // load succeeds
         let restore_session = SessionRestore::take_on_load(&mut self.session_restore);
+        let startup_track = self.startup_track.take();
         let (contents, parent_folder, file_name, tab_path) = match result {
             Ok(file) => file,
             Err(err) => {
@@ -387,8 +411,8 @@ impl RuxApplication {
             ));
         }
         let info = SongDisplayInfo::new(&song, file_name);
-        // select first track by default
-        let default_track = 0;
+        // the first track, unless the command line asked for another
+        let (default_track, track_error) = opening_track(startup_track, track_selections.len());
         let track = track_selections[default_track].clone();
         // share song ownership with tablature and player
         let song_rc = Rc::new(song);
@@ -431,6 +455,7 @@ impl RuxApplication {
         Task::batch([
             scroll_to(tablature_scroll_id, AbsoluteOffset::<f32>::default()),
             Task::done(Message::WindowResized),
+            track_error.map_or_else(Task::none, |error| Task::done(Message::ReportError(error))),
         ])
     }
 
@@ -770,6 +795,38 @@ fn resolve_theme(choice: Option<ThemeChoice>) -> Option<Theme> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_track_asked_for_opens_numbered_from_one() {
+        assert_eq!(opening_track(None, 8), (0, None));
+        assert_eq!(opening_track(Some(1), 8), (0, None));
+        assert_eq!(opening_track(Some(8), 8), (7, None));
+    }
+
+    #[test]
+    fn a_startup_track_does_not_outlive_a_failed_startup_load() {
+        let mut app = RuxApplication::new(None, Config::default());
+        app.startup_track = Some(3);
+        // the file given on the command line cannot be read
+        let _ = app.on_file_opened(Err(FilePickerError::IoError("unreadable".to_string())));
+        // the next file opened starts on its first track again
+        assert_eq!(app.startup_track, None);
+    }
+
+    #[test]
+    fn a_track_the_song_lacks_opens_the_first_with_an_error() {
+        let (track, error) = opening_track(Some(9), 8);
+        assert_eq!(track, 0);
+        assert_eq!(
+            error.as_deref(),
+            Some("Track 9 not found: the song has 8 tracks")
+        );
+        let (_, error) = opening_track(Some(2), 1);
+        assert_eq!(
+            error.as_deref(),
+            Some("Track 2 not found: the song has 1 track")
+        );
+    }
 
     #[test]
     fn a_layout_pass_while_loading_keeps_the_startup_restore() {

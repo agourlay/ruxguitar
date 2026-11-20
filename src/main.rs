@@ -49,6 +49,7 @@ pub fn main_result() -> Result<(), RuxError> {
     let args = ApplicationArgs {
         sound_font_bank: sound_font_file,
         tab_file_path,
+        track: args.track.map(usize::from),
         no_antialiasing: args.no_antialiasing,
         theme: args.theme,
         local_config: Config::read_config()?,
@@ -67,6 +68,9 @@ pub struct CliArgs {
     /// Optional path to tab file to by-pass the file picker.
     #[arg(long)]
     tab_file_path: Option<PathBuf>,
+    /// Track to open, numbered from 1 as in the track menu.
+    #[arg(long, requires = "tab_file_path", value_parser = clap::value_parser!(u16).range(1..))]
+    track: Option<u16>,
     /// Disable antialiasing.
     #[arg(long, default_value_t = false)]
     no_antialiasing: bool,
@@ -95,6 +99,8 @@ impl From<ThemeChoice> for iced::Theme {
 pub struct ApplicationArgs {
     sound_font_bank: Option<PathBuf>,
     tab_file_path: Option<PathBuf>,
+    /// The track to open the tab file on, numbered from 1.
+    track: Option<usize>,
     no_antialiasing: bool,
     theme: Option<ThemeChoice>,
     local_config: Config,
@@ -121,5 +127,31 @@ impl From<iced::Error> for RuxError {
 impl From<io::Error> for RuxError {
     fn from(error: io::Error) -> Self {
         Self::OtherError(error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<CliArgs, clap::Error> {
+        CliArgs::try_parse_from(std::iter::once("ruxguitar").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn a_track_opens_with_a_tab_file() {
+        let args = parse(&["--tab-file-path", "song.gp5", "--track", "3"]).unwrap();
+        assert_eq!(args.track, Some(3));
+    }
+
+    #[test]
+    fn a_track_needs_a_tab_file() {
+        assert!(parse(&["--track", "3"]).is_err());
+    }
+
+    #[test]
+    fn tracks_are_numbered_from_one() {
+        assert!(parse(&["--tab-file-path", "song.gp5", "--track", "0"]).is_err());
+        assert!(parse(&["--tab-file-path", "song.gp5", "--track", "bass"]).is_err());
     }
 }

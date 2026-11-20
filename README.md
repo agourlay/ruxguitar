@@ -41,6 +41,7 @@ Usage: ruxguitar [OPTIONS]
 Options:
       --sound-font-file <SOUND_FONT_FILE>  Optional path to a sound font file
       --tab-file-path <TAB_FILE_PATH>      Optional path to tab file to by-pass the file picker
+      --track <TRACK>                      Track to open, numbered from 1 as in the track menu
       --no-antialiasing                    Disable antialiasing
       --theme <THEME>                      Force the color theme [possible values: light, dark]
   -h, --help                               Print help
