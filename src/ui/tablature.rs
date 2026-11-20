@@ -165,19 +165,17 @@ impl Tablature {
         (measure_index, original_tick)
     }
 
-    /// The measure and beat containing `tick`, i.e. the last ones starting at
-    /// or before it.
-    pub fn get_measure_beat_indexes_for_tick(&self, track_id: usize, tick: u32) -> (usize, usize) {
+    /// The measure and beat column containing `tick`, i.e. the last ones
+    /// starting at or before it. A column gathers the beats of every voice
+    /// starting together, so the cursor stops on a note of any voice.
+    pub fn get_measure_beat_indexes_for_tick(&self, tick: u32) -> (usize, usize) {
         let (measure_index, original_tick) = self.measure_and_original_tick(tick);
-
-        // get beat index within the measure containing the tick
-        // adjust tick by removing the offset to compare with original beat.start values
-        let voice = &self.song.tracks[track_id].measures[measure_index].voices[0];
-        let beat_index = voice
-            .beats
-            .partition_point(|beat| beat.start <= original_tick)
-            .saturating_sub(1);
-        (measure_index, beat_index)
+        // the tick, without the playback offset, compares with the beat starts
+        let column = self
+            .canvas_measures
+            .get(measure_index)
+            .map_or(0, |canvas| canvas.column_at_tick(original_tick));
+        (measure_index, column)
     }
 
     /// Move the highlight to the beat at the given playback tick. Scrolling
@@ -186,7 +184,7 @@ impl Tablature {
         let (new_measure_id, new_beat_id) = if tick == 1 {
             (0, 0)
         } else {
-            self.get_measure_beat_indexes_for_tick(self.track_id, tick)
+            self.get_measure_beat_indexes_for_tick(tick)
         };
         let current_focus_id = self.focused_measure;
         let current_canvas = self.canvas_measures.get_mut(current_focus_id).unwrap();
@@ -225,13 +223,13 @@ impl Tablature {
         canvas.focus_beat(beat_id);
     }
 
-    /// Tick offset of a beat from the start of its measure.
+    /// Tick offset of a beat column from the start of its measure.
     pub fn beat_tick_offset(&self, measure_id: usize, beat_id: usize) -> u32 {
         let measure_start = self.song.measure_headers[measure_id].start;
-        self.song.tracks[self.track_id].measures[measure_id].voices[0]
-            .beats
-            .get(beat_id)
-            .map_or(0, |beat| beat.start.saturating_sub(measure_start))
+        self.canvas_measures
+            .get(measure_id)
+            .and_then(|canvas| canvas.column_start(beat_id))
+            .map_or(0, |start| start.saturating_sub(measure_start))
     }
 
     pub const fn focused_measure(&self) -> usize {

@@ -5,10 +5,12 @@ use super::beat::{
 use super::canvas_measure::shows_key_signature;
 use super::canvas_measure::{CanvasMeasure, beat_x_positions};
 use super::chord::has_diagram;
+use super::columns::{column_annotations, column_at_tick, measure_columns, separated_drum_rows};
 use super::layout::{
     BEAT_LENGTH, DURATION_WIDTHS, LABEL_CHAR_WIDTH, LABEL_GAP, LABEL_MAX_EXTRA,
-    MEASURE_NOTES_PADDING, MIN_BEAT_WIDTH, ROW_CHORD, ROW_LYRIC, ROW_MARKER, RowSpacing,
-    beat_natural_width, label_extra_width, lead_in_width, lyric_extra_width, spacing_for_quarter,
+    MEASURE_NOTES_PADDING, MIN_BEAT_WIDTH, ROW_CHORD, ROW_EFFECT_LINE, ROW_LYRIC, ROW_MARKER,
+    RowSpacing, SECOND_RHYTHM_BAND, beat_natural_width, label_extra_width, lead_in_width,
+    lyric_extra_width, spacing_for_quarter,
 };
 use super::rhythm::{
     MAX_BEAMS, beam_leans_right, beam_runs, division_length, is_rest, stem_beams, tuplet_runs,
@@ -21,6 +23,7 @@ use crate::parser::song_parser::{
     BeatEffects, BendEffect, BendPoint, GraceEffect, Measure, NoteType, QUARTER, Song, Track,
     TremoloBarEffect, TrillEffect, Voice,
 };
+use std::collections::HashMap;
 use std::rc::Rc;
 
 fn beat(value: u16, enters: u8, times: u8) -> Beat {
@@ -789,4 +792,244 @@ fn beats_follow_each_other_at_their_scaled_widths() {
         [20.0, 40.0, 100.0]
     );
     assert!(beat_x_positions(20.0, &[], 1.0).is_empty());
+}
+
+/// A song of one measure holding two voices.
+fn two_voice_song(first: Vec<Beat>, second: Vec<Beat>) -> Rc<Song> {
+    Rc::new(Song {
+        tracks: vec![Track {
+            strings: (1..=6).map(|string| (string, 40)).collect(),
+            measures: vec![Measure {
+                voices: vec![
+                    Voice {
+                        measure_index: 0,
+                        beats: first,
+                    },
+                    Voice {
+                        measure_index: 0,
+                        beats: second,
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+        measure_headers: vec![MeasureHeader::default()],
+        ..Default::default()
+    })
+}
+
+/// A beat that sounds no note, at `start`.
+fn rest_at(value: u16, start: u32) -> Beat {
+    Beat {
+        start,
+        ..beat_of(value)
+    }
+}
+
+#[test]
+fn a_single_voice_gets_a_column_per_beat() {
+    // the second voice only rests: it adds nothing
+    let song = two_voice_song(run_of(&[4, 4, 8, 8, 2]), vec![rest_at(1, QUARTER_TIME)]);
+    let columns = measure_columns(&song.tracks[0].measures[0]);
+    let expected: Vec<Vec<(usize, usize)>> = (0..5).map(|beat| vec![(0, beat)]).collect();
+    assert_eq!(
+        columns.iter().map(|c| c.beats.clone()).collect::<Vec<_>>(),
+        expected
+    );
+}
+
+#[test]
+fn the_second_voice_lines_up_with_the_first_by_start() {
+    // a whole note held under four quarters
+    let song = two_voice_song(run_of(&[1]), run_of(&[4, 4, 4, 4]));
+    let columns = measure_columns(&song.tracks[0].measures[0]);
+    let starts: Vec<u32> = columns.iter().map(|c| c.start).collect();
+    assert_eq!(starts, [960, 1920, 2880, 3840]);
+    assert_eq!(columns[0].beats, [(0, 0), (1, 0)]);
+    assert_eq!(columns[3].beats, [(1, 3)]);
+    // the column playing at a tick is the last one started
+    assert_eq!(column_at_tick(&columns, 2000), 1);
+    assert_eq!(column_at_tick(&columns, 0), 0);
+}
+
+#[test]
+fn a_rest_of_the_second_voice_takes_no_column() {
+    let mut second = vec![rest_at(4, QUARTER_TIME)];
+    second.extend(run_of(&[4, 2]).into_iter().map(|mut beat| {
+        beat.start += QUARTER_TIME;
+        beat
+    }));
+    let song = two_voice_song(run_of(&[1]), second);
+    let columns = measure_columns(&song.tracks[0].measures[0]);
+    assert_eq!(columns[0].beats, [(0, 0)]);
+    assert_eq!(columns[1].beats, [(1, 1)]);
+    assert_eq!(columns.len(), 3);
+}
+
+#[test]
+fn a_note_held_under_a_second_voice_takes_its_room() {
+    // a whole note under four quarters spreads like four quarters
+    let quarters = CanvasMeasure::new(
+        0,
+        0,
+        one_measure_song(run_of(&[4, 4, 4, 4])),
+        false,
+        false,
+        vec![],
+    );
+    let held = CanvasMeasure::new(
+        0,
+        0,
+        two_voice_song(run_of(&[1]), run_of(&[4, 4, 4, 4])),
+        false,
+        false,
+        vec![],
+    );
+    assert_eq!(held.total_measure_len, quarters.total_measure_len);
+    // and a click lands on the second voice's beats
+    let width = held.total_measure_len;
+    let column_width = (width - MEASURE_NOTES_PADDING * 2.0) / 4.0;
+    assert_eq!(
+        held.beat_at_x(MEASURE_NOTES_PADDING + 2.5 * column_width, width),
+        2
+    );
+}
+
+#[test]
+fn the_cursor_stops_on_the_second_voice_alone() {
+    // two half notes, quarters underneath
+    let measure = CanvasMeasure::new(
+        0,
+        0,
+        two_voice_song(run_of(&[2, 2]), run_of(&[4, 4, 4, 4])),
+        false,
+        false,
+        vec![],
+    );
+    // the second quarter sounds alone in the second voice
+    assert_eq!(measure.column_at_tick(1950), 1);
+    assert_eq!(measure.column_start(1), Some(1920));
+    assert_eq!(measure.column_at_tick(2900), 2);
+    assert_eq!(measure.column_start(4), None);
+}
+
+#[test]
+fn the_second_voice_gets_its_rhythm_band() {
+    let single = one_measure_song(run_of(&[4, 4, 4, 4]));
+    let double = two_voice_song(run_of(&[1]), run_of(&[4, 4, 4, 4]));
+    let header = MeasureHeader::default();
+    let rows = |song: &Rc<Song>| {
+        RowSpacing::for_measure(&song.tracks[0].measures[0], &header, false, false, false)
+    };
+    assert_eq!(rows(&single).second_rhythm, 0.0);
+    assert_eq!(rows(&double).second_rhythm, SECOND_RHYTHM_BAND);
+    // a whole note held in the second voice has no stem to draw
+    let held = two_voice_song(run_of(&[4, 4, 4, 4]), run_of(&[1]));
+    assert_eq!(rows(&held).second_rhythm, 0.0);
+}
+
+#[test]
+fn an_effect_shared_by_both_voices_takes_one_line() {
+    let mut first = run_of(&[1]);
+    first[0].notes[0].effect.palm_mute = true;
+    let mut second = run_of(&[4, 4, 4, 4]);
+    second[0].notes[0].effect.palm_mute = true;
+    second[2].notes[0].effect.let_ring = true;
+    let song = two_voice_song(first, second);
+    let measure = &song.tracks[0].measures[0];
+    let columns = measure_columns(measure);
+    assert_eq!(
+        column_annotations(measure, &columns[0]),
+        [Annotation::Text("P.M")]
+    );
+    let rows = RowSpacing::for_measure(measure, &MeasureHeader::default(), false, false, false);
+    assert_eq!(rows.effects, ROW_EFFECT_LINE);
+}
+
+#[test]
+fn measures_without_a_second_voice_lay_out_as_before() {
+    // every test file: a measure whose other voices never sound keeps one
+    // column per beat of its first voice, in order
+    for entry in std::fs::read_dir("test-files").unwrap() {
+        let path = entry.unwrap().path();
+        let Ok(song) = crate::parser::song_parser_tests::parse_gp_file(path.to_str().unwrap())
+        else {
+            continue;
+        };
+        for track in &song.tracks {
+            for measure in &track.measures {
+                let sounds_later = measure
+                    .voices
+                    .iter()
+                    .skip(1)
+                    .any(|voice| voice.beats.iter().any(|beat| !beat.notes.is_empty()));
+                if sounds_later {
+                    continue;
+                }
+                let columns = measure_columns(measure);
+                let expected: Vec<Vec<(usize, usize)>> = (0..measure.voices[0].beats.len())
+                    .map(|beat| vec![(0, beat)])
+                    .collect();
+                let actual: Vec<Vec<(usize, usize)>> =
+                    columns.into_iter().map(|c| c.beats).collect();
+                assert_eq!(actual, expected, "{}", path.display());
+            }
+        }
+    }
+}
+
+/// A beat at `start` sounding notes on these strings.
+fn hits_at(start: u32, strings: &[i8]) -> Beat {
+    let mut beat = sounding(4, false);
+    beat.start = start;
+    beat.notes = strings.iter().map(|&string| note_on(string, 36)).collect();
+    beat
+}
+
+fn drum_rows(first: Vec<Beat>, second: Vec<Beat>) -> HashMap<(usize, usize), Vec<i8>> {
+    let song = two_voice_song(first, second);
+    let measure = &song.tracks[0].measures[0];
+    separated_drum_rows(measure, &measure_columns(measure), 6)
+}
+
+#[test]
+fn a_drum_note_on_a_used_row_moves_to_the_next_one_down() {
+    // hands on rows 2 and 5, the foot on row 5 too
+    let rows = drum_rows(vec![hits_at(960, &[2, 5])], vec![hits_at(960, &[5])]);
+    assert_eq!(rows.get(&(1, 0)), Some(&vec![6]));
+}
+
+#[test]
+fn a_drum_note_on_the_bottom_row_moves_up() {
+    let rows = drum_rows(vec![hits_at(960, &[6])], vec![hits_at(960, &[6])]);
+    assert_eq!(rows.get(&(1, 0)), Some(&vec![5]));
+}
+
+#[test]
+fn drum_notes_on_their_own_rows_stay() {
+    let rows = drum_rows(
+        vec![hits_at(960, &[2]), hits_at(1920, &[5])],
+        vec![hits_at(960, &[5]), hits_at(1920, &[2])],
+    );
+    assert!(rows.is_empty());
+}
+
+#[test]
+fn a_drum_note_with_no_free_row_stays() {
+    let rows = drum_rows(
+        vec![hits_at(960, &[1, 2, 3, 4, 5, 6])],
+        vec![hits_at(960, &[3])],
+    );
+    assert!(rows.is_empty());
+}
+
+#[test]
+fn moved_drum_notes_do_not_land_on_each_other() {
+    // two feet notes clashing with the hands: each finds its own row
+    let rows = drum_rows(vec![hits_at(960, &[4, 5])], vec![hits_at(960, &[4, 5])]);
+    let moved = &rows[&(1, 0)];
+    assert_eq!(moved.len(), 2);
+    assert_ne!(moved[0], moved[1]);
+    assert!(moved.iter().all(|row| ![4, 5].contains(row)));
 }

@@ -1,6 +1,7 @@
 mod beat;
 mod canvas_measure;
 mod chord;
+mod columns;
 mod effects;
 mod layout;
 mod rhythm;

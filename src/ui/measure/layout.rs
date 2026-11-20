@@ -1,10 +1,11 @@
 //! Measure geometry: annotation rows, beat widths and measure height.
 
-use super::beat::{beat_annotations, grace_label};
+use super::beat::grace_label;
 use super::chord::{
     CHORD_DIAGRAM_HEIGHT, CHORD_FIRST_FRET_SPACE, CHORD_STRING_SPACING, chord_diagram_width,
     has_diagram,
 };
+use super::columns::{Column, column_annotations, measure_columns};
 use super::rhythm::stem_beams;
 use crate::parser::song_parser::{
     Beat, BeatStrokeDirection, Duration, Measure, MeasureHeader, Note, QUARTER_TIME, SlideType,
@@ -42,6 +43,8 @@ const STAFF_FOOTER: f32 = 10.0;
 const STAFF_FOOTER_WITH_TREMOLO: f32 = 19.0;
 // Stems and their beams hang further still.
 const STAFF_FOOTER_WITH_STEMS: f32 = 30.0;
+// The second voice's rhythm hangs in a band of its own under the first's.
+pub(super) const SECOND_RHYTHM_BAND: f32 = 30.0;
 
 /// Height of each annotation row above the staff, zero when unused.
 ///
@@ -59,6 +62,8 @@ pub struct RowSpacing {
     pub(super) pick_stroke: f32,
     pub(super) staff_header: f32,
     pub(super) staff_footer: f32,
+    /// The second voice's rhythm, and its tuplets, under the first's.
+    pub(super) second_rhythm: f32,
     pub(super) lyric: f32,
 }
 
@@ -75,6 +80,7 @@ impl Default for RowSpacing {
             pick_stroke: 0.0,
             staff_header: STAFF_HEADER,
             staff_footer: STAFF_FOOTER,
+            second_rhythm: 0.0,
             lyric: 0.0,
         }
     }
@@ -105,7 +111,13 @@ impl RowSpacing {
         if has_signature_label {
             spacing.signature = ROW_SIGNATURE;
         }
-        let beats = &measure.voices[0].beats;
+        // every beat drawn, of every voice
+        let columns = measure_columns(measure);
+        let beats: Vec<&Beat> = columns
+            .iter()
+            .flat_map(|column| &column.beats)
+            .map(|&(voice, beat)| &measure.voices[voice].beats[beat])
+            .collect();
         if beats.iter().any(|beat| beat.effect.chord.is_some()) {
             spacing.chord = ROW_CHORD;
             // a fingering shown as a grid needs the room above the name
@@ -117,7 +129,12 @@ impl RowSpacing {
                 spacing.chord += CHORD_DIAGRAM_HEIGHT;
             }
         }
-        if beats.iter().any(|beat| beat.duration.is_tuplet()) {
+        // the first voice's tuplets go above the staff, the others' in their band
+        if measure.voices[0]
+            .beats
+            .iter()
+            .any(|beat| beat.duration.is_tuplet())
+        {
             spacing.tuplet = ROW_TUPLET;
         }
         if beats.iter().any(|beat| !beat.text.is_empty()) {
@@ -143,13 +160,38 @@ impl RowSpacing {
         {
             spacing.staff_footer = STAFF_FOOTER_WITH_TREMOLO;
         }
-        if beats.iter().any(|beat| stem_beams(beat).is_some()) {
+        if measure.voices[0]
+            .beats
+            .iter()
+            .any(|beat| stem_beams(beat).is_some())
+        {
             spacing.staff_footer = spacing.staff_footer.max(STAFF_FOOTER_WITH_STEMS);
         }
-        // the effect row grows with the tallest annotation stack of the measure
-        let effect_lines = beats
+        // the other voices' rhythm gets a band of its own, when it draws
+        // something: a stem, a duration dot or a tuplet (a whole note alone
+        // has none of them)
+        let other_beats = || {
+            columns
+                .iter()
+                .flat_map(|column| &column.beats)
+                .filter(|&&(voice, _)| voice > 0)
+                .map(|&(voice, beat)| &measure.voices[voice].beats[beat])
+        };
+        let other_tuplets = other_beats().any(|beat| beat.duration.is_tuplet());
+        let other_rhythm = other_beats().any(|beat| {
+            stem_beams(beat).is_some() || beat.duration.dotted || beat.duration.double_dotted
+        });
+        if other_rhythm || other_tuplets {
+            spacing.second_rhythm = SECOND_RHYTHM_BAND;
+        }
+        if other_tuplets {
+            spacing.second_rhythm += ROW_TUPLET;
+        }
+        // the effect row grows with the tallest annotation stack of the
+        // measure, a column's voices sharing theirs
+        let effect_lines = columns
             .iter()
-            .map(|beat| beat_annotations(beat).len())
+            .map(|column| column_annotations(measure, column).len())
             .max()
             .unwrap_or(0);
         spacing.effects = ROW_EFFECT_LINE * effect_lines as f32;
@@ -168,6 +210,7 @@ impl RowSpacing {
         self.pick_stroke = self.pick_stroke.max(other.pick_stroke);
         self.staff_header = self.staff_header.max(other.staff_header);
         self.staff_footer = self.staff_footer.max(other.staff_footer);
+        self.second_rhythm = self.second_rhythm.max(other.second_rhythm);
         self.lyric = self.lyric.max(other.lyric);
     }
 
@@ -325,6 +368,7 @@ pub(super) fn measure_height(rows: RowSpacing, string_count: usize) -> f32 {
     rows.first_string_y()
         + STRING_LINE_HEIGHT * (string_count - 1) as f32
         + rows.staff_footer
+        + rows.second_rhythm
         + rows.lyric
 }
 
@@ -372,6 +416,68 @@ pub(super) fn beat_natural_width(
         .filter(|next| !next.text.is_empty())
         .map_or(0.0, |_| label_extra_width(&beat.text, base));
     base + bend_extra + lead_in_extra + chord_extra + text_extra
+}
+
+/// Natural width of a measure's column.
+///
+/// Without a second voice, a column is its first voice's beat, as wide as
+/// that beat always was. With one, the columns sit on a shared timeline: a
+/// column's time is the gap to the next one (its shortest beat for the last),
+/// and its beats claim their extra room on top of it.
+pub(super) fn column_natural_width(
+    measure: &Measure,
+    columns: &[Column],
+    index: usize,
+    quarter_spacing: f32,
+    lyrics: &[String],
+) -> f32 {
+    let column = &columns[index];
+    let beat_of = |&(voice, beat): &(usize, usize)| &measure.voices[voice].beats[beat];
+    let lyric_extra = |base: f32| {
+        column
+            .beats
+            .iter()
+            .find(|&&(voice, _)| voice == 0)
+            .map_or(0.0, |&(_, beat)| lyric_extra_width(lyrics, beat, base))
+    };
+    if !columns.iter().any(Column::has_other_voices) {
+        let (_, beat_index) = column.beats[0];
+        let beats = &measure.voices[0].beats;
+        let beat = &beats[beat_index];
+        return beat_natural_width(beat, beats.get(beat_index + 1), quarter_spacing)
+            + lyric_extra(beat_base_width(beat, quarter_spacing));
+    }
+
+    let sounding = column.beats.iter().map(beat_of).filter(|beat| !beat.empty);
+    let Some(shortest) = sounding.map(|beat| beat.duration.time()).min() else {
+        // only empty beats: no time, no room
+        return 0.0;
+    };
+    let time = columns
+        .get(index + 1)
+        .map_or(shortest, |next| next.start.saturating_sub(column.start));
+    let base = (time as f32 / QUARTER_TIME as f32 * quarter_spacing).max(MIN_BEAT_WIDTH);
+    // each beat's own extras, without the lead-in of its voice's next beat:
+    // the next column's lead-ins are reserved once, whatever their voice
+    let extras = column
+        .beats
+        .iter()
+        .map(|&(voice, beat_index)| {
+            let beats = &measure.voices[voice].beats;
+            let beat = &beats[beat_index];
+            let next = beats.get(beat_index + 1);
+            beat_natural_width(beat, next, quarter_spacing)
+                - beat_base_width(beat, quarter_spacing)
+                - next.map_or(0.0, lead_in_width)
+        })
+        .fold(0.0_f32, f32::max);
+    let next_lead_in = columns.get(index + 1).map_or(0.0, |next| {
+        next.beats
+            .iter()
+            .map(|key| lead_in_width(beat_of(key)))
+            .fold(0.0, f32::max)
+    });
+    base + extras + next_lead_in + lyric_extra(base)
 }
 
 /// Room the grace notes and slide-ins of a beat need in the gap before it.

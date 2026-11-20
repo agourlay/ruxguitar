@@ -1,10 +1,13 @@
 //! The canvas widget drawing one measure of a track, and its click handling.
 
-use super::beat::{BeatSlot, draw_beat};
+use super::beat::{BeatSlot, draw_annotations, draw_beat};
+use super::columns::{
+    Column, column_annotations, column_at_tick, measure_columns, separated_drum_rows, voice_beats,
+};
 use super::layout::{
     BEAT_LENGTH, HALF_BEAT_LENGTH, MEASURE_NOTES_PADDING, MIN_BEAT_WIDTH, MIN_MEASURE_WIDTH,
-    RowSpacing, Staff, beat_base_width, beat_natural_width, lead_in_width, lyric_extra_width,
-    measure_height, spacing_for_quarter,
+    RowSpacing, SECOND_RHYTHM_BAND, Staff, column_natural_width, lead_in_width, measure_height,
+    spacing_for_quarter,
 };
 use super::rhythm::{draw_rhythm, draw_tuplet_bracket, tuplet_runs};
 use super::staff::{
@@ -21,6 +24,7 @@ use iced::widget::canvas::{Cache, Event, Frame, Geometry, Text};
 use iced::widget::{Action, Canvas, canvas};
 use iced::{Element, Length, Point, Rectangle, Renderer, Theme};
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 // Unicode symbols for musical notation
@@ -34,12 +38,18 @@ pub struct CanvasMeasure {
     is_focused: bool,
     is_selected: bool,
     pointer_drag_active: bool,
-    focused_beat: usize,
+    /// The focused column: the beats of every voice starting together.
+    focused_column: usize,
     canvas_cache: Cache,
     measure_len: f32,
-    // natural width of each beat and their sum (immutable song data,
+    /// The moments the beats of the measure start, shared by its voices.
+    columns: Vec<Column>,
+    /// On a drum track, the rows of the other voices' beats with a note
+    /// moved off a row already used in its column, by (voice, beat).
+    drum_rows: HashMap<(usize, usize), Vec<i8>>,
+    // natural width of each column and their sum (immutable song data,
     // computed once instead of on every redraw)
-    beat_widths: Vec<f32>,
+    column_widths: Vec<f32>,
     natural_beats_len: f32,
     pub total_measure_len: f32,
     pub vertical_measure_height: f32,
@@ -69,13 +79,16 @@ impl CanvasMeasure {
         let track = &song.tracks[track_id];
         let measure = &track.measures[measure_id];
         let measure_header = &song.measure_headers[measure_id];
-        let beats = &measure.voices[0].beats;
-        // the measure is spaced by its shortest note. A beat flagged empty
-        // carries no time, so it has no say, as TuxGuitar's own skips it.
-        // The fallback is for a measure with nothing to space by: a floor
-        // here would widen the long notes it is meant to protect
-        let quarter_spacing = beats
+        let columns = measure_columns(measure);
+        // the measure is spaced by its shortest note, of any voice drawn. A
+        // beat flagged empty carries no time, so it has no say, as
+        // TuxGuitar's own skips it. The fallback is for a measure with
+        // nothing to space by: a floor here would widen the long notes it is
+        // meant to protect
+        let quarter_spacing = columns
             .iter()
+            .flat_map(|column| &column.beats)
+            .map(|&(voice, beat)| &measure.voices[voice].beats[beat])
             .filter(|beat| !beat.empty)
             .map(|beat| spacing_for_quarter(&beat.duration))
             .fold(0.0_f32, f32::max);
@@ -84,15 +97,19 @@ impl CanvasMeasure {
         } else {
             MIN_BEAT_WIDTH
         };
-        let beat_widths: Vec<f32> = beats
+        let is_drums = song
+            .midi_channels
             .iter()
-            .enumerate()
-            .map(|(i, beat)| {
-                beat_natural_width(beat, beats.get(i + 1), quarter_spacing)
-                    + lyric_extra_width(&lyrics, i, beat_base_width(beat, quarter_spacing))
-            })
+            .any(|c| c.channel_id == track.channel_id && c.is_percussion());
+        let drum_rows = if is_drums {
+            separated_drum_rows(measure, &columns, track.strings.len())
+        } else {
+            HashMap::new()
+        };
+        let column_widths: Vec<f32> = (0..columns.len())
+            .map(|index| column_natural_width(measure, &columns, index, quarter_spacing, &lyrics))
             .collect();
-        let natural_beats_len: f32 = beat_widths.iter().sum();
+        let natural_beats_len: f32 = column_widths.iter().sum();
         let measure_len = MIN_MEASURE_WIDTH.max(natural_beats_len);
         // total length of measure (padding on both sides)
         let mut total_measure_len = measure_len + MEASURE_NOTES_PADDING * 2.0;
@@ -135,10 +152,12 @@ impl CanvasMeasure {
             is_focused: focused,
             is_selected: false,
             pointer_drag_active: false,
-            focused_beat: 0,
+            focused_column: 0,
             canvas_cache: Cache::default(),
             measure_len,
-            beat_widths,
+            columns,
+            drum_rows,
+            column_widths,
             natural_beats_len,
             total_measure_len,
             vertical_measure_height,
@@ -212,28 +231,39 @@ impl CanvasMeasure {
 
     pub fn toggle_focused(&mut self) {
         self.is_focused = !self.is_focused;
-        self.focused_beat = 0;
+        self.focused_column = 0;
         self.canvas_cache.clear();
     }
 
+    /// The focused column, the beat index the rest of the app speaks of.
     pub const fn focused_beat(&self) -> usize {
-        self.focused_beat
+        self.focused_column
     }
 
-    pub fn focus_beat(&mut self, beat_id: usize) {
-        if self.focused_beat != beat_id {
-            self.focused_beat = beat_id;
+    pub fn focus_beat(&mut self, column: usize) {
+        if self.focused_column != column {
+            self.focused_column = column;
             self.canvas_cache.clear();
         }
+    }
+
+    /// The column playing at `tick`, an absolute tick of the measure.
+    pub fn column_at_tick(&self, tick: u32) -> usize {
+        column_at_tick(&self.columns, tick)
+    }
+
+    /// The column's start, as an absolute tick of the measure.
+    pub fn column_start(&self, column: usize) -> Option<u32> {
+        self.columns.get(column).map(|column| column.start)
     }
 
     pub fn clear_canvas_cache(&self) {
         self.canvas_cache.clear();
     }
 
-    /// The beat under the given x position, mirroring the layout used by
-    /// `draw` (clicks in the leading padding select the first beat, clicks
-    /// past the last beat the last one).
+    /// The column under the given x position, mirroring the layout used by
+    /// `draw` (clicks in the leading padding select the first column, clicks
+    /// past the last column the last one).
     pub(super) fn beat_at_x(&self, x: f32, actual_width: f32) -> usize {
         let measure_header = &self.song.measure_headers[self.measure_id];
         let actual_measure_len = actual_width - self.overhead_width();
@@ -250,19 +280,24 @@ impl CanvasMeasure {
             beat_x += BEAT_LENGTH;
         }
         beat_x += MEASURE_NOTES_PADDING;
-        let beats = &self.song.tracks[self.track_id].measures[self.measure_id].voices[0].beats;
-        for (beat_id, width) in self.beat_widths.iter().enumerate() {
+        for (column, width) in self.column_widths.iter().enumerate() {
             beat_x += width * width_scale;
             if x < beat_x {
-                return beat_id;
+                return column;
             }
         }
-        // past the last beat: the nearest visible one, never the zero-width
-        // empty beat that may close the voice
-        beats
+        // past the last column: the nearest visible one, never a zero-width
+        // column of empty beats that may close the measure
+        let measure = &self.song.tracks[self.track_id].measures[self.measure_id];
+        self.columns
             .iter()
-            .rposition(|beat| !beat.empty)
-            .unwrap_or_else(|| self.beat_widths.len().saturating_sub(1))
+            .rposition(|column| {
+                column
+                    .beats
+                    .iter()
+                    .any(|&(voice, beat)| !measure.voices[voice].beats[beat].empty)
+            })
+            .unwrap_or_else(|| self.column_widths.len().saturating_sub(1))
     }
 }
 
@@ -379,7 +414,8 @@ impl CanvasMeasure {
         });
     }
 
-    /// The beats with their lyrics, then the rhythm and tuplets under them.
+    /// The beats of every voice with their lyrics, then each voice's rhythm
+    /// and tuplets under the staff.
     fn draw_beats(
         &self,
         frame: &mut Frame<Renderer>,
@@ -389,9 +425,7 @@ impl CanvasMeasure {
         width: f32,
     ) {
         let measure = &self.song.tracks[self.track_id].measures[self.measure_id];
-        // TODO draw second voice if present (audio playback already handles all voices)
-        let beats = &measure.voices[0].beats;
-        log::debug!("{} beats", beats.len());
+        log::debug!("{} columns", self.columns.len());
         let mut beat_start = 0.0;
         if self.has_time_signature {
             beat_start += BEAT_LENGTH;
@@ -407,54 +441,132 @@ impl CanvasMeasure {
         };
         // every position is known before any beat is drawn: slides and
         // hammer-ons reach for the next note on their string
-        let positions = beat_x_positions(
+        let column_x = beat_x_positions(
             beat_start + MEASURE_NOTES_PADDING,
-            &self.beat_widths,
+            &self.column_widths,
             width_scale,
         );
-        for (index, natural_width) in self.beat_widths.iter().enumerate() {
-            let beat_width = natural_width * width_scale;
-            // the inline effect glyphs may not reach into the space the
-            // next beat's grace notes and slide-ins occupy
-            let next_lead_in = beats.get(index + 1).map_or(0.0, lead_in_width);
-            let slot = BeatSlot {
-                beats,
-                positions: &positions,
-                index,
-                span: beat_width - next_lead_in,
-                width_scale,
-                color: if self.is_focused && index == self.focused_beat {
-                    colors.accent
-                } else {
-                    colors.foreground
-                },
+        // the room after a column, up to the grace notes and slide-ins the
+        // next one draws before itself
+        let column_span = |column: usize| {
+            let beat_width = self.column_widths[column] * width_scale;
+            let next_lead_in = self.columns.get(column + 1).map_or(0.0, |next| {
+                next.beats
+                    .iter()
+                    .map(|&(voice, beat)| lead_in_width(&measure.voices[voice].beats[beat]))
+                    .fold(0.0, f32::max)
+            });
+            beat_width - next_lead_in
+        };
+
+        for (voice_index, voice) in measure.voices.iter().enumerate() {
+            let positions = self.voice_positions(voice_index, &column_x);
+            for (index, _, column) in voice_beats(measure, &self.columns, voice_index) {
+                let slot = BeatSlot {
+                    beats: &voice.beats,
+                    positions: &positions,
+                    index,
+                    span: column_span(column),
+                    width_scale,
+                    color: if self.is_focused && column == self.focused_column {
+                        colors.accent
+                    } else {
+                        colors.foreground
+                    },
+                    rows: self
+                        .drum_rows
+                        .get(&(voice_index, index))
+                        .map_or(&[], Vec::as_slice),
+                };
+                draw_beat(frame, colors, staff, &slot);
+                // the syllable sung on this beat, under the staff
+                if voice_index == 0
+                    && let Some(syllable) = self.lyrics.get(index)
+                    && !syllable.is_empty()
+                {
+                    frame.fill_text(Text {
+                        shaping: Auto,
+                        content: syllable.clone(),
+                        color: colors.foreground,
+                        size: 8.0.into(),
+                        position: Point::new(
+                            positions[index],
+                            staff.bottom() + staff.rows.staff_footer + staff.rows.second_rhythm,
+                        ),
+                        ..Text::default()
+                    });
+                }
+            }
+            // the rhythm under the staff, once every beat position is known:
+            // the first voice's, then the others' in their band below it
+            let rhythm_top = if voice_index == 0 {
+                staff.bottom()
+            } else {
+                staff.bottom() + staff.rows.staff_footer
             };
-            draw_beat(frame, colors, staff, &slot);
-            // the syllable sung on this beat, under the staff
-            if let Some(syllable) = self.lyrics.get(index)
-                && !syllable.is_empty()
-            {
-                frame.fill_text(Text {
-                    shaping: Auto,
-                    content: syllable.clone(),
-                    color: colors.foreground,
-                    size: 8.0.into(),
-                    position: Point::new(
-                        positions[index],
-                        staff.bottom() + staff.rows.staff_footer,
-                    ),
-                    ..Text::default()
-                });
+            draw_rhythm(frame, colors, &voice.beats, &positions, rhythm_top, header);
+            // tuplet brackets span consecutive beats of the same division:
+            // above the staff for the first voice, under its band for others
+            let tuplet_y = if voice_index == 0 {
+                (staff.rows.tuplet > 0.0).then(|| staff.rows.tuplet_y())
+            } else {
+                (staff.rows.second_rhythm > SECOND_RHYTHM_BAND)
+                    .then_some(rhythm_top + SECOND_RHYTHM_BAND)
+            };
+            if let Some(y) = tuplet_y {
+                for (enters, x1, x2) in tuplet_runs(&voice.beats, &positions) {
+                    draw_tuplet_bracket(frame, colors, enters, x1, x2, y);
+                }
             }
         }
-        // the rhythm under the staff, once every beat position is known
-        draw_rhythm(frame, colors, beats, &positions, staff.bottom(), header);
-        // tuplet brackets span consecutive beats of the same division
-        if staff.rows.tuplet > 0.0 {
-            for (enters, x1, x2) in tuplet_runs(beats, &positions) {
-                draw_tuplet_bracket(frame, colors, enters, x1, x2, staff.rows.tuplet_y());
+
+        // the effects above the staff, once per column for all its voices
+        for (column_index, column) in self.columns.iter().enumerate() {
+            let annotations = column_annotations(measure, column);
+            if !annotations.is_empty() {
+                draw_annotations(
+                    frame,
+                    colors,
+                    staff,
+                    column_x[column_index],
+                    column_span(column_index),
+                    &annotations,
+                );
             }
         }
+    }
+
+    /// Where each beat of a voice starts: at its column, or for a beat not
+    /// drawn (a rest of a voice past the first) where its tick falls between
+    /// the columns around it, so neighbouring notes still find their way.
+    fn voice_positions(&self, voice: usize, column_x: &[f32]) -> Vec<f32> {
+        let measure = &self.song.tracks[self.track_id].measures[self.measure_id];
+        measure.voices[voice]
+            .beats
+            .iter()
+            .enumerate()
+            .map(|(index, beat)| {
+                if let Some(column) = self
+                    .columns
+                    .iter()
+                    .position(|column| column.beats.contains(&(voice, index)))
+                {
+                    return column_x[column];
+                }
+                let at = column_at_tick(&self.columns, beat.start);
+                let (Some(column), Some(&x)) = (self.columns.get(at), column_x.get(at)) else {
+                    return column_x.first().copied().unwrap_or(0.0);
+                };
+                match (self.columns.get(at + 1), column_x.get(at + 1)) {
+                    (Some(next), Some(&next_x)) if next.start > column.start => {
+                        let progress = beat.start.saturating_sub(column.start) as f32
+                            / (next.start - column.start) as f32;
+                        x + (next_x - x) * progress.min(1.0)
+                    }
+                    _ => x,
+                }
+            })
+            .collect()
     }
 }
 

@@ -33,6 +33,35 @@ pub(super) enum Annotation {
     TremoloBar,
 }
 
+/// The effect annotations of a column, one per line above the staff, from
+/// `beat_x`; the wavy lines run along `span`.
+pub(super) fn draw_annotations(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    staff: Staff,
+    beat_x: f32,
+    span: f32,
+    annotations: &[Annotation],
+) {
+    let x = beat_x - 3.0;
+    for (line, annotation) in annotations.iter().enumerate() {
+        let y = staff.rows.effects_y() + line as f32 * ROW_EFFECT_LINE;
+        match *annotation {
+            Annotation::Text(content) => frame.fill_text(Text {
+                shaping: Auto,
+                content: content.to_string(),
+                color: colors.foreground,
+                size: ANNOTATION_TEXT_SIZE.into(),
+                position: Point::new(x, y),
+                ..Text::default()
+            }),
+            Annotation::Vibrato => draw_vibrato(frame, colors, x, y, span),
+            Annotation::Trill => draw_trill(frame, colors, x, y, span),
+            Annotation::TremoloBar => draw_tremolo_bar(frame, colors, x, y),
+        }
+    }
+}
+
 /// Position and fret of the next note on `string` after `beat_index`,
 /// within the measure, like TuxGuitar's `getNextNote`. Beats without a note
 /// on the string are skipped.
@@ -126,6 +155,9 @@ pub(super) struct BeatSlot<'a> {
     pub(super) width_scale: f32,
     /// The color of its fret numbers: the accent when it has the focus.
     pub(super) color: Color,
+    /// The row each of its notes is drawn on, when one differs from its
+    /// string (a drum note moved off a row already used); empty otherwise.
+    pub(super) rows: &'a [i8],
 }
 
 impl BeatSlot<'_> {
@@ -204,40 +236,13 @@ pub(super) fn draw_beat(
     }
 
     // draw notes for beat
-    for note in &beat.notes {
+    for (index, note) in beat.notes.iter().enumerate() {
         let bend_movements = note.effect.bend.as_ref().map(BendEffect::movements);
-        let show_bend_amplitude = bend_movements
+        let bend = bend_movements
             .as_deref()
-            .is_some_and(|movements| !multiple_bend_conflicts(beat, note, movements));
-        draw_note(
-            frame,
-            colors,
-            staff,
-            slot,
-            note,
-            bend_movements.as_deref(),
-            show_bend_amplitude,
-        );
-    }
-
-    // merge and display beat annotations (same position for all notes),
-    // one per line; the wavy lines run along the beat
-    let x = beat_position_x - 3.0;
-    for (line, annotation) in beat_annotations(beat).into_iter().enumerate() {
-        let y = rows.effects_y() + line as f32 * ROW_EFFECT_LINE;
-        match annotation {
-            Annotation::Text(content) => frame.fill_text(Text {
-                shaping: Auto,
-                content: content.to_string(),
-                color: colors.foreground,
-                size: ANNOTATION_TEXT_SIZE.into(),
-                position: Point::new(x, y),
-                ..Text::default()
-            }),
-            Annotation::Vibrato => draw_vibrato(frame, colors, x, y, slot.span),
-            Annotation::Trill => draw_trill(frame, colors, x, y, slot.span),
-            Annotation::TremoloBar => draw_tremolo_bar(frame, colors, x, y),
-        }
+            .map(|movements| (movements, !multiple_bend_conflicts(beat, note, movements)));
+        let row = slot.rows.get(index).copied().unwrap_or(note.string);
+        draw_note(frame, colors, staff, slot, note, row, bend);
     }
 
     // user-authored text attached to the beat (e.g. "Verse", "fill")
@@ -260,15 +265,16 @@ fn draw_note(
     staff: Staff,
     slot: &BeatSlot,
     note: &Note,
-    bend_movements: Option<&[i32]>,
-    show_bend_amplitude: bool,
+    row: i8,
+    // the bend arrows, and whether they show their amplitude
+    bend: Option<(&[i32], bool)>,
 ) {
     let beat_position_x = slot.x();
     let measure_start_y = staff.top;
     // note label (pushed down on the right string)
     let note_label = note_value(note);
     let note_label_len = note_label.chars().count();
-    let local_beat_position_y = (f32::from(note.string) - 1.0) * STRING_LINE_HEIGHT;
+    let local_beat_position_y = (f32::from(row) - 1.0) * STRING_LINE_HEIGHT;
     // center the notes with more than one char
     let note_position_x = beat_position_x + 3.0 - note_label_len as f32 / 2.0;
     let note_position_y = measure_start_y + local_beat_position_y - 5.0;
@@ -330,7 +336,7 @@ fn draw_note(
 
     // like TuxGuitar's paintEffects, the bend arrows are exclusive with the
     // inline slide/hammer glyphs: they would collide in the same span
-    if let Some(movements) = bend_movements {
+    if let Some((movements, show_bend_amplitude)) = bend {
         draw_bend(
             frame,
             colors,
