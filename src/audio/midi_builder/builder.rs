@@ -5,7 +5,7 @@ use crate::audio::playback_order::playback_tick;
 use crate::parser::song_parser::{
     Beat, BendEffect, BendPoint, GraceEffect, HarmonicEffect, HarmonicType, MIN_VELOCITY, Measure,
     MeasureHeader, MidiChannel, NATURAL_FREQUENCIES, Note, NoteType, QUARTER_TIME, SEMITONE_LENGTH,
-    Song, Track, TremoloBarEffect, VELOCITY_INCREMENT,
+    SlideType, Song, Track, TremoloBarEffect, VELOCITY_INCREMENT,
 };
 use std::rc::Rc;
 
@@ -20,6 +20,12 @@ use super::effects::{
 
 const DEFAULT_BEND: f32 = 64.0;
 const DEFAULT_BEND_SEMI_TONE: f32 = 2.75;
+/// How far a slide into or out of a note travels, in semitones.
+const SLIDE_IN_OUT_SEMITONES: i32 = 6;
+/// The longest a slide into or out of a note takes: a sixteenth.
+const SLIDE_IN_OUT_MAX_LENGTH: u32 = QUARTER_TIME / 4;
+/// The pitch wheel moves every this many ticks while sliding in or out.
+const SLIDE_IN_OUT_STEP: u32 = QUARTER_TIME / 32;
 
 // MIDI control change numbers. The coarse (MSB) controllers are the ones that
 // matter here: their LSB counterparts leave the coarse byte at its default,
@@ -354,7 +360,12 @@ impl MidiBuilder {
                 // slide target: next note played on the same string, with its
                 // tick expressed relative to the current playback entry since
                 // this measure's events are shifted by its own offset later
-                let slide_target = if note.effect.slide.is_some() {
+                let slide_target = if note
+                    .effect
+                    .slide
+                    .as_ref()
+                    .is_some_and(SlideType::reaches_next)
+                {
                     next_note_on_string(
                         track,
                         playback_order,
@@ -454,10 +465,26 @@ impl MidiBuilder {
             self.add_bend(output, *span, bend_effect);
         } else if let Some(tremolo_bar) = &note.effect.tremolo_bar {
             self.add_tremolo_bar(output, *span, tremolo_bar);
-        } else if note.effect.slide.is_some() {
-            // the target must lie after the (triplet-adjusted) note start
-            if let Some(target) = slide_target.filter(|(tick, _)| *tick > span.start) {
-                self.add_slide(output, span.start, note.value, target);
+        } else if let Some(slide) = &note.effect.slide {
+            match slide {
+                SlideType::ShiftSlideTo | SlideType::LegatoSlideTo => {
+                    // the target must lie after the (triplet-adjusted) note start
+                    if let Some(target) = slide_target.filter(|(tick, _)| *tick > span.start) {
+                        self.add_slide(output, span.start, note.value, target);
+                    }
+                }
+                SlideType::IntoFromBelow => {
+                    self.add_slide_in(output, *span, -SLIDE_IN_OUT_SEMITONES);
+                }
+                SlideType::IntoFromAbove => {
+                    self.add_slide_in(output, *span, SLIDE_IN_OUT_SEMITONES);
+                }
+                SlideType::OutDownwards => {
+                    self.add_slide_out(output, *span, -SLIDE_IN_OUT_SEMITONES);
+                }
+                SlideType::OutUpWards => {
+                    self.add_slide_out(output, *span, SLIDE_IN_OUT_SEMITONES);
+                }
             }
         } else if note.effect.vibrato {
             self.add_vibrato(output, *span);
@@ -558,6 +585,33 @@ impl MidiBuilder {
         }
         // normalise the bend
         self.add_pitch_bend(output, target_tick, DEFAULT_BEND as i32);
+    }
+
+    /// Start the note `offset` semitones away and glide to its pitch.
+    fn add_slide_in(&mut self, output: Output, span: Span, offset: i32) {
+        let end = span.start + slide_in_out_length(span);
+        self.add_pitch_glide(output, (span.start, offset), (end, 0));
+    }
+
+    /// Glide away from the note's pitch by `offset` semitones as it ends,
+    /// then recenter the wheel for the next note.
+    fn add_slide_out(&mut self, output: Output, span: Span, offset: i32) {
+        let start = span.end() - slide_in_out_length(span);
+        self.add_pitch_glide(output, (start, 0), (span.end(), offset));
+        self.add_pitch_bend(output, span.end(), DEFAULT_BEND as i32);
+    }
+
+    /// Move the pitch wheel in steps from one (tick, semitones) to another,
+    /// both ends included.
+    fn add_pitch_glide(&mut self, output: Output, from: (u32, i32), to: (u32, i32)) {
+        let length = to.0 - from.0;
+        let steps = (length / SLIDE_IN_OUT_STEP).max(1);
+        for step in 0..=steps {
+            let tick = from.0 + length * step / steps;
+            let semitones = from.1 as f32 + (to.1 - from.1) as f32 * step as f32 / steps as f32;
+            let value = DEFAULT_BEND + semitones * DEFAULT_BEND_SEMI_TONE * 2.0;
+            self.add_pitch_bend(output, tick, value as i32);
+        }
     }
 
     /// Play a harmonic: its octave below, softer, and for a semi harmonic the
@@ -888,6 +942,11 @@ fn route_effect_channels<'a>(channels: impl Iterator<Item = &'a mut MidiChannel>
     }
 }
 
+/// How long a slide into or out of a note takes: half the note at most.
+fn slide_in_out_length(span: Span) -> u32 {
+    (span.duration / 2).min(SLIDE_IN_OUT_MAX_LENGTH)
+}
+
 /// The key a harmonic sounds at, from the fretted key, like TuxGuitar.
 fn harmonic_key(harmonic: &HarmonicEffect, note_value: i16, initial_key: i32) -> i32 {
     match harmonic.kind {
@@ -1115,6 +1174,40 @@ mod tests {
         assert!(bends[..8].is_sorted_by_key(|(_, value)| *value));
         assert_eq!(bends[7], (QUARTER_TIME, 64 + 11));
         assert_eq!(bends[8], (QUARTER_TIME, 64));
+    }
+
+    #[test]
+    fn a_slide_into_the_note_starts_away_and_reaches_its_pitch() {
+        let mut builder = MidiBuilder::new();
+        builder.add_slide_in(OUTPUT, span(0, QUARTER_TIME), -SLIDE_IN_OUT_SEMITONES);
+        let bends = pitch_bends(&builder.events);
+        // six semitones below on the note start, back on pitch a sixteenth later
+        assert_eq!(bends.first(), Some(&(0, 64 - 33)));
+        assert_eq!(bends.last(), Some(&(QUARTER_TIME / 4, 64)));
+        assert!(bends.is_sorted_by_key(|(_, value)| *value));
+    }
+
+    #[test]
+    fn a_slide_out_of_the_note_leaves_its_pitch_as_it_ends() {
+        let mut builder = MidiBuilder::new();
+        builder.add_slide_out(OUTPUT, span(0, QUARTER_TIME), -SLIDE_IN_OUT_SEMITONES);
+        let bends = pitch_bends(&builder.events);
+        // on pitch until the last sixteenth, six semitones down at the end,
+        // then the wheel is recentered
+        let (glide, reset) = bends.split_at(bends.len() - 1);
+        assert_eq!(glide.first(), Some(&(QUARTER_TIME * 3 / 4, 64)));
+        assert_eq!(glide.last(), Some(&(QUARTER_TIME, 64 - 33)));
+        assert!(glide.is_sorted_by_key(|(_, value)| std::cmp::Reverse(*value)));
+        assert_eq!(reset, [(QUARTER_TIME, 64)]);
+    }
+
+    #[test]
+    fn a_short_note_slides_over_half_its_length() {
+        let mut builder = MidiBuilder::new();
+        builder.add_slide_out(OUTPUT, span(0, 100), SLIDE_IN_OUT_SEMITONES);
+        let bends = pitch_bends(&builder.events);
+        assert_eq!(bends.first(), Some(&(50, 64)));
+        assert_eq!(bends[bends.len() - 2], (100, 64 + 33));
     }
 
     #[test]

@@ -7,7 +7,7 @@ use super::chord::{
 };
 use super::rhythm::stem_beams;
 use crate::parser::song_parser::{
-    Beat, BeatStrokeDirection, Duration, Measure, MeasureHeader, QUARTER_TIME,
+    Beat, BeatStrokeDirection, Duration, Measure, MeasureHeader, Note, QUARTER_TIME, SlideType,
 };
 
 // Annotation rows are stacked above the staff, top to bottom, and each one
@@ -257,6 +257,8 @@ pub(super) const NOTE_DIGIT_WIDTH: f32 = 5.5;
 pub(super) const GRACE_DIGIT_WIDTH: f32 = 4.0;
 // Gap kept on both sides of a grace note.
 pub(super) const GRACE_GAP: f32 = 1.5;
+// Width of the line of a slide into a note, drawn before it.
+pub(super) const SLIDE_IN_WIDTH: f32 = 7.0;
 
 pub(super) const HALF_BEAT_LENGTH: f32 = BEAT_LENGTH / 2.0 + 1.0;
 
@@ -327,8 +329,8 @@ pub(super) fn measure_height(rows: RowSpacing, string_count: usize) -> f32 {
 }
 
 /// Natural width of a beat: base length, room for bend arrows (like
-/// TuxGuitar's `getEffectWidth`), and room for the grace note that the
-/// next beat draws in the gap before it.
+/// TuxGuitar's `getEffectWidth`), and room for the grace notes and slide-ins
+/// that the next beat draws in the gap before it.
 pub(super) fn beat_natural_width(
     beat: &Beat,
     next_beat: Option<&Beat>,
@@ -345,7 +347,7 @@ pub(super) fn beat_natural_width(
         .filter_map(|n| n.effect.bend.as_ref())
         .map(|b| b.movements().len() as f32 * BEND_ARROW_WIDTH)
         .fold(0.0, f32::max);
-    let grace_extra = next_beat.map_or(0.0, grace_gap_width);
+    let lead_in_extra = next_beat.map_or(0.0, lead_in_width);
     // a diagram is wider than a beat, so it claims the room it needs
     let diagram_extra = beat
         .effect
@@ -369,16 +371,29 @@ pub(super) fn beat_natural_width(
     let text_extra = next_beat
         .filter(|next| !next.text.is_empty())
         .map_or(0.0, |_| label_extra_width(&beat.text, base));
-    base + bend_extra + grace_extra + chord_extra + text_extra
+    base + bend_extra + lead_in_extra + chord_extra + text_extra
 }
 
-/// Room the grace notes of a beat need in the gap before it.
-pub(super) fn grace_gap_width(beat: &Beat) -> f32 {
+/// Room the grace notes and slide-ins of a beat need in the gap before it.
+pub(super) fn lead_in_width(beat: &Beat) -> f32 {
     beat.notes
         .iter()
-        .filter_map(|note| note.effect.grace.as_ref())
-        .map(|grace| {
-            grace_label(grace).chars().count() as f32 * GRACE_DIGIT_WIDTH + GRACE_GAP * 2.0
-        })
+        .map(|note| grace_width(note) + slide_in_width(note))
         .fold(0.0, f32::max)
+}
+
+/// Room a note's grace note takes before it, gaps included.
+pub(super) fn grace_width(note: &Note) -> f32 {
+    note.effect.grace.as_ref().map_or(0.0, |grace| {
+        grace_label(grace).chars().count() as f32 * GRACE_DIGIT_WIDTH + GRACE_GAP * 2.0
+    })
+}
+
+/// Room a note's slide-in line takes before it, and before its grace note.
+fn slide_in_width(note: &Note) -> f32 {
+    if note.effect.slide.as_ref().is_some_and(SlideType::is_into) {
+        SLIDE_IN_WIDTH + GRACE_GAP
+    } else {
+        0.0
+    }
 }

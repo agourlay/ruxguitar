@@ -2,14 +2,16 @@
 
 use super::chord::{CHORD_DIAGRAM_HEIGHT, draw_chord_diagram, has_diagram};
 use super::effects::{
-    draw_bend, draw_hammer_arc, draw_pick_stroke, draw_slide, draw_staccato_dot, draw_stroke_arrow,
-    draw_tie_arc, draw_tremolo_picking,
+    draw_bend, draw_hammer_arc, draw_pick_stroke, draw_slide, draw_slide_in, draw_slide_out,
+    draw_staccato_dot, draw_stroke_arrow, draw_tie_arc, draw_tremolo_picking,
 };
-use super::layout::{GRACE_DIGIT_WIDTH, GRACE_GAP, NOTE_DIGIT_WIDTH, STRING_LINE_HEIGHT, Staff};
+use super::layout::{
+    GRACE_DIGIT_WIDTH, GRACE_GAP, NOTE_DIGIT_WIDTH, STRING_LINE_HEIGHT, Staff, grace_width,
+};
 use super::rhythm::{draw_rest, is_rest};
 use crate::parser::song_parser::{
     Beat, BeatStrokeDirection, BendEffect, GraceEffect, HarmonicType, Note, NoteEffect, NoteType,
-    SlapEffect,
+    SlapEffect, SlideType,
 };
 use crate::ui::utils::TablatureColors;
 use iced::advanced::text::Shaping::Auto;
@@ -297,6 +299,19 @@ fn draw_note(
         frame.fill_text(grace_text);
     }
 
+    // a slide into the note comes from before it, and before its grace note
+    if let Some(slide) = note.effect.slide.as_ref().filter(|slide| slide.is_into()) {
+        let note_half = note_label_len as f32 * NOTE_DIGIT_WIDTH / 2.0;
+        let end_x = note_position_x - note_half - grace_width(note) - GRACE_GAP;
+        draw_slide_in(
+            frame,
+            colors,
+            end_x,
+            string_y,
+            *slide == SlideType::IntoFromBelow,
+        );
+    }
+
     // like TuxGuitar's paintEffects, the bend arrows are exclusive with the
     // inline slide/hammer glyphs: they would collide in the same span
     if let Some(movements) = bend_movements {
@@ -313,15 +328,27 @@ fn draw_note(
         // slides and hammers reach for the note they land on, like
         // TuxGuitar's paintSlide and paintHammer
         let next_note = next_note_on_string(slot.beats, slot.positions, slot.index, note.string);
-        if note.effect.slide.is_some() {
-            draw_slide(
-                frame,
-                colors,
-                note_position_x,
-                string_y,
-                next_note.map(|(x, value)| (x + 3.0, value)),
-                note.value,
-            );
+        let slide = note.effect.slide.as_ref().filter(|slide| !slide.is_into());
+        if let Some(slide) = slide {
+            match slide {
+                SlideType::OutDownwards | SlideType::OutUpWards => draw_slide_out(
+                    frame,
+                    colors,
+                    note_position_x,
+                    string_y,
+                    *slide == SlideType::OutDownwards,
+                ),
+                SlideType::ShiftSlideTo | SlideType::LegatoSlideTo => draw_slide(
+                    frame,
+                    colors,
+                    note_position_x,
+                    string_y,
+                    next_note.map(|(x, value)| (x + 3.0, value)),
+                    note.value,
+                ),
+                // drawn before the note
+                SlideType::IntoFromBelow | SlideType::IntoFromAbove => {}
+            }
         } else if note.effect.hammer {
             draw_hammer_arc(
                 frame,

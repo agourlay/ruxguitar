@@ -4,8 +4,8 @@
 
 use super::builder::MeasureContext;
 use crate::parser::song_parser::{
-    Beat, BeatStrokeDirection, MIN_VELOCITY, MidiChannel, Note, NoteType, QUARTER_TIME, Track,
-    TripletFeel, VELOCITY_INCREMENT,
+    Beat, BeatStrokeDirection, MIN_VELOCITY, MidiChannel, Note, NoteType, QUARTER_TIME, SlideType,
+    Track, TripletFeel, VELOCITY_INCREMENT,
 };
 
 pub(super) const DEFAULT_DURATION_DEAD: u32 = 30;
@@ -19,7 +19,9 @@ pub(super) fn apply_velocity_effect(
     let effect = &note.effect;
     let mut velocity = note.velocity;
 
-    if !midi_channel.is_percussion() && previous_note.is_some_and(|n| n.effect.hammer) {
+    // a hammer-on, pull-off or legato slide reaches the note without picking it
+    let legato = |n: &Note| n.effect.hammer || n.effect.slide == Some(SlideType::LegatoSlideTo);
+    if !midi_channel.is_percussion() && previous_note.is_some_and(legato) {
         velocity = MIN_VELOCITY.max(velocity - 25);
     }
 
@@ -421,6 +423,19 @@ mod tests {
             DEFAULT_VELOCITY < accent && accent < heavy,
             "{accent} {heavy}"
         );
+    }
+
+    #[test]
+    fn a_note_reached_by_a_legato_slide_is_softer() {
+        let guitar = channel(DEFAULT_BANK);
+        let target = note(1, NoteType::Normal);
+        let mut previous = note(1, NoteType::Normal);
+        previous.effect.slide = Some(SlideType::ShiftSlideTo);
+        let picked = apply_velocity_effect(&target, Some(&previous), &guitar);
+        previous.effect.slide = Some(SlideType::LegatoSlideTo);
+        let legato = apply_velocity_effect(&target, Some(&previous), &guitar);
+        assert_eq!(picked, DEFAULT_VELOCITY);
+        assert!(legato < picked);
     }
 
     #[test]

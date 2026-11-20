@@ -3,7 +3,7 @@
 use super::beat::{BeatSlot, draw_beat};
 use super::layout::{
     BEAT_LENGTH, HALF_BEAT_LENGTH, MEASURE_NOTES_PADDING, MIN_BEAT_WIDTH, MIN_MEASURE_WIDTH,
-    RowSpacing, Staff, beat_base_width, beat_natural_width, grace_gap_width, lyric_extra_width,
+    RowSpacing, Staff, beat_base_width, beat_natural_width, lead_in_width, lyric_extra_width,
     measure_height, spacing_for_quarter,
 };
 use super::rhythm::{draw_rhythm, draw_tuplet_bracket, tuplet_runs};
@@ -415,13 +415,13 @@ impl CanvasMeasure {
         for (index, natural_width) in self.beat_widths.iter().enumerate() {
             let beat_width = natural_width * width_scale;
             // the inline effect glyphs may not reach into the space the
-            // next beat's grace note occupies
-            let next_grace = beats.get(index + 1).map_or(0.0, grace_gap_width);
+            // next beat's grace notes and slide-ins occupy
+            let next_lead_in = beats.get(index + 1).map_or(0.0, lead_in_width);
             let slot = BeatSlot {
                 beats,
                 positions: &positions,
                 index,
-                span: beat_width - next_grace,
+                span: beat_width - next_lead_in,
                 width_scale,
                 color: if self.is_focused && index == self.focused_beat {
                     colors.accent

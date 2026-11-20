@@ -599,6 +599,17 @@ impl SlideType {
             .map_or(Self::ShiftSlideTo, |(_, slide)| slide.clone())
     }
 
+    /// Whether the slide glides to the next note on the string, rather than
+    /// into or out of the note on its own.
+    pub const fn reaches_next(&self) -> bool {
+        matches!(self, Self::ShiftSlideTo | Self::LegatoSlideTo)
+    }
+
+    /// Whether the slide leads into the note from below or above.
+    pub const fn is_into(&self) -> bool {
+        matches!(self, Self::IntoFromBelow | Self::IntoFromAbove)
+    }
+
     /// The slide named by a GP4 ordinal, shifting when it is unknown.
     pub const fn from_ordinal(ordinal: i8) -> Self {
         match ordinal {

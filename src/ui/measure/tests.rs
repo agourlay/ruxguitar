@@ -7,14 +7,14 @@ use super::chord::has_diagram;
 use super::layout::{
     BEAT_LENGTH, DURATION_WIDTHS, LABEL_CHAR_WIDTH, LABEL_GAP, LABEL_MAX_EXTRA,
     MEASURE_NOTES_PADDING, MIN_BEAT_WIDTH, ROW_CHORD, ROW_LYRIC, ROW_MARKER, RowSpacing,
-    beat_natural_width, grace_gap_width, label_extra_width, lyric_extra_width, spacing_for_quarter,
+    beat_natural_width, label_extra_width, lead_in_width, lyric_extra_width, spacing_for_quarter,
 };
 use super::rhythm::{
     MAX_BEAMS, beam_leans_right, beam_runs, division_length, is_rest, stem_beams, tuplet_runs,
 };
 use super::staff::{BarEnd, BarStart, CANVAS_MARGIN, focus_box_top};
 use crate::parser::song_parser::{
-    Beat, Chord, Duration, KeySignature, MeasureHeader, Note, NoteEffect, QUARTER_TIME,
+    Beat, Chord, Duration, KeySignature, MeasureHeader, Note, NoteEffect, QUARTER_TIME, SlideType,
 };
 use crate::parser::song_parser::{
     BeatEffects, BendEffect, BendPoint, GraceEffect, Measure, NoteType, QUARTER, Song, Track, Voice,
@@ -695,7 +695,7 @@ fn a_note_reads_as_its_fret_and_kind() {
 
 #[test]
 fn a_dead_grace_note_takes_less_room_than_a_two_digit_one() {
-    assert_eq!(grace_gap_width(&beat_with(vec![note_on(1, 0)])), 0.0);
+    assert_eq!(lead_in_width(&beat_with(vec![note_on(1, 0)])), 0.0);
     let graced = |fret: i8, is_dead: bool| {
         let mut note = note_on(1, 0);
         note.effect.grace = Some(GraceEffect {
@@ -705,7 +705,27 @@ fn a_dead_grace_note_takes_less_room_than_a_two_digit_one() {
         });
         beat_with(vec![note])
     };
-    assert!(grace_gap_width(&graced(0, true)) < grace_gap_width(&graced(12, false)));
+    assert!(lead_in_width(&graced(0, true)) < lead_in_width(&graced(12, false)));
+}
+
+#[test]
+fn a_slide_in_takes_room_before_the_beat_and_its_grace_note() {
+    let with = |slide: Option<SlideType>, graced: bool| {
+        let mut note = note_on(1, 5);
+        note.effect.slide = slide;
+        if graced {
+            note.effect.grace = Some(GraceEffect::default());
+        }
+        lead_in_width(&beat_with(vec![note]))
+    };
+    let slide_in = with(Some(SlideType::IntoFromBelow), false);
+    let grace = with(None, true);
+    assert!(slide_in > 0.0);
+    // a slide out, or to the next note, is drawn after the note
+    assert_eq!(with(Some(SlideType::OutDownwards), false), 0.0);
+    assert_eq!(with(Some(SlideType::ShiftSlideTo), false), 0.0);
+    // both are drawn side by side
+    assert_eq!(with(Some(SlideType::IntoFromAbove), true), slide_in + grace);
 }
 
 fn bent(string: i8, from: i8, to: i8) -> Note {

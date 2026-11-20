@@ -1,7 +1,7 @@
 //! Note and beat effects drawn on the staff: slides, arcs, bends, strokes and tremolo.
 
 use super::beat::BeatSlot;
-use super::layout::{BEND_ARROW_WIDTH, STRING_LINE_HEIGHT, Staff};
+use super::layout::{BEND_ARROW_WIDTH, SLIDE_IN_WIDTH, STRING_LINE_HEIGHT, Staff};
 use crate::parser::song_parser::{Beat, BeatStrokeDirection, TremoloPickingEffect};
 use crate::ui::utils::TablatureColors;
 use iced::advanced::text::Shaping::Auto;
@@ -44,6 +44,60 @@ pub(super) fn draw_slide(
     frame.stroke(
         &Path::line(Point::new(start_x, start_y), Point::new(end_x, end_y)),
         stroke,
+    );
+}
+
+/// The sloped stub of a slide out of a note, falling or rising after it.
+pub(super) fn draw_slide_out(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    note_position_x: f32,
+    string_y: f32,
+    downwards: bool,
+) {
+    let start_x = note_position_x + 5.0;
+    draw_slide_line(frame, colors, start_x, start_x + 10.0, string_y, downwards);
+}
+
+/// The sloped line of a slide into a note, ending at `end_x` just before it:
+/// rising from below or falling from above.
+pub(super) fn draw_slide_in(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    end_x: f32,
+    string_y: f32,
+    from_below: bool,
+) {
+    draw_slide_line(
+        frame,
+        colors,
+        end_x - SLIDE_IN_WIDTH,
+        end_x,
+        string_y,
+        !from_below,
+    );
+}
+
+/// A short slide line across the string, falling or rising from left to right.
+fn draw_slide_line(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    start_x: f32,
+    end_x: f32,
+    string_y: f32,
+    falling: bool,
+) {
+    const Y_MOVE: f32 = STRING_LINE_HEIGHT / 3.5;
+    let (start_y, end_y) = if falling {
+        (string_y - Y_MOVE, string_y + Y_MOVE)
+    } else {
+        (string_y + Y_MOVE, string_y - Y_MOVE)
+    };
+    frame.stroke(
+        &Path::line(Point::new(start_x, start_y), Point::new(end_x, end_y)),
+        Stroke::default()
+            .with_width(0.9)
+            .with_color(colors.foreground),
     );
 }
 
