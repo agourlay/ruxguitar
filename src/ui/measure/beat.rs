@@ -2,11 +2,13 @@
 
 use super::chord::{CHORD_DIAGRAM_HEIGHT, draw_chord_diagram, has_diagram};
 use super::effects::{
-    draw_bend, draw_hammer_arc, draw_pick_stroke, draw_slide, draw_slide_in, draw_slide_out,
-    draw_staccato_dot, draw_stroke_arrow, draw_tie_arc, draw_tremolo_picking,
+    ANNOTATION_TEXT_SIZE, draw_bend, draw_hammer_arc, draw_pick_stroke, draw_slide, draw_slide_in,
+    draw_slide_out, draw_staccato_dot, draw_stroke_arrow, draw_tie_arc, draw_tremolo_bar,
+    draw_tremolo_picking, draw_trill, draw_vibrato,
 };
 use super::layout::{
-    GRACE_DIGIT_WIDTH, GRACE_GAP, NOTE_DIGIT_WIDTH, STRING_LINE_HEIGHT, Staff, grace_width,
+    GRACE_DIGIT_WIDTH, GRACE_GAP, NOTE_DIGIT_WIDTH, ROW_EFFECT_LINE, STRING_LINE_HEIGHT, Staff,
+    grace_width,
 };
 use super::rhythm::{draw_rest, is_rest};
 use crate::parser::song_parser::{
@@ -19,7 +21,17 @@ use iced::widget::canvas::{Frame, Text};
 use iced::widget::text::Alignment;
 use iced::{Color, Point, Renderer};
 
-const VIBRATO: &str = "\u{301C}\u{301C}"; // 〜〜 https://unicodeplus.com/U+301C
+/// An effect annotation stacked above a beat, one per line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Annotation {
+    Text(&'static str),
+    /// A wavy line along the beat, like TuxGuitar's `paintVibrato`.
+    Vibrato,
+    /// "Tr" followed by a wavy line, like TuxGuitar's `paintTrill`.
+    Trill,
+    /// A small V, like TuxGuitar's `paintTremoloBar`.
+    TremoloBar,
+}
 
 /// Position and fret of the next note on `string` after `beat_index`,
 /// within the measure, like TuxGuitar's `getNextNote`. Beats without a note
@@ -64,8 +76,8 @@ pub(super) fn tied_from_note_x(
 
 /// Effect annotations stacked above a beat, deduplicated across its notes.
 /// Shared by the row sizing and the drawing so both agree on the height.
-pub(super) fn beat_annotations(beat: &Beat) -> Vec<&'static str> {
-    let mut annotations: Vec<&'static str> = beat
+pub(super) fn beat_annotations(beat: &Beat) -> Vec<Annotation> {
+    let mut annotations: Vec<Annotation> = beat
         .notes
         .iter()
         .flat_map(|note| above_note_effect_annotation(&note.effect))
@@ -208,20 +220,24 @@ pub(super) fn draw_beat(
         );
     }
 
-    // merge and display beat annotations (same position for all notes)
-    let annotations = beat_annotations(beat);
-    if !annotations.is_empty() {
-        let merged_annotations = annotations.join("\n");
-        let y_position = rows.effects_y();
-        let note_effect_text = Text {
-            shaping: Auto,
-            content: merged_annotations,
-            color: colors.foreground,
-            size: 9.0.into(),
-            position: Point::new(beat_position_x - 3.0, y_position),
-            ..Text::default()
-        };
-        frame.fill_text(note_effect_text);
+    // merge and display beat annotations (same position for all notes),
+    // one per line; the wavy lines run along the beat
+    let x = beat_position_x - 3.0;
+    for (line, annotation) in beat_annotations(beat).into_iter().enumerate() {
+        let y = rows.effects_y() + line as f32 * ROW_EFFECT_LINE;
+        match annotation {
+            Annotation::Text(content) => frame.fill_text(Text {
+                shaping: Auto,
+                content: content.to_string(),
+                color: colors.foreground,
+                size: ANNOTATION_TEXT_SIZE.into(),
+                position: Point::new(x, y),
+                ..Text::default()
+            }),
+            Annotation::Vibrato => draw_vibrato(frame, colors, x, y, slot.span),
+            Annotation::Trill => draw_trill(frame, colors, x, y, slot.span),
+            Annotation::TremoloBar => draw_tremolo_bar(frame, colors, x, y),
+        }
     }
 
     // user-authored text attached to the beat (e.g. "Verse", "fill")
@@ -362,46 +378,47 @@ fn draw_note(
 }
 
 // Similar to `https://www.tuxguitar.app/files/1.6.0/desktop/help/edit_effects.html`
-pub(super) fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<&'static str> {
-    let mut annotations: Vec<&'static str> = vec![];
+pub(super) fn above_note_effect_annotation(note_effect: &NoteEffect) -> Vec<Annotation> {
+    let mut texts: Vec<&'static str> = vec![];
     if note_effect.accentuated_note {
-        annotations.push(">");
+        texts.push(">");
     }
     if note_effect.heavy_accentuated_note {
-        annotations.push("^");
+        texts.push("^");
     }
     if note_effect.palm_mute {
-        annotations.push("P.M");
+        texts.push("P.M");
     }
     if note_effect.let_ring {
-        annotations.push("L.R");
+        texts.push("L.R");
     }
     if note_effect.fade_in {
-        annotations.push("<");
+        texts.push("<");
     }
     if let Some(harmonic) = &note_effect.harmonic {
         match harmonic.kind {
-            HarmonicType::Natural => annotations.push("N.H"),
-            HarmonicType::Artificial => annotations.push("A.H"),
-            HarmonicType::Tapped => annotations.push("T.H"),
-            HarmonicType::Pinch => annotations.push("P.H"),
-            HarmonicType::Semi => annotations.push("S.H"),
+            HarmonicType::Natural => texts.push("N.H"),
+            HarmonicType::Artificial => texts.push("A.H"),
+            HarmonicType::Tapped => texts.push("T.H"),
+            HarmonicType::Pinch => texts.push("P.H"),
+            HarmonicType::Semi => texts.push("S.H"),
         }
     }
+    match note_effect.slap {
+        SlapEffect::Tapping => texts.push("T"),
+        SlapEffect::Slapping => texts.push("S"),
+        SlapEffect::Popping => texts.push("P"),
+        SlapEffect::None => {}
+    }
+    let mut annotations: Vec<Annotation> = texts.into_iter().map(Annotation::Text).collect();
     if note_effect.vibrato {
-        annotations.push(VIBRATO);
+        annotations.push(Annotation::Vibrato);
     }
     if note_effect.trill.is_some() {
-        annotations.push("Tr");
+        annotations.push(Annotation::Trill);
     }
     if note_effect.tremolo_bar.is_some() {
-        annotations.push("T.B");
-    }
-    match note_effect.slap {
-        SlapEffect::Tapping => annotations.push("T"),
-        SlapEffect::Slapping => annotations.push("S"),
-        SlapEffect::Popping => annotations.push("P"),
-        SlapEffect::None => {}
+        annotations.push(Annotation::TremoloBar);
     }
     annotations
 }

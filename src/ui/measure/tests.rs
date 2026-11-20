@@ -1,5 +1,6 @@
 use super::beat::{
-    beat_annotations, multiple_bend_conflicts, next_note_on_string, note_value, tied_from_note_x,
+    Annotation, beat_annotations, multiple_bend_conflicts, next_note_on_string, note_value,
+    tied_from_note_x,
 };
 use super::canvas_measure::shows_key_signature;
 use super::canvas_measure::{CanvasMeasure, beat_x_positions};
@@ -17,7 +18,8 @@ use crate::parser::song_parser::{
     Beat, Chord, Duration, KeySignature, MeasureHeader, Note, NoteEffect, QUARTER_TIME, SlideType,
 };
 use crate::parser::song_parser::{
-    BeatEffects, BendEffect, BendPoint, GraceEffect, Measure, NoteType, QUARTER, Song, Track, Voice,
+    BeatEffects, BendEffect, BendPoint, GraceEffect, Measure, NoteType, QUARTER, Song, Track,
+    TremoloBarEffect, TrillEffect, Voice,
 };
 use std::rc::Rc;
 
@@ -675,7 +677,28 @@ fn shared_annotations_are_listed_once_in_order() {
     ringing.effect.let_ring = true;
     assert_eq!(
         beat_annotations(&beat_with(vec![muted, ringing])),
-        ["L.R", "P.M"]
+        [Annotation::Text("L.R"), Annotation::Text("P.M")]
+    );
+}
+
+#[test]
+fn vibrato_trill_and_tremolo_bar_are_drawn_after_the_text_annotations() {
+    let mut note = note_on(1, 0);
+    note.effect.palm_mute = true;
+    note.effect.vibrato = true;
+    note.effect.tremolo_bar = Some(TremoloBarEffect::default());
+    let mut trilled = note_on(2, 0);
+    trilled.effect.trill = Some(TrillEffect::default());
+    trilled.effect.vibrato = true;
+    // one line each, shared ones listed once
+    assert_eq!(
+        beat_annotations(&beat_with(vec![note, trilled])),
+        [
+            Annotation::Text("P.M"),
+            Annotation::Vibrato,
+            Annotation::Trill,
+            Annotation::TremoloBar
+        ]
     );
 }
 

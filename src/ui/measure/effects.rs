@@ -101,6 +101,100 @@ fn draw_slide_line(
     );
 }
 
+/// Size of the text annotations stacked above a beat.
+pub(super) const ANNOTATION_TEXT_SIZE: f32 = 9.0;
+/// Length of one wave of a vibrato or trill line.
+const WAVE_LENGTH: f32 = 6.0;
+/// Room "Tr" takes before the wavy line of a trill.
+const TRILL_LABEL_WIDTH: f32 = 11.0;
+
+/// The wavy line of a vibrato, along `width`, on the annotation line at `y`.
+/// A vibrato on a beat narrower than a wave still gets one whole wave.
+pub(super) fn draw_vibrato(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    x: f32,
+    y: f32,
+    width: f32,
+) {
+    draw_wave(frame, colors, x, y, width);
+}
+
+/// "Tr" followed by a wavy line along the rest of `width`.
+pub(super) fn draw_trill(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    x: f32,
+    y: f32,
+    width: f32,
+) {
+    frame.fill_text(Text {
+        shaping: Auto,
+        content: "Tr".to_string(),
+        color: colors.foreground,
+        size: ANNOTATION_TEXT_SIZE.into(),
+        position: Point::new(x, y),
+        ..Text::default()
+    });
+    // on a beat too narrow for a whole wave after the label, "Tr" stands alone
+    let wave_width = width - TRILL_LABEL_WIDTH;
+    if wave_width >= WAVE_LENGTH {
+        draw_wave(frame, colors, x + TRILL_LABEL_WIDTH, y, wave_width);
+    }
+}
+
+/// A wavy line of whole waves, as many as fit `width` (at least one).
+fn draw_wave(frame: &mut Frame<Renderer>, colors: TablatureColors, x: f32, y: f32, width: f32) {
+    const AMPLITUDE: f32 = 2.0;
+    let middle = y + 6.0;
+    let waves = (width / WAVE_LENGTH).floor().max(1.0) as usize;
+    let half = WAVE_LENGTH / 2.0;
+    let wave = Path::new(|p| {
+        p.move_to(Point::new(x, middle));
+        for half_wave in 0..waves * 2 {
+            let start = x + half_wave as f32 * half;
+            let peak = if half_wave % 2 == 0 {
+                -AMPLITUDE
+            } else {
+                AMPLITUDE
+            };
+            // a quadratic curve reaches half way to its control point
+            p.quadratic_curve_to(
+                Point::new(start + half / 2.0, middle + peak * 2.0),
+                Point::new(start + half, middle),
+            );
+        }
+    });
+    frame.stroke(
+        &wave,
+        Stroke::default()
+            .with_width(1.0)
+            .with_color(colors.foreground),
+    );
+}
+
+/// The small V of a tremolo bar.
+pub(super) fn draw_tremolo_bar(
+    frame: &mut Frame<Renderer>,
+    colors: TablatureColors,
+    x: f32,
+    y: f32,
+) {
+    let (left, right) = (x + 1.0, x + 8.0);
+    let (top, bottom) = (y + 2.0, y + 10.0);
+    let v = Path::new(|p| {
+        p.move_to(Point::new(left, top));
+        p.line_to(Point::new((left + right) / 2.0, bottom));
+        p.line_to(Point::new(right, top));
+    });
+    frame.stroke(
+        &v,
+        Stroke::default()
+            .with_width(0.9)
+            .with_color(colors.foreground),
+    );
+}
+
 /// The slur of a hammer-on or pull-off, arcing over to the next note.
 pub(super) fn draw_hammer_arc(
     frame: &mut Frame<Renderer>,
