@@ -480,11 +480,13 @@ impl LineTracker {
         let mut current_line = 1;
         let mut horizontal_cursor = 0.0;
         for (i, &width) in widths.iter().enumerate() {
-            horizontal_cursor += width;
-            if horizontal_cursor > tablature_container_width {
+            // a measure that overflows starts the next line, unless the
+            // current one is still empty: then it is too wide for any line
+            if horizontal_cursor > 0.0 && horizontal_cursor + width > tablature_container_width {
                 current_line += 1;
-                horizontal_cursor = width;
+                horizontal_cursor = 0.0;
             }
+            horizontal_cursor += width;
             line_tracker.measure_to_line[i] = current_line;
         }
         line_tracker.last_line_fits = horizontal_cursor <= tablature_container_width;
@@ -753,6 +755,15 @@ mod tests {
         assert_eq!(tracker.get_line(0), 1);
         assert_eq!(tracker.get_line(1), 2);
         assert_eq!(tracker.get_line(2), 3);
+    }
+
+    #[test]
+    fn a_first_measure_too_wide_for_the_line_stays_on_the_first_line() {
+        let widths = vec![300.0, 50.0];
+        let tracker = LineTracker::make_from_widths(&widths, 200.0);
+        assert_eq!(tracker.get_line(0), 1);
+        assert_eq!(tracker.get_line(1), 2);
+        assert_eq!(tracker.line_count(), Some(2));
     }
 
     #[test]
