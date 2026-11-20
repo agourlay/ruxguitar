@@ -35,9 +35,7 @@ const CC_VOLUME: i32 = 0x07;
 const CC_PAN: i32 = 0x0A;
 const CC_EXPRESSION: i32 = 0x0B;
 const CC_REVERB: i32 = 0x5B;
-const CC_TREMOLO: i32 = 0x5C;
 const CC_CHORUS: i32 = 0x5D;
-const CC_PHASER: i32 = 0x5F;
 
 /// Pseudo track id carried by metronome events, so playback can gate them
 /// on the metronome toggle instead of the regular mute/solo filtering.
@@ -152,6 +150,7 @@ impl MidiBuilder {
             .enumerate()
             .map(|(track_id, track)| track_midi_channel(song, track_id, track))
             .collect();
+        route_main_channels(track_channels.iter_mut().flatten());
         route_effect_channels(track_channels.iter_mut().flatten());
         for (track_id, track) in song.tracks.iter().enumerate() {
             log::debug!("building events for track {track_id}");
@@ -839,9 +838,8 @@ impl MidiBuilder {
         control(CC_EXPRESSION, 127);
         control(CC_CHORUS, to_channel_short(midi_channel.chorus));
         control(CC_REVERB, to_channel_short(midi_channel.reverb));
-        control(CC_PHASER, to_channel_short(midi_channel.phaser));
-        control(CC_TREMOLO, to_channel_short(midi_channel.tremolo));
-        control(CC_BANK_SELECT, i32::from(midi_channel.bank));
+        // phaser and tremolo are left out: the synthesizer has neither
+        control(CC_BANK_SELECT, bank_select(midi_channel));
         self.add_program_selection(output, tick, midi_channel.instrument);
         self.add_pitch_bend_range(output, tick);
     }
@@ -881,17 +879,59 @@ fn track_midi_channel(song: &Song, track_id: usize, track: &Track) -> Option<Mid
         );
         return None;
     };
-    // the synthesizer only has 16 channels: clamp out-of-range channels
-    // (GP files can reference more) instead of crashing
-    let mut midi_channel = midi_channel.clone();
-    if midi_channel.channel_id >= MAX_CHANNELS {
-        log::warn!(
-            "clamping out-of-range midi channel {} for track {track_id}",
-            midi_channel.channel_id
-        );
-        midi_channel.channel_id = MAX_CHANNELS - 1;
+    Some(midi_channel.clone())
+}
+
+/// The bank select value of a channel. A synthesizer plays the percussion
+/// channel from the drum bank (128) on its own and adds the selected bank to
+/// it, so drums select 0; other banks are capped to a valid MIDI value.
+fn bank_select(midi_channel: &MidiChannel) -> i32 {
+    if midi_channel.is_percussion() {
+        0
+    } else {
+        i32::from(midi_channel.bank.min(127))
     }
-    Some(midi_channel)
+}
+
+/// Bring every track's main channel within the synthesizer's 16 channels.
+///
+/// GP files can use up to 64 channels (four ports of 16). An out-of-range
+/// channel takes the first channel no other track uses, and the tracks sharing
+/// it keep sharing its replacement. When none is left, it falls back to the
+/// last channel, sharing it with the tracks already there.
+fn route_main_channels<'a>(channels: impl Iterator<Item = &'a mut MidiChannel>) {
+    let mut channels: Vec<&mut MidiChannel> = channels.collect();
+    let mut taken: Vec<u8> = channels
+        .iter()
+        .map(|c| c.channel_id)
+        .filter(|&c| c < MAX_CHANNELS)
+        .collect();
+    taken.push(PERCUSSION_CHANNEL);
+
+    // (file channel, synthesizer channel) of the out-of-range channels
+    let mut moved: Vec<(u8, u8)> = Vec::new();
+    for channel in &mut channels {
+        let file_channel = channel.channel_id;
+        if file_channel < MAX_CHANNELS {
+            continue;
+        }
+        let routed = if let Some(&(_, routed)) = moved.iter().find(|(f, _)| *f == file_channel) {
+            routed
+        } else {
+            let routed = if channel.is_percussion() {
+                PERCUSSION_CHANNEL
+            } else if let Some(free) = (0..MAX_CHANNELS).find(|c| !taken.contains(c)) {
+                taken.push(free);
+                free
+            } else {
+                log::warn!("no free midi channel left for channel {file_channel}");
+                MAX_CHANNELS - 1
+            };
+            moved.push((file_channel, routed));
+            routed
+        };
+        channel.channel_id = routed;
+    }
 }
 
 /// Set the effect channel of each track's channel.
@@ -1248,6 +1288,60 @@ mod tests {
             .iter()
             .map(|c| (c.channel_id, c.effect_channel_id))
             .collect()
+    }
+
+    #[test]
+    fn drums_select_their_kit_through_the_percussion_channel() {
+        // the synthesizer adds the drum bank (128) on the percussion channel
+        assert_eq!(bank_select(&file_channel(PERCUSSION_CHANNEL, 0)), 0);
+        assert_eq!(bank_select(&file_channel(0, 1)), 0);
+        let mut out_of_range = file_channel(0, 1);
+        out_of_range.bank = 200;
+        assert_eq!(bank_select(&out_of_range), 127);
+    }
+
+    #[test]
+    fn the_channel_setup_has_no_effects_the_synthesizer_ignores() {
+        let mut builder = MidiBuilder::new();
+        builder.add_track_channel_midi_control(0, &file_channel(PERCUSSION_CHANNEL, 0));
+        let controllers: Vec<(i32, i32)> = builder
+            .events
+            .iter()
+            .filter_map(|e| match e.event {
+                MidiEventType::MidiMessage(_, 0xB0, controller, value) => Some((controller, value)),
+                _ => None,
+            })
+            .collect();
+        assert!(controllers.contains(&(CC_BANK_SELECT, 0)));
+        assert!(!controllers.iter().any(|(c, _)| *c == 0x5C || *c == 0x5F));
+    }
+
+    /// The main channels after routing them into the synthesizer's range.
+    fn routed_mains(mut channels: Vec<MidiChannel>) -> Vec<u8> {
+        route_main_channels(channels.iter_mut());
+        channels.iter().map(|c| c.channel_id).collect()
+    }
+
+    #[test]
+    fn out_of_range_channels_take_free_channels() {
+        // a second port's channels 1 and 2, the first one used by two tracks
+        let channels = vec![
+            file_channel(0, 1),
+            file_channel(16, 17),
+            file_channel(17, 18),
+            file_channel(16, 17),
+        ];
+        assert_eq!(routed_mains(channels), vec![0, 1, 2, 1]);
+    }
+
+    #[test]
+    fn without_a_free_channel_an_out_of_range_channel_takes_the_last_one() {
+        let mut channels: Vec<MidiChannel> = (0..MAX_CHANNELS)
+            .filter(|&c| c != PERCUSSION_CHANNEL)
+            .map(|c| file_channel(c, c))
+            .collect();
+        channels.push(file_channel(20, 20));
+        assert_eq!(routed_mains(channels).last(), Some(&(MAX_CHANNELS - 1)));
     }
 
     #[test]

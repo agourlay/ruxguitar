@@ -774,7 +774,7 @@ mod tests {
             let settings = Arc::new(SynthesizerSettings::new(44100));
             let mut synth = Synthesizer::new(sound_font, &settings).unwrap();
             if with_channel_setup {
-                synth.process_midi_message(9, 0xB0, 0x00, 128); // bank select 128
+                synth.process_midi_message(9, 0xB0, 0x00, 0); // bank select (drum bank 128)
                 synth.process_midi_message(9, 0xC0, 0, 0); // program 0
             }
             for key in METRONOME_KEYS {
@@ -795,7 +795,7 @@ mod tests {
             "no sound on fresh percussion channel"
         );
         // ... and stays audible after the app's channel 9 setup
-        // (bank 128 + program 0, like a drum track)
+        // (bank select 0 + program 0, like a drum track)
         assert!(
             click_energy(&sound_font, true) > 0.01,
             "no sound after channel 9 setup"

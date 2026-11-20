@@ -130,12 +130,14 @@ fn build_tracks(doc: &GpxDocument) -> (Vec<Track>, Vec<MidiChannel>) {
         let channel_id = if is_percussion {
             9
         } else {
+            // past 16 channels, each track keeps its own channel entry (and
+            // so its own instrument): playback fits them in the synthesizer
             let c = next_channel;
-            next_channel += 1;
+            next_channel = next_channel.saturating_add(1);
             if next_channel == 9 {
                 next_channel += 1; // reserve channel 9 for percussion
             }
-            c.min(15)
+            c
         };
 
         channels.push(MidiChannel {
@@ -924,6 +926,7 @@ fn fix_first_measure_start_positions(measure: &mut Measure, measure_start: u32, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::gp67::document::GpxTrack;
 
     fn drum_strings() -> Vec<(i32, i32)> {
         (1..=6).map(|s| (s, 0)).collect()
@@ -1108,6 +1111,20 @@ mod tests {
         assert_eq!(stroke.direction, BeatStrokeDirection::Down);
         assert_eq!(stroke.value, BRUSH_STROKE_VALUE);
         assert_eq!(GpxDirection::parse("Sideways"), None);
+    }
+
+    #[test]
+    fn each_track_keeps_its_own_channel_past_sixteen_tracks() {
+        let doc = GpxDocument {
+            tracks: (0..20).map(|_| GpxTrack::default()).collect(),
+            ..Default::default()
+        };
+        let (tracks, channels) = build_tracks(&doc);
+        let ids: std::collections::HashSet<u8> = tracks.iter().map(|t| t.channel_id).collect();
+        assert_eq!(ids.len(), 20);
+        assert!(!ids.contains(&9), "channel 9 is kept for percussion");
+        // and each one finds its own entry
+        assert_eq!(channels.len(), 20);
     }
 
     /// Two tracks whose diagram collections both define chord id 0: a guitar
