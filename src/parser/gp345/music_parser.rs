@@ -552,9 +552,14 @@ impl MusicParser {
             i = inner;
             let string = guitar_string.0 as i8;
             note.string = string;
-            note.effect.heavy_accentuated_note = (flags & 0x02) == 0x02;
+            // Like TuxGuitar: before GP5, bit 0x02 marks a dotted note, which
+            // the beat duration already holds, not a heavy accent; accents
+            // (0x40) only exist from GP4 on.
+            let version = self.song.version;
+            note.effect.heavy_accentuated_note =
+                version >= GpVersion::GP5 && (flags & 0x02) == 0x02;
             note.effect.ghost_note = (flags & 0x04) == 0x04;
-            note.effect.accentuated_note = (flags & 0x40) == 0x40;
+            note.effect.accentuated_note = version >= GpVersion::GP4 && (flags & 0x40) == 0x40;
 
             // note type
             if (flags & 0x20) != 0 {
@@ -697,17 +702,34 @@ mod tests {
     }
 
     #[test]
-    fn a_gp4_note_has_no_accidentals_byte() {
-        let note = note_from(&parser(GpVersion::GP4), &[0x20, 1, 12]);
-        assert_eq!(note.value, 12);
+    fn accent_flags_are_read_by_version() {
+        // flags: dotted/heavy accent (0x02), ghost (0x04), accent (0x40)
+        let flags = 0x02 | 0x04 | 0x40;
+        let read = |version| {
+            // GP5 notes end with an accidentals byte
+            let bytes: &[u8] = if version >= GpVersion::GP5 {
+                &[flags, 0]
+            } else {
+                &[flags]
+            };
+            let effect = note_from(&parser(version), bytes).effect;
+            (
+                effect.heavy_accentuated_note,
+                effect.accentuated_note,
+                effect.ghost_note,
+            )
+        };
+        assert_eq!(read(GpVersion::GP3), (false, false, true));
+        assert_eq!(read(GpVersion::GP4), (false, true, true));
+        assert_eq!(read(GpVersion::GP4_06), (false, true, true));
+        assert_eq!(read(GpVersion::GP5), (true, true, true));
+        assert_eq!(read(GpVersion::GP5_10), (true, true, true));
     }
 
     #[test]
-    fn note_accents_come_from_the_flags() {
-        let ghost = note_from(&parser(GpVersion::GP4), &[0x04]);
-        assert!(ghost.effect.ghost_note);
-        let accents = note_from(&parser(GpVersion::GP4), &[0x42]);
-        assert!(accents.effect.accentuated_note && accents.effect.heavy_accentuated_note);
+    fn a_gp4_note_has_no_accidentals_byte() {
+        let note = note_from(&parser(GpVersion::GP4), &[0x20, 1, 12]);
+        assert_eq!(note.value, 12);
     }
 
     #[test]
