@@ -220,13 +220,6 @@ impl RuxApplication {
         (app, init_task)
     }
 
-    /// Fresh tab defaults when the user opens a GP file (not startup session restore).
-    fn reset_tab_defaults(&mut self) {
-        self.prefs.tempo = TempoSelection::default();
-        self.prefs.master_volume = 1.0;
-        self.session_restore = None;
-    }
-
     /// Loop the selected measures, or play through when nothing is selected.
     /// Returns the measure each pass of the loop starts on.
     fn sync_measure_loop(&self) -> Option<usize> {
@@ -242,6 +235,10 @@ impl RuxApplication {
     }
 
     fn persist_session(&mut self) {
+        if self.session_restore.is_some() {
+            // The tablature does not yet reflect the saved cursor and selection.
+            return;
+        }
         let (measure_index, beat_index, selection_start, selection_end) =
             if let Some(LoadedSong { tablature, .. }) = &self.song {
                 let selection = tablature.selection_range();
@@ -290,7 +287,7 @@ impl RuxApplication {
     }
 
     fn apply_session_restore(&mut self, session: &SessionState) -> Task<Message> {
-        let (Some(song), Some(audio_player)) = (&mut self.song, &self.audio_player) else {
+        let Some(song) = &mut self.song else {
             return Task::none();
         };
 
@@ -307,11 +304,9 @@ impl RuxApplication {
 
         let tempo = session.tempo_percentage.clamp(25, 200);
         self.prefs.tempo = TempoSelection::new(tempo);
-        audio_player.set_tempo_percentage(tempo);
 
         let volume = session.master_volume.clamp(0.0, 1.0);
         self.prefs.master_volume = volume;
-        audio_player.set_master_volume(volume);
 
         let measure_count = tablature.measure_count();
         if measure_count == 0 {
@@ -320,8 +315,12 @@ impl RuxApplication {
         let measure = session.measure_index.min(measure_count - 1);
         let beat = session.beat_index;
         tablature.focus_on_measure_beat(measure, beat);
-        let beat_offset = tablature.beat_tick_offset(measure, tablature.focused_beat());
-        audio_player.focus_measure_at(measure, beat_offset);
+        if let Some(player) = &self.audio_player {
+            player.set_tempo_percentage(tempo);
+            player.set_master_volume(volume);
+            let beat_offset = tablature.beat_tick_offset(measure, tablature.focused_beat());
+            player.focus_measure_at(measure, beat_offset);
+        }
 
         match (session.selection_start, session.selection_end) {
             (Some(start), Some(end)) => {
@@ -388,13 +387,6 @@ impl RuxApplication {
         result: Result<(Vec<u8>, Option<PathBuf>, String, PathBuf), FilePickerError>,
     ) -> Task<Message> {
         self.tab_file_is_loading = false;
-        // stop and drop the previous audio player if any: if loading
-        // fails below, the old song must not keep playing against the
-        // new tablature state
-        if let Some(audio_player) = &mut self.audio_player {
-            audio_player.stop();
-        }
-        self.audio_player = None;
         // a startup restore, like a track asked for on the command line,
         // only applies to the file opened at startup, whether or not that
         // load succeeds
@@ -402,23 +394,14 @@ impl RuxApplication {
         let startup_track = self.startup_track.take();
         let (contents, parent_folder, file_name, tab_path) = match result {
             Ok(file) => file,
+            Err(FilePickerError::DialogClosed) => return Task::none(),
             Err(err) => {
                 return Task::done(Message::ReportError(format!("Failed to open file: {err}")));
             }
         };
-        if let Err(err) = self.config.set_tabs_folder(parent_folder) {
-            return Task::done(Message::ReportError(format!(
-                "Failed to set tabs folder: {err}"
-            )));
-        }
         let Ok(song) = parse_gp_data(&contents) else {
             return Task::done(Message::ReportError("Failed to parse GP file".to_string()));
         };
-        if let Some(session) = restore_session {
-            self.session_restore = Some(SessionRestore::OnLayout(session));
-        } else {
-            self.reset_tab_defaults();
-        }
         let track_selections = TrackSelection::all_of(&song);
         if track_selections.is_empty() {
             return Task::done(Message::ReportError(
@@ -432,6 +415,47 @@ impl RuxApplication {
         // share song ownership with tablature and player
         let song_rc = Rc::new(song);
         let playback_order = compute_playback_order(&song_rc.measure_headers);
+        let mut prefs = self.prefs;
+        if restore_session.is_none() {
+            prefs.tempo = TempoSelection::default();
+            prefs.master_volume = 1.0;
+        }
+        let (audio_player, audio_error) = match AudioPlayer::new(
+            song_rc.clone(),
+            song_rc.tempo.value,
+            prefs.tempo.percentage,
+            self.sound_font_file.clone(),
+            self.current_tick.clone(),
+            self.beat_notify.clone(),
+            &playback_order,
+        ) {
+            Ok(player) => {
+                prefs.apply_to(&player);
+                (Some(player), Task::none())
+            }
+            Err(err) => {
+                let error = Task::done(Message::ReportError(format!(
+                    "Failed to initialize audio: {err}"
+                )));
+                if self.audio_player.is_some() {
+                    return error;
+                }
+                // Without a working player, the new tablature can still be read.
+                (None, error)
+            }
+        };
+        if let Err(err) = self.config.set_tabs_folder(parent_folder) {
+            return Task::done(Message::ReportError(format!(
+                "Failed to set tabs folder: {err}"
+            )));
+        }
+        if let Some(player) = &mut self.audio_player {
+            player.stop();
+        }
+        self.audio_player = audio_player;
+        self.prefs = prefs;
+        self.session_restore = restore_session.map(SessionRestore::OnLayout);
+        self.track_menu_open = false;
         let tablature_scroll_id = Id::new("tablature-scroll-elements");
         let tablature = Tablature::new(
             song_rc.clone(),
@@ -439,7 +463,6 @@ impl RuxApplication {
             tablature_scroll_id.clone(),
             &playback_order,
         );
-        self.track_menu_open = false;
         let overview = TrackOverview::new(&song_rc);
         self.song = Some(LoadedSong {
             info,
@@ -448,28 +471,10 @@ impl RuxApplication {
             tablature,
             overview,
         });
-        let audio_player = match AudioPlayer::new(
-            song_rc.clone(),
-            song_rc.tempo.value,
-            self.prefs.tempo.percentage,
-            self.sound_font_file.clone(),
-            self.current_tick.clone(),
-            self.beat_notify.clone(),
-            &playback_order,
-        ) {
-            Ok(audio_player) => audio_player,
-            Err(err) => {
-                return Task::done(Message::ReportError(format!(
-                    "Failed to initialize audio: {err}"
-                )));
-            }
-        };
-        // apply persistent playback preferences
-        self.prefs.apply_to(&audio_player);
-        self.audio_player = Some(audio_player);
         self.current_tab_path = Some(tab_path);
         self.persist_session();
         Task::batch([
+            audio_error,
             scroll_to(tablature_scroll_id, AbsoluteOffset::<f32>::default()),
             Task::done(Message::WindowResized),
             track_error.map_or_else(Task::none, |error| Task::done(Message::ReportError(error))),
@@ -879,6 +884,99 @@ mod tests {
         assert_eq!(opening_track(None, 8), (0, None));
         assert_eq!(opening_track(Some(1), 8), (0, None));
         assert_eq!(opening_track(Some(8), 8), (7, None));
+    }
+
+    #[test]
+    fn canceling_or_failing_to_replace_a_file_keeps_its_song_and_player() {
+        let path = PathBuf::from("test-files/Demo v5.gp5");
+        let contents = std::fs::read(&path).unwrap();
+        let song = Rc::new(parse_gp_data(&contents).unwrap());
+        let order = compute_playback_order(&song.measure_headers);
+        let mut app = RuxApplication::new(None, Config::default());
+        let player = AudioPlayer::new(
+            song.clone(),
+            song.tempo.value,
+            100,
+            None,
+            app.current_tick.clone(),
+            app.beat_notify.clone(),
+            &order,
+        )
+        .unwrap();
+        player.focus_measure_at(2, 0);
+        player.toggle_track_solo(0);
+        app.audio_player = Some(player);
+        let tracks = TrackSelection::all_of(&song);
+        app.song = Some(LoadedSong {
+            info: SongDisplayInfo::new(&song, "Demo v5.gp5".into()),
+            track: tracks[0].clone(),
+            tracks,
+            tablature: Tablature::new(song.clone(), 0, Id::unique(), &order),
+            overview: TrackOverview::new(&song),
+        });
+        app.current_tab_path = Some(path.clone());
+        // A valid replacement also has to initialize its own sound font.
+        app.sound_font_file = Some(path.with_extension("missing-soundfont"));
+        let replacement = |contents| Ok((contents, None, "new.gp5".into(), "new.gp5".into()));
+        let tick = app.current_tick.load(std::sync::atomic::Ordering::Relaxed);
+        for (result, reports_error) in [
+            (Err(FilePickerError::DialogClosed), false),
+            (Err(FilePickerError::IoError("unreadable".into())), true),
+            (replacement(Vec::new()), true),
+            (replacement(contents), true),
+        ] {
+            app.tab_file_is_loading = true;
+            let task = app.on_file_opened(result);
+            assert_eq!(task.units() > 0, reports_error);
+            assert!(!app.tab_file_is_loading);
+            assert!(app.audio_player.as_ref().unwrap().is_track_solo(0));
+            assert_eq!(
+                app.current_tick.load(std::sync::atomic::Ordering::Relaxed),
+                tick
+            );
+            assert!(Rc::ptr_eq(
+                &app.song.as_ref().unwrap().tablature.song,
+                &song
+            ));
+            assert_eq!(app.current_tab_path.as_ref(), Some(&path));
+        }
+    }
+
+    #[test]
+    fn a_failed_soundfont_still_restores_the_saved_tablature() {
+        let path = PathBuf::from("test-files/Demo v5.gp5");
+        let session = SessionState {
+            last_tab_file: Some(path.clone()),
+            track_index: 2,
+            measure_index: 8,
+            beat_index: 1,
+            selection_start: Some(5),
+            selection_end: Some(9),
+            tempo_percentage: 75,
+            master_volume: 0.5,
+            ..SessionState::default()
+        };
+        let config = Config::in_memory(session.clone());
+        let mut app = RuxApplication::new(Some(path.with_extension("missing-soundfont")), config);
+        app.session_restore = Some(SessionRestore::OnLoad(session));
+        let _ = app.on_file_opened(Ok((
+            std::fs::read(&path).unwrap(),
+            None,
+            "Demo v5.gp5".into(),
+            path,
+        )));
+        assert!(app.audio_player.is_none());
+        assert_eq!(app.config.session().track_index, 2);
+        assert_eq!(app.config.session().measure_index, 8);
+
+        let _ = app.handle(Message::TablatureResized(Size::new(1024.0, 768.0)));
+        let song = app.song.as_ref().unwrap();
+        assert_eq!(song.track.index, 2);
+        assert_eq!(song.tablature.focused_measure(), 8);
+        assert_eq!(song.tablature.focused_beat(), 1);
+        assert_eq!(song.tablature.selection_range(), Some((5, 9)));
+        assert_eq!(app.config.session().tempo_percentage, 75);
+        assert_eq!(app.config.session().master_volume, 0.5);
     }
 
     #[test]

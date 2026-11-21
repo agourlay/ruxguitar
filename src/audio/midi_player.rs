@@ -3,7 +3,7 @@ use crate::audio::midi_builder::{
 };
 use crate::audio::midi_event::{FIRST_TICK, MidiEvent, MidiEventType};
 use crate::audio::midi_player_params::MidiPlayerParams;
-use crate::audio::midi_sequencer::{MidiSequencer, tick_increase};
+use crate::audio::midi_sequencer::{MidiSequencer, TickRate};
 use crate::audio::playback_order::{
     MeasureLoop, first_occurrence_ticks, first_playback_ticks, measure_loop_tick_range,
 };
@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::Notify;
 
 const DEFAULT_SAMPLE_RATE: u32 = 44100; // number of samples per second
@@ -95,9 +96,10 @@ impl AudioPlayer {
         sound_font: Arc<SoundFont>,
         sample_rate: u32,
     ) -> Result<Synthesizer, AudioPlayerError> {
-        let synthesizer_settings = SynthesizerSettings::new(sample_rate as i32);
-        let synthesizer_settings = Arc::new(synthesizer_settings);
-        debug_assert_eq!(synthesizer_settings.sample_rate, sample_rate as i32);
+        let mut synthesizer_settings = SynthesizerSettings::new(sample_rate as i32);
+        // MIDI events take effect on the next synth block. Eight frames is
+        // RustySynth's smallest supported block.
+        synthesizer_settings.block_size = 8;
         Synthesizer::new(&sound_font, &synthesizer_settings)
             .map_err(|e| AudioPlayerError::SynthesizerError(e.to_string()))
     }
@@ -422,8 +424,8 @@ fn new_output_stream(
 
     {
         let mut synthesizer_guard = synthesizer.lock().unwrap();
-        if sample_rate != DEFAULT_SAMPLE_RATE {
-            // audio output is not using the default sample rate - recreate synthesizer with proper sample rate
+        if synthesizer_guard.get_sample_rate() != sample_rate as i32 {
+            // A newly opened device can use a different sample rate.
             *synthesizer_guard = AudioPlayer::make_synthesizer(sound_font, sample_rate)?;
         }
         prime_synthesizer(&sequencer.lock().unwrap(), &mut synthesizer_guard);
@@ -441,7 +443,9 @@ fn new_output_stream(
     let err_fn = |err| log::error!("an error occurred on stream: {err}");
     let stream = device.build_output_stream(
         stream_config,
-        move |output: &mut [f32], _: &cpal::OutputCallbackInfo| renderer.render(output),
+        move |output: &mut [f32], info: &cpal::OutputCallbackInfo| {
+            renderer.render(output, info.timestamp());
+        },
         err_fn,
         None, // blocking stream
     );
@@ -513,8 +517,10 @@ struct StreamRenderer {
     left: Vec<f32>,
     right: Vec<f32>,
     channel_count: usize,
-    seconds_per_frame: f64,
+    sample_rate: u32,
     count_in: CountIn,
+    /// When the device will have played the callback buffer containing the end.
+    finish_after: Option<cpal::StreamInstant>,
 }
 
 impl StreamRenderer {
@@ -539,19 +545,30 @@ impl StreamRenderer {
             left: vec![0_f32; channel_sample_count],
             right: vec![0_f32; channel_sample_count],
             channel_count,
-            seconds_per_frame: 1.0 / f64::from(sample_rate),
+            sample_rate,
             count_in: CountIn::default(),
+            finish_after: None,
         }
     }
 
-    fn render(&mut self, output: &mut [f32]) {
+    fn render(&mut self, output: &mut [f32], timestamp: cpal::OutputStreamTimestamp) {
+        let capacity = self.left.len() * self.channel_count;
+        let frames = output.len() / self.channel_count;
+        let duration = Duration::from_secs_f64(frames as f64 / f64::from(self.sample_rate));
+        let buffer_end = timestamp.playback + duration;
+        for chunk in output.chunks_mut(capacity) {
+            self.render_chunk(chunk, timestamp.callback, buffer_end);
+        }
+    }
+
+    fn render_chunk(
+        &mut self,
+        output: &mut [f32],
+        now: cpal::StreamInstant,
+        buffer_end: cpal::StreamInstant,
+    ) {
         let player_params = &self.player_params;
-        // frames requested by the device for its channel layout
-        let frame_count = output.len() / self.channel_count;
-        let render_len = frame_count.min(self.left.len());
-        // advance by the audio about to be rendered so event scheduling
-        // stays locked to the output instead of a wall clock
-        let elapsed_secs = render_len as f64 * self.seconds_per_frame;
+        let frames = output.len() / self.channel_count;
         let mut sequencer_guard = self.sequencer.lock().unwrap();
         let mut synthesizer_guard = self.synthesizer.lock().unwrap();
 
@@ -559,77 +576,78 @@ impl StreamRenderer {
         if let Some((total_ticks, beat_ticks)) = player_params.take_count_in_request() {
             self.count_in.start(total_ticks, beat_ticks);
         }
-        let counting_in = self.count_in.is_active();
-        let loop_range = player_params.loop_enabled().then(|| {
-            (
-                player_params.loop_start_tick(),
-                player_params.loop_end_tick(),
-            )
-        });
-        let step = if counting_in {
-            let ticks = tick_increase(player_params.adjusted_tempo(), elapsed_secs);
+        if self.count_in.is_active() {
+            self.finish_after = None;
+            let rate = TickRate::new(player_params.adjusted_tempo(), self.sample_rate);
+            let ticks = rate.ticks_for_frames(frames);
             if self.count_in.advance(ticks) {
                 // same layered click as the metronome
                 for key in METRONOME_KEYS {
                     synthesizer_guard.note_on(9, key, i32::from(METRONOME_VELOCITY));
                 }
             }
-            sequencer_guard.pending_step()
+            synthesizer_guard.render(&mut self.left[..frames], &mut self.right[..frames]);
         } else {
-            sequencer_guard.step(player_params.adjusted_tempo(), elapsed_secs, loop_range)
-        };
-        // the sequence is exhausted: wake the UI once to stop the transport
-        if step.events.is_none() && loop_range.is_none() && !player_params.is_finished() {
-            player_params.set_finished(true);
-            self.beat_notify.notify_one();
-        }
-        // frames already rendered, before a loop restart
-        let mut rendered = 0;
-        if !counting_in {
-            let events = sequencer_guard.events();
-            if let Some(range) = step.events {
-                play_events(
-                    &events[range],
-                    step.tick,
-                    &mut synthesizer_guard,
-                    player_params,
-                    &self.current_tick,
-                    &self.beat_notify,
+            let loop_range = player_params
+                .loop_enabled()
+                .then(|| {
+                    (
+                        player_params.loop_start_tick(),
+                        player_params.loop_end_tick(),
+                    )
+                })
+                .filter(|&(start, end)| start < end);
+            let mut rendered = 0;
+            while rendered < frames {
+                if loop_range.is_some() || !sequencer_guard.is_exhausted() {
+                    self.finish_after = None;
+                } else if !player_params.is_finished() {
+                    match self.finish_after {
+                        Some(deadline) if now >= deadline => {
+                            player_params.set_finished(true);
+                            self.beat_notify.notify_one();
+                        }
+                        None => self.finish_after = Some(buffer_end),
+                        _ => {}
+                    }
+                }
+                let rate = TickRate::new(player_params.adjusted_tempo(), self.sample_rate);
+                let count = sequencer_guard.frames_until_event(frames - rendered, rate, loop_range);
+                let end = rendered + count;
+                synthesizer_guard.render(
+                    &mut self.left[rendered..end],
+                    &mut self.right[rendered..end],
                 );
-            }
-            // the loop end was crossed: render up to it, then start the
-            // next pass there, so the last notes of the pass still sound
-            if let Some(range) = step.restart {
-                rendered = ((render_len as f64) * step.restart_at).round() as usize;
-                rendered = rendered.min(render_len);
-                synthesizer_guard.render(&mut self.left[..rendered], &mut self.right[..rendered]);
-                synthesizer_guard.note_off_all(false);
-                synthesizer_guard.reset_all_controllers();
-                player_params.set_tempo(player_params.loop_start_tempo());
-                player_params.set_finished(false);
-                play_events(
-                    &events[range],
-                    sequencer_guard.get_tick(),
-                    &mut synthesizer_guard,
-                    player_params,
-                    &self.current_tick,
-                    &self.beat_notify,
-                );
-            }
-        }
-        if render_len < frame_count {
-            // debug level: runs on the real-time audio thread
-            log::debug!(
-                "Output buffer larger than render buffer {frame_count} > {}",
-                self.left.len()
-            );
-        }
+                rendered = end;
 
-        // Render the waveform.
-        synthesizer_guard.render(
-            &mut self.left[rendered..render_len],
-            &mut self.right[rendered..render_len],
-        );
+                let step = sequencer_guard.step(rate, count, loop_range);
+                let events = sequencer_guard.events();
+                if let Some(range) = step.events {
+                    play_events(
+                        &events[range],
+                        step.tick,
+                        &mut synthesizer_guard,
+                        player_params,
+                        &self.current_tick,
+                        &self.beat_notify,
+                    );
+                }
+                if let Some(range) = step.restart {
+                    synthesizer_guard.note_off_all(false);
+                    synthesizer_guard.reset_all_controllers();
+                    player_params.set_tempo(player_params.loop_start_tempo());
+                    player_params.set_finished(false);
+                    play_events(
+                        &events[range],
+                        sequencer_guard.get_tick(),
+                        &mut synthesizer_guard,
+                        player_params,
+                        &self.current_tick,
+                        &self.beat_notify,
+                    );
+                }
+            }
+        }
 
         let master_volume = player_params.master_volume();
 
@@ -639,8 +657,8 @@ impl StreamRenderer {
 
         write_frames(
             output,
-            &self.left[..render_len],
-            &self.right[..render_len],
+            &self.left[..frames],
+            &self.right[..frames],
             self.channel_count,
             master_volume,
         );
@@ -817,10 +835,13 @@ mod tests {
         params.set_metronome(true);
 
         let mut sequencer = MidiSequencer::new(events);
-        sequencer.advance(tempo, 0.0); // init
+        sequencer.advance(TickRate::new(tempo, DEFAULT_SAMPLE_RATE), 0); // init
         let mut clicks = 0;
         for _ in 0..2000 {
-            sequencer.advance(params.adjusted_tempo(), 0.1);
+            sequencer.advance(
+                TickRate::new(params.adjusted_tempo(), DEFAULT_SAMPLE_RATE),
+                (DEFAULT_SAMPLE_RATE / 10) as usize,
+            );
             let Some(events) = sequencer.get_next_events() else {
                 break;
             };
@@ -837,6 +858,148 @@ mod tests {
             }
         }
         assert!(clicks > 50, "expected metronome clicks, got {clicks}");
+    }
+
+    fn test_sound_font() -> Arc<SoundFont> {
+        let mut sf2 = TIMIDITY_SOUND_FONT;
+        Arc::new(SoundFont::new(&mut sf2).unwrap())
+    }
+
+    fn test_renderer(
+        font: &Arc<SoundFont>,
+        sample_rate: u32,
+        events: Vec<MidiEvent>,
+    ) -> StreamRenderer {
+        let mut sequence = MidiSequencer::new(events);
+        sequence.set_tick(1000);
+        StreamRenderer::new(
+            Arc::new(Mutex::new(sequence)),
+            Arc::new(MidiPlayerParams::new(120, 100)),
+            Arc::new(Mutex::new(
+                AudioPlayer::make_synthesizer(font.clone(), sample_rate).unwrap(),
+            )),
+            Arc::new(AtomicU32::new(0)),
+            Arc::new(Notify::new()),
+            sample_rate,
+            2,
+        )
+    }
+
+    fn timestamp(callback_ms: u64, playback_ms: u64) -> cpal::OutputStreamTimestamp {
+        cpal::OutputStreamTimestamp {
+            callback: cpal::StreamInstant::from_millis(callback_ms),
+            playback: cpal::StreamInstant::from_millis(playback_ms),
+        }
+    }
+
+    #[test]
+    fn finish_waits_for_device_playback_and_a_seek_cancels_the_old_deadline() {
+        let font = test_sound_font();
+        let mut renderer = test_renderer(
+            &font,
+            DEFAULT_SAMPLE_RATE,
+            vec![
+                MidiEvent::new_note_on(1000, 0, 60, 100, 0),
+                MidiEvent::new_note_off(1001, 0, 60, 0),
+            ],
+        );
+        // 200 ms spans two internal chunks. The device starts playing it at 40 ms.
+        let mut output = vec![0.0; 2 * DEFAULT_SAMPLE_RATE as usize / 5];
+        renderer.render(&mut output, timestamp(0, 40));
+        assert!(!renderer.player_params.is_finished());
+        let mut small = [0.0; 64];
+        renderer.render(&mut small, timestamp(239, 240));
+        assert!(!renderer.player_params.is_finished());
+
+        renderer.sequencer.lock().unwrap().set_tick(1000);
+        renderer.render(&mut output, timestamp(240, 250));
+        assert!(!renderer.player_params.is_finished());
+        renderer.render(&mut small, timestamp(449, 450));
+        assert!(!renderer.player_params.is_finished());
+        renderer.render(&mut small, timestamp(450, 451));
+        assert!(renderer.player_params.is_finished());
+    }
+
+    #[test]
+    fn tempo_changes_render_the_same_audio_across_callback_sizes_and_sample_rates() {
+        let font = test_sound_font();
+        for sample_rate in [DEFAULT_SAMPLE_RATE, 48_000] {
+            // 64 ticks at 120 BPM and 32 ticks at 60 BPM each last 1/30 second.
+            let first = sample_rate as usize / 30;
+            let second = first * 2;
+            let release = second + first / 2;
+            let frames = sample_rate as usize / 10;
+            let mut left = vec![0.0; frames];
+            let mut right = vec![0.0; frames];
+            let mut reference = AudioPlayer::make_synthesizer(font.clone(), sample_rate).unwrap();
+            reference.render(&mut left[..first], &mut right[..first]);
+            reference.note_on(0, 60, 100);
+            reference.render(&mut left[first..second], &mut right[first..second]);
+            reference.note_off(0, 60);
+            reference.note_on(0, 67, 100);
+            reference.render(&mut left[second..release], &mut right[second..release]);
+            reference.note_off(0, 67);
+            reference.render(&mut left[release..], &mut right[release..]);
+
+            for callback_frames in [frames, 127] {
+                let mut renderer = test_renderer(
+                    &font,
+                    sample_rate,
+                    vec![
+                        MidiEvent::new_note_on(1064, 0, 60, 100, 0),
+                        MidiEvent::new_tempo_change(1064, 60),
+                        MidiEvent::new_note_off(1096, 0, 60, 0),
+                        MidiEvent::new_note_on(1096, 0, 67, 100, 0),
+                        MidiEvent::new_note_off(1112, 0, 67, 0),
+                    ],
+                );
+                let mut output = vec![0.0; frames * 2];
+                for buffer in output.chunks_mut(callback_frames * 2) {
+                    renderer.render(buffer, timestamp(0, 0));
+                }
+                for (i, &frame) in output.as_chunks::<2>().0.iter().enumerate() {
+                    assert_eq!(
+                        frame,
+                        [left[i], right[i]],
+                        "frame {i}, buffer {callback_frames}, rate {sample_rate}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn audible_note_onsets_are_within_seven_frames_of_the_scheduled_frame() {
+        let font = test_sound_font();
+        for sample_rate in [DEFAULT_SAMPLE_RATE, 48_000] {
+            let onset = |ticks| {
+                let mut renderer = test_renderer(
+                    &font,
+                    sample_rate,
+                    vec![MidiEvent::new_note_on(1000 + ticks, 0, 60, 100, 0)],
+                );
+                let mut output = [0.0; 512];
+                for chunk in output.chunks_mut(22) {
+                    renderer.render(chunk, timestamp(0, 0));
+                }
+                output
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .position(|stereo| stereo.iter().any(|&s| s != 0.0))
+                    .unwrap()
+            };
+            let attack = onset(0);
+            for ticks in 1..=8 {
+                // At 120 BPM the score advances by 1920 ticks per second.
+                let frame = (ticks * sample_rate).div_ceil(1920) as usize;
+                let delay = onset(ticks) - attack;
+                assert!(
+                    (frame..=frame + 7).contains(&delay),
+                    "tick {ticks} at {sample_rate} Hz: expected frame {frame}, heard {delay}"
+                );
+            }
+        }
     }
 
     #[test]

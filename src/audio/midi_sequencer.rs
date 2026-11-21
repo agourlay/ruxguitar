@@ -13,15 +13,34 @@ pub struct Step {
     /// Set when the step crossed the loop end: playback restarted at the
     /// loop start, and these events of the new pass follow `events`.
     pub restart: Option<Range<usize>>,
-    /// Share of the step's time, in `0.0..=1.0`, played before the loop
-    /// end was reached: where the audio of the new pass begins.
-    pub restart_at: f64,
+}
+
+/// MIDI ticks per audio frame, kept as an exact ratio so splitting a buffer
+/// cannot move a MIDI event across a frame boundary.
+#[derive(Clone, Copy)]
+pub struct TickRate {
+    units_per_frame: u64,
+    units_per_tick: u64,
+}
+
+impl TickRate {
+    pub const fn new(tempo: u32, sample_rate: u32) -> Self {
+        Self {
+            units_per_frame: tempo as u64 * QUARTER_TIME as u64,
+            units_per_tick: 60 * sample_rate as u64,
+        }
+    }
+
+    pub fn ticks_for_frames(self, frames: usize) -> f64 {
+        frames as f64 * self.units_per_frame as f64 / self.units_per_tick as f64
+    }
 }
 
 pub struct MidiSequencer {
     last_tick: u32,
-    /// Exact tick position; the current tick is its integer part.
-    tick_position: f64,
+    tick: u32,
+    /// Fraction of a tick in units of the current stream's sample clock.
+    tick_remainder: u64,
     /// True until the first advance after a reset or a seek.
     needs_init: bool,
     sorted_events: Vec<MidiEvent>,
@@ -37,7 +56,8 @@ impl MidiSequencer {
         );
         Self {
             last_tick: 0,
-            tick_position: 0.0,
+            tick: 0,
+            tick_remainder: 0,
             needs_init: true,
             sorted_events,
         }
@@ -53,7 +73,8 @@ impl MidiSequencer {
         // mark for init so the next advance() bumps by 1 instead of using a stale clock
         let adjusted = tick.saturating_sub(1);
         self.last_tick = adjusted;
-        self.tick_position = f64::from(adjusted);
+        self.tick = adjusted;
+        self.tick_remainder = 0;
         self.needs_init = true;
     }
 
@@ -62,7 +83,15 @@ impl MidiSequencer {
     }
 
     pub const fn get_tick(&self) -> u32 {
-        self.tick_position as u32
+        self.tick
+    }
+
+    pub fn is_exhausted(&self) -> bool {
+        !self.needs_init
+            && self
+                .sorted_events
+                .last()
+                .is_none_or(|event| event.tick <= self.tick)
     }
 
     #[cfg(test)]
@@ -70,53 +99,72 @@ impl MidiSequencer {
         self.last_tick
     }
 
+    /// Frames to render before the next group of MIDI events or the loop end.
+    /// After a seek, dispatch the events at the target before rendering a frame.
+    pub fn frames_until_event(
+        &self,
+        available: usize,
+        rate: TickRate,
+        loop_range: Option<(u32, u32)>,
+    ) -> usize {
+        if self.needs_init {
+            return 0;
+        }
+        let next = self
+            .sorted_events
+            .partition_point(|event| event.tick <= self.get_tick());
+        let event_tick = self.sorted_events.get(next).map(|event| event.tick);
+        let loop_end = loop_range.map(|(_, end)| end);
+        event_tick
+            .into_iter()
+            .chain(loop_end)
+            .min()
+            .map_or(available, |tick| {
+                let ticks = u64::from(tick.saturating_sub(self.tick));
+                let units = (ticks * rate.units_per_tick).saturating_sub(self.tick_remainder);
+                let frames = units.div_ceil(rate.units_per_frame);
+                frames.min(available as u64) as usize
+            })
+    }
+
     /// Advance like `advance`, looping over the playback ticks `[start, end)`
     /// when a loop is given. Crossing the loop end plays the events left
     /// before it, then restarts at the loop start with the time that ran
     /// past the end, so every pass keeps the beat.
-    pub fn step(&mut self, tempo: u32, elapsed_secs: f64, loop_range: Option<(u32, u32)>) -> Step {
-        let position_before = self.tick_position;
-        self.advance(tempo, elapsed_secs);
+    pub fn step(&mut self, rate: TickRate, frames: usize, loop_range: Option<(u32, u32)>) -> Step {
+        self.advance(rate, frames);
         let Some((start, end)) = loop_range.filter(|&(start, end)| start < end) else {
             return self.pending_step();
         };
-        if self.tick_position < f64::from(end) {
+        if self.tick < end {
             return self.pending_step();
         }
-        let (events, tick, overshoot, restart_at) = if self.last_tick < end {
-            let advanced = self.tick_position - position_before;
-            let before_end = f64::from(end) - position_before;
-            let restart_at = if advanced > 0.0 {
-                (before_end / advanced).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            let overshoot = (self.tick_position - f64::from(end)) % f64::from(end - start);
+        let (events, tick, overshoot) = if self.last_tick < end {
+            let overshoot = (self.tick - end) % (end - start);
             // stop right before the loop end: what is left of this pass
-            self.tick_position = f64::from(end - 1);
-            (self.next_events_range(), end - 1, overshoot, restart_at)
+            self.tick = end - 1;
+            (self.next_events_range(), end - 1, overshoot)
         } else {
             // a seek landed past the loop end: nothing is left of this pass
-            (Some(Range::default()), self.last_tick, 0.0, 0.0)
+            self.tick_remainder = 0;
+            (Some(Range::default()), self.last_tick, 0)
         };
         self.last_tick = start.saturating_sub(1);
-        self.tick_position = f64::from(start) + overshoot;
+        self.tick = start + overshoot;
         self.needs_init = false;
         Step {
             events,
             tick,
             restart: Some(self.next_events_range().unwrap_or_default()),
-            restart_at,
         }
     }
 
     /// The events reached so far, without advancing.
-    pub fn pending_step(&self) -> Step {
+    fn pending_step(&self) -> Step {
         Step {
             events: self.next_events_range(),
             tick: self.get_tick(),
             restart: None,
-            restart_at: 1.0,
         }
     }
 
@@ -151,35 +199,27 @@ impl MidiSequencer {
         Some(start_index..start_index + len)
     }
 
-    /// Advance by the audio time about to be rendered, keeping event
-    /// scheduling sample-locked to the output instead of a wall clock.
-    pub fn advance(&mut self, tempo: u32, elapsed_secs: f64) {
-        // init sequencer if first advance after a reset or seek
+    /// Advance by the frames rendered at the current tempo. The sample rate
+    /// stays fixed over the life of the stream; a seek resets the remainder.
+    pub fn advance(&mut self, rate: TickRate, frames: usize) {
         if self.needs_init {
             self.needs_init = false;
-            // tick_position is integral here (set from a u32), so the bump is exact
-            self.tick_position += 1.0;
+            self.tick += 1;
             return;
         }
-        // cap the elapsed time so an oversized buffer request cannot
-        // teleport playback far ahead; audio callbacks render ~0.1s
-        const MAX_ELAPSED_SECS: f64 = 0.5;
-        let elapsed_secs = elapsed_secs.min(MAX_ELAPSED_SECS);
-        self.last_tick = self.get_tick();
-        self.tick_position += tick_increase(tempo, elapsed_secs);
+        self.last_tick = self.tick;
+        let units = self.tick_remainder + frames as u64 * rate.units_per_frame;
+        self.tick_remainder = units % rate.units_per_tick;
+        self.tick =
+            (u64::from(self.tick) + units / rate.units_per_tick).min(u64::from(u32::MAX)) as u32;
     }
 
     #[cfg(test)]
     pub fn advance_tick(&mut self, tick: u32) {
         self.needs_init = false;
         self.last_tick = self.get_tick();
-        self.tick_position += f64::from(tick);
+        self.tick += tick;
     }
-}
-
-pub fn tick_increase(tempo_bpm: u32, elapsed_seconds: f64) -> f64 {
-    let tempo_bps = f64::from(tempo_bpm) / 60.0;
-    f64::from(QUARTER_TIME) * tempo_bps * elapsed_seconds
 }
 
 #[cfg(test)]
@@ -189,22 +229,25 @@ mod tests {
     use crate::audio::midi_event::MidiEventType;
     use crate::parser::song_parser_tests::parse_gp_file;
     use std::rc::Rc;
-    use std::time::Duration;
+
+    // At this fixture's sample rate, a MIDI tick at 120 BPM spans exactly 25 frames.
+    const SAMPLE_RATE: u32 = 48_000;
+    const RATE: TickRate = TickRate::new(120, SAMPLE_RATE);
+    const STEP_FRAMES: usize = SAMPLE_RATE as usize / 10;
 
     #[test]
-    fn test_tick_increase() {
-        let tempo = 100;
-        let elapsed = Duration::from_millis(32);
-        let result = tick_increase(tempo, elapsed.as_secs_f64());
+    fn fractional_ticks_follow_the_sample_clock() {
+        let result = TickRate::new(100, SAMPLE_RATE).ticks_for_frames(1536);
         assert!((result - 51.2).abs() < 1e-9);
     }
 
     #[test]
-    fn test_tick_increase_bis() {
-        let tempo = 120;
-        let elapsed = Duration::from_millis(100);
-        let result = tick_increase(tempo, elapsed.as_secs_f64());
-        assert!((result - 192.0).abs() < 1e-9);
+    fn a_tenth_of_a_second_at_120_bpm_lasts_192_ticks() {
+        for sample_rate in [44_100, SAMPLE_RATE, 96_000] {
+            let result =
+                TickRate::new(120, sample_rate).ticks_for_frames(sample_rate as usize / 10);
+            assert!((result - 192.0).abs() < 1e-9);
+        }
     }
 
     /// Ticks of the events in a step, the restarted pass after a `|`.
@@ -223,10 +266,6 @@ mod tests {
         out
     }
 
-    // 120 BPM over 0.1s: 192 ticks per step
-    const TEMPO: u32 = 120;
-    const STEP_SECS: f64 = 0.1;
-
     #[test]
     fn loop_plays_every_event_once_per_pass() {
         let events = [1000, 1100, 1500, 1990, 2000, 2500]
@@ -238,7 +277,7 @@ mod tests {
 
         let mut played = Vec::new();
         for _ in 0..12 {
-            let step = sequencer.step(TEMPO, STEP_SECS, loop_range);
+            let step = sequencer.step(RATE, STEP_FRAMES, loop_range);
             played.extend(step_ticks(&sequencer, &step));
         }
         // first step only lands on the start (seek init), then 192 ticks a step;
@@ -257,18 +296,20 @@ mod tests {
         let mut sequencer = MidiSequencer::new(vec![MidiEvent::new_tempo_change(5000, 120)]);
         let loop_range = Some((1000, 2000));
         sequencer.set_tick(1000);
-        sequencer.step(TEMPO, STEP_SECS, loop_range); // init: tick 1000
+        sequencer.step(RATE, STEP_FRAMES, loop_range); // init: tick 1000
         for _ in 0..5 {
-            let step = sequencer.step(TEMPO, STEP_SECS, loop_range);
+            let step = sequencer.step(RATE, STEP_FRAMES, loop_range);
             assert_eq!(step.restart, None);
         }
         assert_eq!(sequencer.get_tick(), 1960);
+        assert_eq!(
+            sequencer.frames_until_event(STEP_FRAMES, RATE, loop_range),
+            1000
+        );
         // 1960 + 192 = 2152: 152 ticks past the end carry into the next pass
-        let step = sequencer.step(TEMPO, STEP_SECS, loop_range);
+        let step = sequencer.step(RATE, STEP_FRAMES, loop_range);
         assert_eq!(step.tick, 1999);
         assert!(step.restart.is_some());
-        // the loop end came 40 of the 192 ticks into the step
-        assert!((step.restart_at - 40.0 / 192.0).abs() < 1e-9);
         assert_eq!(sequencer.get_tick(), 1152);
         assert_eq!(sequencer.get_last_tick(), 999);
     }
@@ -277,19 +318,17 @@ mod tests {
     fn loop_after_seek_past_its_end_restarts_at_start() {
         let mut sequencer = MidiSequencer::new(vec![MidiEvent::new_tempo_change(1000, 120)]);
         sequencer.set_tick(3000);
-        let step = sequencer.step(TEMPO, STEP_SECS, Some((1000, 2000)));
+        let step = sequencer.step(RATE, STEP_FRAMES, Some((1000, 2000)));
         assert_eq!(step_ticks(&sequencer, &step), ["|", "1000"]);
         assert_eq!(sequencer.get_tick(), 1000);
-        // nothing of the old pass is left to render
-        assert!(step.restart_at.abs() < 1e-9);
     }
 
     #[test]
     fn empty_loop_plays_through() {
         let mut sequencer = MidiSequencer::new(vec![MidiEvent::new_tempo_change(1000, 120)]);
         sequencer.set_tick(900);
-        sequencer.step(TEMPO, STEP_SECS, Some((2000, 2000)));
-        let step = sequencer.step(TEMPO, STEP_SECS, Some((2000, 2000)));
+        sequencer.step(RATE, STEP_FRAMES, Some((2000, 2000)));
+        let step = sequencer.step(RATE, STEP_FRAMES, Some((2000, 2000)));
         assert_eq!(step.restart, None);
         assert_eq!(step_ticks(&sequencer, &step), ["1000"]);
     }
@@ -298,48 +337,41 @@ mod tests {
     fn fractional_ticks_accumulate_across_advances() {
         let mut sequencer = MidiSequencer::new(vec![]);
         // first advance after reset bumps to tick 1
-        sequencer.advance(120, 0.0);
+        sequencer.advance(RATE, 0);
         assert_eq!(sequencer.get_tick(), 1);
 
-        // simulate 1000 audio callbacks of 5.8 ms each at 120 BPM
-        // (256 frames at 44.1 kHz), i.e. 11.136 ticks per callback
+        // 256 frames at 44.1 kHz advance by a non-integral number of ticks.
         for _ in 0..1000 {
-            sequencer.advance(120, 0.0058);
+            sequencer.advance(TickRate::new(120, 44_100), 256);
         }
 
-        // exact total: 1 + 11.136 * 1000 = 11137 ticks
-        // truncating per callback would yield 11001 (~1.2% slow)
-        let expected = 1 + 11_136;
-        assert!((i64::from(sequencer.get_tick()) - expected).abs() <= 1);
+        assert_eq!(sequencer.get_tick(), 1 + 256_000 * 1920 / 44_100);
     }
 
     #[test]
     fn sub_tick_advances_do_not_retrigger_init() {
         let mut sequencer = MidiSequencer::new(vec![]);
-        sequencer.advance(120, 0.0);
+        sequencer.advance(RATE, 0);
         assert_eq!(sequencer.get_tick(), 1);
 
-        // 0.4 ms at 120 BPM is 0.768 ticks: no whole tick passes,
+        // 20 frames at 120 BPM is 0.8 ticks: no whole tick passes,
         // so current_tick stalls at 1 with last_tick == current_tick
-        sequencer.advance(120, 0.0004);
+        sequencer.advance(RATE, 20);
         assert_eq!(sequencer.get_tick(), 1);
         assert_eq!(sequencer.get_last_tick(), 1);
 
         // the next sub-tick advance must accumulate to a whole tick,
         // not fall back into the init path (which would reset the position)
-        sequencer.advance(120, 0.0004);
+        sequencer.advance(RATE, 20);
         assert_eq!(sequencer.get_tick(), 2);
         assert_eq!(sequencer.get_last_tick(), 1);
     }
     #[test]
-    fn clock_jumps_are_clamped() {
+    fn a_large_buffer_advances_by_all_its_frames() {
         let mut sequencer = MidiSequencer::new(vec![]);
-        sequencer.advance(120, 0.0); // init: tick 1
-
-        // an hour-long elapsed request advances playback by at most 0.5s of
-        // ticks: 120 BPM = 2 quarters/s * 960 * 0.5 = 960
-        sequencer.advance(120, 3600.0);
-        assert_eq!(sequencer.get_tick(), 961);
+        sequencer.advance(RATE, 0);
+        sequencer.advance(RATE, SAMPLE_RATE as usize);
+        assert_eq!(sequencer.get_tick(), 1921);
     }
 
     #[test]
@@ -447,7 +479,7 @@ mod tests {
         // seek to tick 200 — set_tick sets last_tick and tick_position to 199
         sequencer.set_tick(200);
         // first advance takes the init path: last_tick stays 199, current tick becomes 200
-        sequencer.advance(120, 0.0);
+        sequencer.advance(RATE, 0);
         let batch = sequencer.get_next_events().unwrap();
 
         // should include the event at tick 200
@@ -490,7 +522,7 @@ mod tests {
         );
 
         sequencer.set_tick(target_tick);
-        sequencer.advance(120, 0.0);
+        sequencer.advance(RATE, 0);
         let batch = sequencer.get_next_events().unwrap();
 
         // verify we get events at or near the target tick, not from earlier measures

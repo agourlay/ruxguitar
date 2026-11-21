@@ -46,12 +46,24 @@ impl Default for SessionState {
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    #[cfg(test)]
+    #[serde(skip)]
+    in_memory: bool,
     tabs_folder: Option<PathBuf>,
     #[serde(default)]
     session: SessionState,
 }
 
 impl Config {
+    #[cfg(test)]
+    pub fn in_memory(session: SessionState) -> Self {
+        Self {
+            session,
+            in_memory: true,
+            ..Self::default()
+        }
+    }
+
     pub fn session(&self) -> &SessionState {
         &self.session
     }
@@ -120,6 +132,10 @@ impl Config {
 
     /// Assumes the config folder exists
     pub fn save_config(&self) -> Result<(), RuxError> {
+        #[cfg(test)]
+        if self.in_memory {
+            return Ok(());
+        }
         let config_path = Self::get_path()?;
         let json = serde_json::to_string_pretty(self).map_err(|err| {
             RuxError::ConfigError(format!("Could not save local configuration {err:}"))

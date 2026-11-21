@@ -101,6 +101,11 @@ fn validate_gold_rendered_result(events: &[MidiEvent], gold_path: PathBuf) {
             line_number + 1
         );
     }
+    assert_eq!(
+        actual_lines.next(),
+        None,
+        "extra MIDI event after {gold_path:?}"
+    );
 }
 
 #[test]
