@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ruxguitar: a guitar pro tablature player</title>
-<meta name="description" content="A desktop guitar pro tablature player written in Rust. Opens GP3 through GP7 files, plays them back through an embedded soundfont, and follows along measure by measure.">
-<meta property="og:title" content="Ruxguitar: a guitar pro tablature player">
-<meta property="og:description" content="A desktop guitar pro tablature player written in Rust. Opens GP3 through GP7 files, plays them back through an embedded soundfont, and follows along measure by measure.">
+<title>Ruxguitar · Guitar Pro tablature player</title>
+<meta name="description" content="Play Guitar Pro 1–7 tabs offline on Windows, macOS and Linux. Loop measures, solo a track and set your own tempo.">
+<meta property="og:title" content="Ruxguitar · Guitar Pro tablature player">
+<meta property="og:description" content="Play Guitar Pro 1–7 tabs offline on Windows, macOS and Linux. Loop measures, solo a track and set your own tempo.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://agourlay.github.io/ruxguitar/">
 <meta property="og:image" content="https://agourlay.github.io/ruxguitar/social.png">
@@ -33,11 +33,11 @@
   </nav>
   <div class="hero-inner">
   <h1>🎸 Ruxguitar
-    <span class="genre">a guitar pro tablature player</span></h1>
+    <span class="genre">a Guitar Pro tablature player</span></h1>
   <p class="lede">Open a tab, press space, and watch it play. Slow down the
     hard part, solo your track, and follow along measure by measure.</p>
   <ul class="formats" aria-label="Supported files">
-    <li>.gp3</li><li>.gp4</li><li>.gp5</li><li>.gpx</li><li>.gp</li>
+    <li>.gtp</li><li>.gp3</li><li>.gp4</li><li>.gp5</li><li>.gpx</li><li>.gp</li>
   </ul>
   <!-- Without script both commands show, each under its own label; with
        it, the labels become tabs and the visitor's own system is picked. -->
@@ -52,7 +52,7 @@
         <code>curl -fsSL https://agourlay.github.io/ruxguitar/install.sh | sh</code>
         <button type="button" class="copy" hidden>Copy</button>
       </div>
-      <p class="install-note">Installs <span class="ver"></span>to <code>~/.local/bin</code> ·
+      <p class="install-note">Installs the latest release to <code>~/.local/bin</code> ·
         <a href="install.sh">Read the script</a></p>
     </div>
     <div class="install-cmd" data-os="windows" role="tabpanel">
@@ -61,13 +61,12 @@
         <code>irm https://raw.githubusercontent.com/agourlay/ruxguitar/master/site/install.ps1 | iex</code>
         <button type="button" class="copy" hidden>Copy</button>
       </div>
-      <p class="install-note">Installs <span class="ver"></span>to <code>%LOCALAPPDATA%\Programs</code> and adds it to your PATH ·
+      <p class="install-note">Installs the latest release to <code>%LOCALAPPDATA%\Programs\ruxguitar</code> and adds it to your PATH ·
         <a href="install.ps1">Read the script</a></p>
     </div>
   </div>
   <p class="alt">
-    Or <a href="https://github.com/agourlay/ruxguitar/releases">download a release</a>,
-    or with Rust: <code>cargo install --locked ruxguitar</code>
+    <a href="#downloads">Browse desktop downloads</a> · Install with Cargo <code id="cargo">cargo install --locked ruxguitar</code>
   </p>
   <details class="trouble">
     <summary>Trouble installing?</summary>
@@ -93,8 +92,13 @@
         stop at <a href="https://github.com/agourlay/ruxguitar/releases/tag/v0.6.3">v0.6.3</a>.</dd>
     </dl>
   </details>
-  <img class="shot" src="ruxguitar.gif" width="1150" height="768"
+  <a class="capture" href="ruxguitar.gif" aria-label="View the full-size playback recording">
+    <picture>
+      <source media="(prefers-reduced-motion: reduce)" srcset="screenshot.png">
+      <img class="shot" src="ruxguitar.gif" width="1150" height="768"
        alt="Ruxguitar playing a two-measure loop from Pull Me Under at 80% tempo, with the guitar part soloed and the playhead moving through the track overview." loading="eager">
+    </picture>
+  </a>
   </div>
 </header>
 
@@ -103,32 +107,64 @@
 <!-- Measured on the release build with the largest file in test-files, a
      610 KB Guitar Pro 5 tab: window up and tab parsed in about 50 ms each,
      about 117 MB proportional set size. The download is the Linux archive. -->
-<section class="stats">
-  <p>Native Rust. No Electron, no Java.</p>
+<section class="stats" aria-labelledby="stats-title">
+  <p id="stats-title">Native Rust. No Electron, no Java.</p>
   <ul>
-    <li><b>13 MB</b> one download, sound included</li>
-    <li><b>~50 ms</b> to open a tab</li>
+    <li><b>@LINUX_DOWNLOAD_SIZE@</b> Linux download, sound included</li>
+    <li><b>~50 ms</b> to open a 610 KB tab</li>
     <li><b>~100 MB</b> of memory</li>
     <li><b>0</b> accounts, fully offline</li>
   </ul>
 </section>
 
+<section class="downloads" id="downloads" aria-labelledby="download-title">
+  <div class="section-heading">
+    <h2 id="download-title">Desktop downloads</h2>
+    <a href="@RELEASE_URL@">@RELEASE_TAG@ release notes</a>
+  </div>
+  <p>Choose your build, extract the archive and open <code>ruxguitar</code>.</p>
+  <div class="platforms">
+    <!-- RELEASE_ARCHIVES -->
+  </div>
+</section>
+
 <section class="beats">
   <div>
-    <h2>Every Guitar Pro file</h2>
-    <p>GP3, GP4 and GP5, plus the newer <code>.gpx</code> and <code>.gp</code>
-    formats. Open them from the picker or drop them on the window.</p>
+    <h2>Guitar Pro 1–7</h2>
+    <p>Drop a tab onto the window. Click a measure in the track overview to jump straight to that instrument’s part.</p>
   </div>
   <div>
     <h2>Sound in the binary</h2>
-    <p>A soundfont ships inside the executable, so playback works on a fresh
-    machine. Point it at a bigger one when you want better tone.</p>
+    <p>A SoundFont ships inside the executable, so playback works offline
+    as soon as you open a tab.</p>
   </div>
   <div>
     <h2>Built for practice</h2>
     <p>Slow a passage to a quarter speed, solo the track you are learning,
     and let repeats and alternate endings play out on their own.</p>
   </div>
+</section>
+
+<section class="faq" id="faq" aria-labelledby="faq-title">
+  <div class="section-heading">
+    <h2 id="faq-title">Frequently asked questions</h2>
+    <a href="https://github.com/agourlay/ruxguitar/blob/master/README.md#faq">Full FAQ on GitHub</a>
+  </div>
+  <details open>
+    <summary>Where can I find Guitar Pro tabs?</summary>
+    <p>Look for a Guitar Pro version of your song on <a href="https://www.ultimate-guitar.com/">Ultimate Guitar</a>.
+      Download the tab and drop the file onto the Ruxguitar window.</p>
+  </details>
+  <details>
+    <summary>Can I change how the instruments sound?</summary>
+    <p>Yes. Start Ruxguitar with <code>--sound-font-file</code> and the path to your preferred SF2 file.
+      For example, if FluidR3_GM.sf2 is in your current folder, run <code>ruxguitar --sound-font-file FluidR3_GM.sf2</code>.</p>
+  </details>
+  <details>
+    <summary>How do I switch between light and dark mode?</summary>
+    <p>Ruxguitar follows your desktop theme on macOS and Windows. On Linux it defaults to dark.
+      Start the player with <code>ruxguitar --theme light</code> or <code>ruxguitar --theme dark</code> to choose either theme.</p>
+  </details>
 </section>
 
 <section class="keys">
@@ -139,6 +175,7 @@
     <div><dt><kbd>Ctrl</kbd>+<kbd>↑</kbd> <kbd>↓</kbd></dt><dd>tempo up or down</dd></div>
     <div><dt><kbd>S</kbd></dt><dd>solo the track</dd></div>
     <div><dt><kbd>M</kbd></dt><dd>mute the track</dd></div>
+    <div><dt><kbd>O</kbd></dt><dd>track overview</dd></div>
     <div><dt><kbd>F11</kbd></dt><dd>fullscreen</dd></div>
   </dl>
 </section>
@@ -182,27 +219,15 @@
     b.onclick = function () {
       navigator.clipboard.writeText(b.previousElementSibling.textContent).then(function () {
         b.textContent = "Copied";
+      }, function () {
+        window.getSelection().selectAllChildren(b.previousElementSibling);
+        b.textContent = "Selected";
+      }).then(function () {
         setTimeout(function () { b.textContent = "Copy"; }, 1600);
       });
     };
   });
 })();
-
-// The version the install commands fetch, named in each install note with
-// its release date on hover. Silent when GitHub does not answer, like the
-// star count below.
-fetch("https://api.github.com/repos/agourlay/ruxguitar/releases/latest")
-  .then(function (r) { return r.ok ? r.json() : null; })
-  .then(function (rel) {
-    if (!rel || !rel.tag_name || !rel.published_at) return;
-    var when = new Date(rel.published_at).toLocaleDateString("en-GB",
-      { day: "numeric", month: "long", year: "numeric" });
-    document.querySelectorAll(".install-note .ver").forEach(function (v) {
-      v.textContent = rel.tag_name + " ";
-      v.title = "Released " + when;
-    });
-  })
-  .catch(function () {});
 
 // The star count, filled in when GitHub answers; the link stands on its
 // own when it does not.

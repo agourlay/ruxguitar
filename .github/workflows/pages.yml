@@ -1,8 +1,7 @@
 name: landing page
 
-# Publishes site/ to the gh-pages branch, which GitHub Pages serves. Only
-# the files the page is built from trigger it, so a code-only push does not
-# redeploy.
+# A promoted release can already have its archives. A fresh release usually
+# needs the second trigger, after the release workflow finishes uploading them.
 on:
   push:
     branches: [ master ]
@@ -11,6 +10,11 @@ on:
       - 'ruxguitar.gif'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
+  release:
+    types: [released]
+  workflow_run:
+    workflows: [release binaries]
+    types: [completed]
 
 # Two runs pushing the same branch would race, and the second is the one
 # worth keeping.
@@ -27,8 +31,24 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
       - name: Assemble the site
-        run: site/build.sh
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" > "$RUNNER_TEMP/release.json"
+          if site/build.sh "$RUNNER_TEMP/release.json"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            if [[ $status == 75 && $GITHUB_EVENT_NAME == release ]]; then
+              echo "Waiting for the release workflow to finish uploading the archives."
+            else
+              exit "$status"
+            fi
+          fi
       # Plain git rather than a third-party publish action: this pushes to
       # our own repository with the token the runner already has, in five
       # commands. gh-pages is a build artifact, not a history, so each run
@@ -36,6 +56,7 @@ jobs:
       # rather than pasted into the script text, so it is never part of the
       # command this step is built from.
       - name: Push the branch
+        if: steps.build.outputs.ready == 'true'
         working-directory: _site
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -45,6 +66,6 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -q -m "Site built from ${GITHUB_SHA}"
+          git commit -q -m "Site built from $(git -C .. rev-parse HEAD)"
           git push -q --force \
             "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" gh-pages

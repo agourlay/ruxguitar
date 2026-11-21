@@ -1,8 +1,6 @@
-/* The application's own dark theme: iced's dark background and blue, and the
-   red the playhead is drawn in. Every colour on the page is one of these, so
-   the light set below is the whole of light mode. */
+/* The application’s graphite background, blue controls and red playhead. */
 :root {
-  color-scheme: dark light;
+  color-scheme: dark;
   --bg: #202225;
   --bg-lift: #2b2e33;
   --bg-deep: #191b1d;
@@ -25,27 +23,6 @@
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
           "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-/* The application's light theme, for visitors who asked for one. */
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #ffffff;
-    --bg-lift: #eef0f4;
-    --bg-deep: #f5f6f8;
-    --text: #1d1f23;
-    --text-soft: #5c616b;
-    --blue: #4a67d0;
-    --blue-dark: #3a52a8;
-    --link: #3a52a8;
-    --line: rgba(0, 0, 0, 0.1);
-    --staff: rgba(0, 0, 0, 0.08);
-    --card: rgba(0, 0, 0, 0.03);
-    --card-hover: rgba(0, 0, 0, 0.06);
-    --term: #202225;
-    --term-ink: #e8e8ea;
-    --shadow: rgba(20, 24, 40, 0.18);
-  }
 }
 
 * { box-sizing: border-box; }
@@ -198,6 +175,7 @@ img { display: block; width: 100%; height: auto; }
 
 /* The capture is a screenshot of a window; a thin frame keeps its own dark
    chrome from bleeding into the page behind it. */
+.capture { display: block; }
 .shot {
   max-width: 1150px;
   margin: 0 auto;
@@ -231,7 +209,7 @@ img { display: block; width: 100%; height: auto; }
 
 .install-tabs button[aria-selected="true"] {
   color: #fff;
-  background: var(--blue);
+  background: var(--blue-dark);
   border-color: var(--blue);
 }
 
@@ -274,12 +252,12 @@ img { display: block; width: 100%; height: auto; }
   padding: 6px 14px;
   border: 0;
   border-radius: 999px;
-  background: var(--blue);
+  background: var(--blue-dark);
   color: #fff;
   cursor: pointer;
 }
 
-.install-line .copy:hover { background: var(--blue-dark); }
+.install-line .copy:hover { text-decoration: underline; }
 .install-line .copy[hidden] { display: none; }
 
 .install-note {
@@ -389,6 +367,27 @@ main > section.stats {
   color: var(--text);
 }
 
+/* ---- release archives ---- */
+
+.section-heading, .archive {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.section-heading h2, .platforms h3 { margin: 0; }
+.downloads > p, .archive small { color: var(--text-soft); }
+.section-heading a, .archive small, .source-link { font-size: .88rem; }
+.platforms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 245px), 1fr));
+  gap: 20px;
+}
+.platforms > div { border-top: 1px solid var(--line); padding-top: 12px; }
+.archive { padding-block: 8px; text-decoration: none; }
+.archive span { text-decoration: underline; text-underline-offset: .18em; }
+
 /* ---- three beats ---- */
 
 .beats {
@@ -417,6 +416,12 @@ main > section.stats {
 }
 .beats p { margin: 0; font-size: 0.97rem; color: var(--text-soft); }
 .beats code { font-size: 0.85em; padding: 2px 6px; }
+
+/* ---- FAQ ---- */
+
+.faq details { border-bottom: 1px solid var(--line); padding-block: 12px; }
+.faq summary { cursor: pointer; font-weight: 600; }
+.faq p { max-width: 68ch; margin: 6px 0 0; color: var(--text-soft); overflow-wrap: anywhere; }
 
 /* ---- shortcuts ---- */
 
@@ -489,9 +494,17 @@ footer p { margin: 0 auto 8px; max-width: 58ch; }
      staff moves down with the title, and the playhead with the narrower
      headline. */
   .hero { padding-top: 72px; }
+  .formats { gap: 4px; }
+  .formats li { padding-inline: 6px; }
   .top { top: 14px; right: 14px; }
   .hero::before { top: 74px; height: 61px; background-size: 100% 12px; }
   .hero::after { top: 68px; height: 73px; left: 12%; }
   main > section { padding: 56px 20px 0; }
   main > section:last-child { padding-bottom: 56px; }
+}
+
+@media (max-width: 420px) {
+  .keys dl { grid-template-columns: minmax(0, 1fr); }
+  .keys dl > div { grid-template-columns: 6.6em minmax(0, 1fr); }
+  .keys dd { white-space: normal; }
 }

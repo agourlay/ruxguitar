@@ -11,15 +11,24 @@
 # Used by .github/workflows/pages.yml and by hand:
 #
 #   site/build.sh && python3 -m http.server -d _site
+#   site/build.sh release.json  # build offline from a saved GitHub API response
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 out="$root/_site"
 
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+metadata=${1:-"$tmp/release.json"}
+if [ "$#" -eq 0 ]; then
+  curl -fsSL https://api.github.com/repos/agourlay/ruxguitar/releases/latest -o "$metadata"
+fi
+python3 "$root/site/render-downloads.py" "$root/site/index.html" "$metadata" "$tmp/index.html"
+
 rm -rf "$out"
 mkdir -p "$out"
 
-cp "$root/site/index.html" "$root/site/style.css" "$root/site/social.png" \
+cp "$tmp/index.html" "$root/site/style.css" "$root/site/social.png" "$root/site/screenshot.png" \
    "$root/site/install.sh" "$root/site/install.ps1" "$out/"
 cp "$root/ruxguitar.gif" "$out/"
 
