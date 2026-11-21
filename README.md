@@ -7,7 +7,7 @@ A guitar pro tablature player.
 
 The design of the application is described in details in the blog article "[Playing guitar tablatures in Rust](https://agourlay.github.io/ruxguitar-tablature-player/)".
 
-![capture](ruxguitar.gif)
+![Ruxguitar playing a two-measure loop from Pull Me Under at 80% tempo, with the guitar part soloed and the playhead moving through the track overview.](ruxguitar.gif)
 
 ## Features
 
