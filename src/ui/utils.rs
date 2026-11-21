@@ -37,7 +37,7 @@ impl TablatureColors {
 }
 
 /// Blend `amount` of `over` into `base`.
-fn mix(base: Color, over: Color, amount: f32) -> Color {
+pub fn mix(base: Color, over: Color, amount: f32) -> Color {
     Color {
         r: base.r + (over.r - base.r) * amount,
         g: base.g + (over.g - base.g) * amount,
@@ -52,6 +52,7 @@ pub fn untitled_text_table_box() -> Container<'static, Message> {
         - use ctrl+up/down to change the tempo\n \
         - use left/right to navigate measures\n \
         - use s to toggle solo mode\n \
+        - use o to toggle the track overview\n \
         - use F11 to toggle fullscreen";
     let text = Text::new(message);
 

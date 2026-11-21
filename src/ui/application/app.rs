@@ -11,8 +11,9 @@ use crate::ui::selection_drag::{DragRelease, SelectionDrag};
 use crate::ui::selections::{TempoSelection, TrackSelection};
 use crate::ui::song_info::SongDisplayInfo;
 use crate::ui::tablature::Tablature;
+use crate::ui::track_overview::{PLAYING_MARGIN, TrackOverview};
 use crate::{ApplicationArgs, ThemeChoice};
-use iced::widget::scrollable::AbsoluteOffset;
+use iced::widget::scrollable::{AbsoluteOffset, Viewport};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -36,6 +37,8 @@ pub struct RuxApplication {
     config: Config,
     pub(super) error_message: Option<String>,
     pub(super) is_fullscreen: bool,
+    /// Whether the multitrack overview shows under the tablature.
+    pub(super) show_track_overview: bool,
     /// Whether the track menu under the toolbar's track picker is open.
     pub(super) track_menu_open: bool,
     pub(super) selection_drag: SelectionDrag,
@@ -52,6 +55,8 @@ pub(super) struct LoadedSong {
     pub(super) tracks: Vec<TrackSelection>,
     pub(super) track: TrackSelection,
     pub(super) tablature: Tablature,
+    /// Every track's measures at a glance, under the tablature.
+    pub(super) overview: TrackOverview,
 }
 
 /// Playback preferences, kept at the app level so they survive reloading a file.
@@ -124,6 +129,12 @@ pub enum Message {
     /// File content, parent folder and file name.
     FileOpened(Result<(Vec<u8>, Option<PathBuf>, String, PathBuf), FilePickerError>),
     TrackSelected(TrackSelection),
+    /// A track's label was pressed in the overview.
+    TrackOverviewTrack(usize),
+    /// A square was pressed in the overview: its track and measure.
+    TrackOverviewMeasure(usize, usize),
+    TrackOverviewScrolled(Viewport),
+    TrackOverviewLabelsScrolled(Viewport),
     /// Open or close the track menu.
     ToggleTrackMenu,
     CloseTrackMenu,
@@ -153,6 +164,8 @@ pub enum Message {
     ReportError(String),
     /// Toggle fullscreen, which also hides the controls and status bar.
     ToggleFullscreen,
+    /// Show or hide the multitrack overview.
+    ToggleTrackOverview,
     /// Master volume slider, in `0.0..=1.0`.
     MasterVolumeChanged(f32),
     /// The window is closing: save the session, then exit.
@@ -179,6 +192,7 @@ impl RuxApplication {
             config,
             error_message: None,
             is_fullscreen: false,
+            show_track_overview: session.show_track_overview,
             track_menu_open: false,
             selection_drag: SelectionDrag::Idle,
             current_tab_path: None,
@@ -261,6 +275,7 @@ impl RuxApplication {
             beat_index,
             selection_start,
             selection_end,
+            show_track_overview: self.show_track_overview,
         };
         self.prefs.master_volume = master_volume;
         log::debug!(
@@ -425,11 +440,13 @@ impl RuxApplication {
             &playback_order,
         );
         self.track_menu_open = false;
+        let overview = TrackOverview::new(&song_rc);
         self.song = Some(LoadedSong {
             info,
             tracks: track_selections,
             track,
             tablature,
+            overview,
         });
         let audio_player = match AudioPlayer::new(
             song_rc.clone(),
@@ -537,16 +554,63 @@ impl RuxApplication {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.handle(message);
+        Task::batch([task, self.follow_in_overview()])
+    }
+
+    /// Scroll the overview to the focused measure when it moved out of view.
+    fn follow_in_overview(&mut self) -> Task<Message> {
+        let Some(song) = &mut self.song else {
+            return Task::none();
+        };
+        let is_playing = self
+            .audio_player
+            .as_ref()
+            .is_some_and(AudioPlayer::is_playing);
+        let margin = if is_playing { PLAYING_MARGIN } else { 0 };
+        song.overview
+            .follow(song.tablature.focused_measure(), margin)
+            .map_or_else(Task::none, |(id, offset)| scroll_to(id, offset))
+    }
+
+    /// Show another track, keeping the focused measure.
+    fn select_track(&mut self, index: usize) {
+        self.track_menu_open = false;
+        if let Some(song) = &mut self.song
+            && let Some(selection) = song.tracks.get(index).cloned()
+        {
+            song.tablature.update_track(index);
+            song.track = selection;
+        }
+        self.persist_session();
+    }
+
+    fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TrackSelected(selection) => {
-                self.track_menu_open = false;
-                if let Some(song) = &mut self.song {
-                    song.tablature.update_track(selection.index);
-                    song.track = selection;
-                }
-                self.persist_session();
+                self.select_track(selection.index);
                 Task::none()
             }
+            Message::TrackOverviewTrack(index) => {
+                self.select_track(index);
+                Task::none()
+            }
+            Message::TrackOverviewMeasure(track, measure) => {
+                if self.song.as_ref().is_some_and(|s| s.track.index != track) {
+                    self.select_track(track);
+                }
+                self.focus_measure_with_scroll(measure)
+            }
+            Message::TrackOverviewScrolled(viewport) => self
+                .song
+                .as_mut()
+                .and_then(|song| song.overview.squares_scrolled(viewport))
+                .map_or_else(Task::none, |(id, offset)| scroll_to(id, offset)),
+            Message::TrackOverviewLabelsScrolled(viewport) => self
+                .song
+                .as_mut()
+                .and_then(|song| song.overview.labels_scrolled(viewport))
+                .map_or_else(Task::none, |(id, offset)| scroll_to(id, offset)),
             Message::OpenFileDialog => {
                 if self.tab_file_is_loading {
                     Task::none()
@@ -754,6 +818,20 @@ impl RuxApplication {
                     window::Mode::Windowed
                 };
                 window::latest().and_then(move |id| window::set_mode(id, mode))
+            }
+            // fullscreen hides the overview anyway: the key would change
+            // a setting without showing anything
+            Message::ToggleTrackOverview if self.is_fullscreen => Task::none(),
+            Message::ToggleTrackOverview => {
+                self.show_track_overview = !self.show_track_overview;
+                if let Some(song) = &mut self.song {
+                    // shown again, the overview starts scrolled back: follow
+                    // the focused measure once it reports its view
+                    song.overview.reset_view();
+                }
+                self.persist_session();
+                // the tablature gains or loses the overview's room
+                Task::done(Message::WindowResized)
             }
             Message::MasterVolumeChanged(volume) => {
                 self.prefs.master_volume = volume;

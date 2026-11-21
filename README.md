@@ -17,11 +17,13 @@ The design of the application is described in details in the blog article "[Play
 - Tempo control (25% to 200%)
 - Solo mode (isolate single track)
 - Track selection
+- Track overview: every track's measures at a glance, click one to jump there
 - Keyboard shortcuts:
     - `Space` play/pause
     - `Ctrl+Up` / `Ctrl+Down` tempo up/down
     - `Left` / `Right` previous/next measure
     - `S` toggle solo
+    - `O` toggle the track overview
     - `F11` toggle fullscreen
 - Open files via the picker or drag-and-drop
 

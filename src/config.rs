@@ -24,6 +24,8 @@ pub struct SessionState {
     pub beat_index: usize,
     pub selection_start: Option<usize>,
     pub selection_end: Option<usize>,
+    /// Whether the multitrack overview shows under the tablature.
+    pub show_track_overview: bool,
 }
 
 impl Default for SessionState {
@@ -37,6 +39,7 @@ impl Default for SessionState {
             beat_index: 0,
             selection_start: None,
             selection_end: None,
+            show_track_overview: true,
         }
     }
 }

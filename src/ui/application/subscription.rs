@@ -58,6 +58,12 @@ impl RuxApplication {
                 keyboard::Key::Character(c) if c.eq_ignore_ascii_case("m") => {
                     Some(Message::ToggleMute)
                 }
+                // not with Ctrl or Alt, which other applications use to open files
+                keyboard::Key::Character(c)
+                    if c.eq_ignore_ascii_case("o") && !modifiers.control() && !modifiers.alt() =>
+                {
+                    Some(Message::ToggleTrackOverview)
+                }
                 keyboard::Key::Named(F11) => Some(Message::ToggleFullscreen),
                 keyboard::Key::Named(Escape) => Some(Message::CloseTrackMenu),
                 _ => None,

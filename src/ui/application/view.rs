@@ -36,12 +36,24 @@ impl RuxApplication {
                 .padding(10)
                 .into()
         } else {
+            let overview = self
+                .song
+                .as_ref()
+                .filter(|_| self.show_track_overview)
+                .map(|song| {
+                    song.overview.view(
+                        song.track.index,
+                        song.tablature.focused_measure(),
+                        song.tablature.selection_range(),
+                    )
+                });
             column![
                 self.control_bar(),
                 self.with_track_menu(tablature, SECTION_SPACING),
-                rule::horizontal(1),
-                self.status_bar(),
             ]
+            .push(overview)
+            .push(rule::horizontal(1))
+            .push(self.status_bar())
             .spacing(SECTION_SPACING)
             .padding(10)
             .into()

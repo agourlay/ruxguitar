@@ -6,5 +6,6 @@ mod selection_drag;
 mod selections;
 mod song_info;
 mod tablature;
+mod track_overview;
 mod tuning;
 mod utils;
