@@ -104,6 +104,11 @@ mod tests {
     }
 
     #[test]
+    fn parse_all_gtp_files_successfully() {
+        parse_all_files_successfully("gtp");
+    }
+
+    #[test]
     fn parse_all_gpx_files_successfully() {
         parse_all_files_successfully("gpx");
     }

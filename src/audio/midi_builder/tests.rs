@@ -28,6 +28,7 @@ fn test_midi_events_for_all_files() {
             && extension != "gp3"
             && extension != "gpx"
             && extension != "gp"
+            && extension != "gtp"
         {
             continue;
         }

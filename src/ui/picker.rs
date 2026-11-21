@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 /// File extensions supported by the parser; used by both the dialog filter
 /// and the validation of files loaded directly (CLI argument, drag and drop).
-const SUPPORTED_EXTENSIONS: [&str; 5] = ["gp5", "gp4", "gp3", "gpx", "gp"];
+const SUPPORTED_EXTENSIONS: [&str; 6] = ["gp5", "gp4", "gp3", "gpx", "gp", "gtp"];
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum FilePickerError {

@@ -11,7 +11,7 @@ The design of the application is described in details in the blog article "[Play
 
 ## Features
 
-- Guitar Pro file support: GP3, GP4, GP5, GP6 (`.gpx`) and GP7 (`.gp`)
+- Guitar Pro file support: GP1 and GP2 (`.gtp`), GP3, GP4, GP5, GP6 (`.gpx`) and GP7 (`.gp`)
 - MIDI playback with embedded soundfont (or custom soundfont)
 - Repeat sections with alternative endings
 - Tempo control (25% to 200%)

@@ -248,7 +248,7 @@ fn parse_tonality(i: &[u8]) -> IResult<&[u8], KeySignature> {
 /// stores a bitmask. Port of TuxGuitar's `parseRepeatAlternative`: set the
 /// bits below the count not in `existing_alternatives` (the endings already
 /// used by earlier brackets in the same repeat section).
-fn convert_repeat_alternative(existing_alternatives: u8, value: u8) -> u8 {
+pub(crate) fn convert_repeat_alternative(existing_alternatives: u8, value: u8) -> u8 {
     let mut repeat_alternative = 0_u8;
     for ending in 0..8_u8 {
         if value > ending && existing_alternatives & (1 << ending) == 0 {

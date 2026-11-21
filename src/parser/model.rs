@@ -35,6 +35,8 @@ pub const fn convert_velocity(v: i16) -> i16 {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Default)]
 pub enum GpVersion {
+    GP1,
+    GP2,
     #[default]
     GP3,
     GP4,
