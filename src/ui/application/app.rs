@@ -879,6 +879,123 @@ fn resolve_theme(choice: Option<ThemeChoice>) -> Option<Theme> {
 mod tests {
     use super::*;
 
+    fn app_with_demo_song() -> RuxApplication {
+        let mut app = RuxApplication::new(None, Config::in_memory(SessionState::default()));
+        let path = PathBuf::from("test-files/Demo v5.gp5");
+        let _ = app.update(Message::FileOpened(Ok((
+            std::fs::read(&path).unwrap(),
+            None,
+            "Demo v5.gp5".into(),
+            path,
+        ))));
+        assert!(app.audio_player.is_some());
+        app
+    }
+
+    #[test]
+    fn dragging_backwards_selects_a_range_and_clicking_seeks_to_a_beat() {
+        let mut app = app_with_demo_song();
+        let _ = app.update(Message::TrackOverviewTrack(2));
+        let press = Point::new(100.0, 100.0);
+        let _ = app.update(Message::SelectionDragStart(9, 0, press));
+        let _ = app.update(Message::SelectionDragTo(5, Point::new(40.0, 100.0)));
+        let _ = app.update(Message::SelectionDragEnd);
+        let tab = &app.song.as_ref().unwrap().tablature;
+        assert_eq!(tab.selection_range(), Some((5, 9)));
+        assert_eq!((tab.focused_measure(), tab.focused_beat()), (5, 0));
+        let saved = app.config.session();
+        assert_eq!(
+            (saved.selection_start, saved.selection_end),
+            (Some(5), Some(9))
+        );
+
+        let measure = (0..tab.measure_count())
+            .find(|&m| tab.beat_tick_offset(m, 1) > 0)
+            .expect("demo track has a measure with a second beat");
+        let _ = app.update(Message::SelectionDragStart(measure, 1, press));
+        let _ = app.update(Message::SelectionDragTo(measure, Point::new(102.0, 100.0)));
+        let _ = app.update(Message::SelectionDragEnd);
+        let tab = &app.song.as_ref().unwrap().tablature;
+        assert_eq!(tab.selection_range(), None);
+        assert_eq!((tab.focused_measure(), tab.focused_beat()), (measure, 1));
+        let saved = app.config.session();
+        assert_eq!((saved.selection_start, saved.selection_end), (None, None));
+        assert_eq!((saved.measure_index, saved.beat_index), (measure, 1));
+        let tick = app.current_tick.load(std::sync::atomic::Ordering::Relaxed);
+        let _ = app.update(Message::FocusTick(tick));
+        let tab = &app.song.as_ref().unwrap().tablature;
+        assert_eq!((tab.focused_measure(), tab.focused_beat()), (measure, 1));
+    }
+
+    #[test]
+    fn measure_navigation_stops_at_the_ends_and_stop_saves_the_resume_position() {
+        let mut app = app_with_demo_song();
+        let _ = app.update(Message::PreviousMeasure);
+        assert_eq!(app.song.as_ref().unwrap().tablature.focused_measure(), 0);
+        let last = app.song.as_ref().unwrap().tablature.measure_count() - 1;
+        let _ = app.update(Message::TrackOverviewMeasure(1, last - 1));
+        assert_eq!(app.config.session().track_index, 1);
+        assert_eq!(app.config.session().measure_index, last - 1);
+        let _ = app.update(Message::NextMeasure);
+        let _ = app.update(Message::NextMeasure);
+        assert_eq!(app.song.as_ref().unwrap().tablature.focused_measure(), last);
+        let _ = app.update(Message::PreviousMeasure);
+        assert_eq!(
+            app.song.as_ref().unwrap().tablature.focused_measure(),
+            last - 1
+        );
+        // Playback moves the cursor without saving on every tick.
+        let second_measure_tick =
+            app.song.as_ref().unwrap().tablature.song.measure_headers[1].start;
+        let _ = app.update(Message::FocusTick(second_measure_tick));
+        assert_eq!(app.song.as_ref().unwrap().tablature.focused_measure(), 1);
+        let _ = app.update(Message::StopPlayer);
+        assert_eq!(app.song.as_ref().unwrap().tablature.focused_measure(), 0);
+        assert_eq!(app.config.session().measure_index, 1);
+    }
+
+    #[test]
+    fn track_controls_address_the_selected_track_or_the_named_menu_track() {
+        let mut app = app_with_demo_song();
+        let track = app.song.as_ref().unwrap().tracks[1].clone();
+        let _ = app.update(Message::ToggleTrackMenu);
+        assert!(app.track_menu_open);
+        let _ = app.update(Message::TrackSelected(track));
+        assert!(!app.track_menu_open);
+        let _ = app.update(Message::ToggleSolo);
+        let _ = app.update(Message::ToggleTrackMute(0));
+        let player = app.audio_player.as_ref().unwrap();
+        assert!(player.is_track_solo(1));
+        assert!(!player.is_track_solo(0));
+        assert!(player.is_track_muted(0));
+        assert!(!player.is_track_muted(1));
+
+        let _ = app.update(Message::TrackOverviewTrack(0));
+        let _ = app.update(Message::ToggleTrackSolo(1));
+        let _ = app.update(Message::ToggleMute);
+        let player = app.audio_player.as_ref().unwrap();
+        assert!(!player.is_track_solo(1));
+        assert!(!player.is_track_muted(0));
+    }
+
+    #[test]
+    fn fullscreen_closes_the_track_menu_and_preserves_the_overview_preference() {
+        let mut app = RuxApplication::new(None, Config::in_memory(SessionState::default()));
+        let _ = app.update(Message::ToggleTrackOverview);
+        assert!(!app.config.session().show_track_overview);
+        let _ = app.update(Message::ToggleTrackMenu);
+        let _ = app.update(Message::ToggleFullscreen);
+        assert!(app.is_fullscreen);
+        assert!(!app.track_menu_open);
+        let _ = app.update(Message::ToggleTrackOverview);
+        let _ = app.update(Message::ToggleFullscreen);
+        assert!(!app.is_fullscreen);
+        assert!(!app.show_track_overview);
+        assert!(!app.config.session().show_track_overview);
+        let _ = app.update(Message::ToggleTrackOverview);
+        assert!(app.config.session().show_track_overview);
+    }
+
     #[test]
     fn the_track_asked_for_opens_numbered_from_one() {
         assert_eq!(opening_track(None, 8), (0, None));
@@ -888,33 +1005,13 @@ mod tests {
 
     #[test]
     fn canceling_or_failing_to_replace_a_file_keeps_its_song_and_player() {
-        let path = PathBuf::from("test-files/Demo v5.gp5");
+        let mut app = app_with_demo_song();
+        let path = app.current_tab_path.clone().unwrap();
         let contents = std::fs::read(&path).unwrap();
-        let song = Rc::new(parse_gp_data(&contents).unwrap());
-        let order = compute_playback_order(&song.measure_headers);
-        let mut app = RuxApplication::new(None, Config::default());
-        let player = AudioPlayer::new(
-            song.clone(),
-            song.tempo.value,
-            100,
-            None,
-            app.current_tick.clone(),
-            app.beat_notify.clone(),
-            &order,
-        )
-        .unwrap();
+        let song = app.song.as_ref().unwrap().tablature.song.clone();
+        let player = app.audio_player.as_ref().unwrap();
         player.focus_measure_at(2, 0);
         player.toggle_track_solo(0);
-        app.audio_player = Some(player);
-        let tracks = TrackSelection::all_of(&song);
-        app.song = Some(LoadedSong {
-            info: SongDisplayInfo::new(&song, "Demo v5.gp5".into()),
-            track: tracks[0].clone(),
-            tracks,
-            tablature: Tablature::new(song.clone(), 0, Id::unique(), &order),
-            overview: TrackOverview::new(&song),
-        });
-        app.current_tab_path = Some(path.clone());
         // A valid replacement also has to initialize its own sound font.
         app.sound_font_file = Some(path.with_extension("missing-soundfont"));
         let replacement = |contents| Ok((contents, None, "new.gp5".into(), "new.gp5".into()));

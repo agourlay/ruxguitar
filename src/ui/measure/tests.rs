@@ -1,3 +1,5 @@
+mod rendering;
+
 use super::beat::{
     Annotation, beat_annotations, multiple_bend_conflicts, next_note_on_string, note_value,
     tied_from_note_x,
@@ -89,7 +91,9 @@ fn sounding(value: u16, dotted: bool) -> Beat {
         },
         ..Beat::default()
     };
-    beat.notes.push(Note::new(NoteEffect::default()));
+    let mut note = Note::new(NoteEffect::default());
+    note.kind = NoteType::Normal;
+    beat.notes.push(note);
     beat
 }
 

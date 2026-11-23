@@ -931,6 +931,49 @@ mod tests {
     }
 
     #[test]
+    fn gp2_chord_diagrams_consume_six_frets_even_on_a_four_string_track() {
+        let mut song = Song::default();
+        let reader = MeasureReader::new(Format::V2, &mut song);
+        let bytes = Bytes::default()
+            .bytes(&[2, b'D', b'm', 0])
+            .int(0)
+            .bytes(&[0; 32])
+            .int(5)
+            .ints(&[-1, 5, 7, 6, 8, 0])
+            // A chord with first fret zero omits the diagram.
+            .bytes(&[1, b'G', 0])
+            .ints(&[12, 0])
+            .0;
+        let (rest, dm) = reader.parse_chord(&bytes, 4).unwrap();
+        assert_eq!(dm.name, "Dm");
+        assert_eq!(dm.first_fret, Some(5));
+        assert_eq!(dm.strings, [-1, 5, 7, 6]);
+        let (rest, g) = reader.parse_chord(rest, 4).unwrap();
+        assert_eq!(g.name, "G");
+        assert_eq!(g.first_fret, Some(0));
+        assert_eq!(g.strings, [-1; 4]);
+        assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn gp2_beat_effects_distinguish_bass_techniques_and_harmonics() {
+        for (code, slap, harmonic) in [
+            (5, SlapEffect::Tapping, None),
+            (6, SlapEffect::Slapping, None),
+            (7, SlapEffect::Popping, None),
+            (8, SlapEffect::None, Some(HarmonicType::Natural)),
+            (9, SlapEffect::None, Some(HarmonicType::Artificial)),
+        ] {
+            let mut effect = NoteEffect::default();
+            let bytes = [code, 0xff];
+            let (rest, ()) = parse_beat_effects(&bytes, &mut effect).unwrap();
+            assert_eq!(effect.slap, slap);
+            assert_eq!(effect.harmonic.map(|h| h.kind), harmonic);
+            assert_eq!(rest, &[0xff]);
+        }
+    }
+
+    #[test]
     fn a_note_on_a_missing_string_is_dropped() {
         let song = parse_gp_data(&gp2_song()).unwrap();
         let bass = &song.tracks[1].measures[0].voices[0].beats;
