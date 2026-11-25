@@ -73,3 +73,7 @@ zip = { version = "9.8.1", default-features = false, features = ["deflate"] }
 [profile.release]
 lto = "fat"
 codegen-units = 1
+
+[dev-dependencies]
+# drives the interface without a window, to record the demo (site/demo.sh)
+iced_runtime = "0.14.0"

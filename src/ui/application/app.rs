@@ -958,6 +958,9 @@ fn is_dark(choice: Option<ThemeChoice>, desktop_tone: theme::Mode) -> bool {
 }
 
 #[cfg(test)]
+mod demo;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

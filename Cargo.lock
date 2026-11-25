@@ -2950,6 +2950,7 @@ dependencies = [
  "encoding_rs",
  "env_logger",
  "iced",
+ "iced_runtime",
  "log",
  "nom",
  "rfd",
