@@ -8,14 +8,6 @@ pub fn open_icon<'a, Message>() -> Element<'a, Message> {
     icon('\u{0f115}')
 }
 
-pub fn solo_icon<'a, Message>() -> Element<'a, Message> {
-    text('S').into()
-}
-
-pub fn mute_icon<'a, Message>() -> Element<'a, Message> {
-    text('M').into()
-}
-
 pub fn metronome_icon<'a, Message>() -> Element<'a, Message> {
     // musical symbols live outside the basic plane: needs advanced shaping
     text('\u{1D15F}').shaping(Shaping::Advanced).into()

@@ -51,8 +51,8 @@ pub fn untitled_text_table_box() -> Container<'static, Message> {
         - use the space bar to play/pause\n \
         - use ctrl+up/down to change the tempo\n \
         - use left/right to navigate measures\n \
-        - use s to toggle solo mode\n \
-        - use o to toggle the track overview\n \
+        - use up/down to change the track\n \
+        - use s/m to toggle solo/mute\n \
         - use F11 to toggle fullscreen";
     let text = Text::new(message);
 

@@ -8,11 +8,11 @@ use iced::{Alignment, Border, Element, Length, Theme};
 use crate::audio::midi_player::AudioPlayer;
 use crate::parser::song_parser::{MeasureHeader, QUARTER_TIME};
 use crate::ui::icons::{
-    count_in_icon, metronome_icon, mute_icon, open_icon, pause_icon, play_icon, solo_icon,
-    stop_icon,
+    count_in_icon, metronome_icon, open_icon, pause_icon, play_icon, stop_icon,
 };
 use crate::ui::selections::TempoSelection;
 use crate::ui::song_info::SongDisplayInfo;
+use crate::ui::track_overview::TrackSound;
 use crate::ui::utils::{
     TablatureColors, action_gated, action_toggle, modal, untitled_text_table_box,
 };
@@ -36,27 +36,21 @@ impl RuxApplication {
                 .padding(10)
                 .into()
         } else {
-            let overview = self
-                .song
-                .as_ref()
-                .filter(|_| self.show_track_overview)
-                .map(|song| {
-                    song.overview.view(
-                        song.track.index,
-                        song.tablature.focused_measure(),
-                        song.tablature.selection_range(),
-                    )
-                });
-            column![
-                self.control_bar(),
-                self.with_track_menu(tablature, SECTION_SPACING),
-            ]
-            .push(overview)
-            .push(rule::horizontal(1))
-            .push(self.status_bar())
-            .spacing(SECTION_SPACING)
-            .padding(10)
-            .into()
+            let overview = self.song.as_ref().map(|song| {
+                song.overview.view(
+                    song.track.index,
+                    song.tablature.focused_measure(),
+                    song.tablature.selection_range(),
+                    self.track_sounds(song.tracks.len()),
+                )
+            });
+            column![self.control_bar(), tablature]
+                .push(overview)
+                .push(rule::horizontal(1))
+                .push(self.status_bar())
+                .spacing(SECTION_SPACING)
+                .padding(10)
+                .into()
         };
 
         // add error modal if any
@@ -66,6 +60,21 @@ impl RuxApplication {
         } else {
             base
         }
+    }
+
+    /// Each track's solo and mute, and whether it will be heard.
+    fn track_sounds(&self, tracks: usize) -> Vec<TrackSound> {
+        (0..tracks)
+            .map(|track| {
+                self.audio_player
+                    .as_ref()
+                    .map_or_else(TrackSound::default, |player| TrackSound {
+                        solo: player.is_track_solo(track),
+                        muted: player.is_track_muted(track),
+                        audible: player.is_track_audible(track),
+                    })
+            })
+            .collect()
     }
 
     /// The bar above the tablature: open, transport and playback settings.
@@ -127,12 +136,11 @@ impl RuxApplication {
             .into()
     }
 
-    /// Tempo, volume, metronome, count-in, solo, mute and track, once a
-    /// song is open.
+    /// Tempo, volume, metronome and count-in, once a song is open.
     fn playback_settings(&self) -> Element<'_, Message> {
-        let Some(song) = &self.song else {
+        if self.song.is_none() {
             return row![horizontal()].into();
-        };
+        }
         let tempo_percentage = pick_list(
             TempoSelection::PRESET,
             Some(&self.prefs.tempo),
@@ -140,22 +148,6 @@ impl RuxApplication {
         )
         .text_size(14)
         .padding([5, 10]);
-        let solo_mode = action_toggle(
-            solo_icon(),
-            "Solo",
-            Message::ToggleSolo,
-            self.audio_player
-                .as_ref()
-                .is_some_and(|p| p.is_track_solo(song.track.index)),
-        );
-        let mute_mode = action_toggle(
-            mute_icon(),
-            "Mute",
-            Message::ToggleMute,
-            self.audio_player
-                .as_ref()
-                .is_some_and(|p| p.is_track_muted(song.track.index)),
-        );
         let metronome_mode = action_toggle(
             metronome_icon(),
             "Metronome",
@@ -168,7 +160,6 @@ impl RuxApplication {
             Message::ToggleCountIn,
             self.prefs.count_in,
         );
-        let track_picker = self.track_picker(song);
         let current_volume = self
             .audio_player
             .as_ref()
@@ -184,9 +175,6 @@ impl RuxApplication {
             volume_slider,
             metronome_mode,
             count_in_mode,
-            solo_mode,
-            mute_mode,
-            track_picker,
         ]
         .spacing(10)
         .align_y(Alignment::Center)

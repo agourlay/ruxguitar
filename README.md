@@ -15,15 +15,14 @@ The design of the application is described in details in the blog article "[Play
 - MIDI playback with embedded soundfont (or custom soundfont)
 - Repeat sections with alternative endings
 - Tempo control (25% to 200%)
-- Solo mode (isolate single track)
-- Track selection
 - Track overview: every track's measures at a glance, click one to jump there
+- Solo and mute per track, from the track overview
 - Keyboard shortcuts:
     - `Space` play/pause
     - `Ctrl+Up` / `Ctrl+Down` tempo up/down
     - `Left` / `Right` previous/next measure
-    - `S` toggle solo
-    - `O` toggle the track overview
+    - `Up` / `Down` previous/next track
+    - `S` / `M` toggle solo/mute
     - `F11` toggle fullscreen
 - Open files via the picker or drag-and-drop
 
@@ -43,7 +42,7 @@ Usage: ruxguitar [OPTIONS]
 Options:
       --sound-font-file <SOUND_FONT_FILE>  Optional path to a sound font file
       --tab-file-path <TAB_FILE_PATH>      Optional path to tab file to by-pass the file picker
-      --track <TRACK>                      Track to open, numbered from 1 as in the track menu
+      --track <TRACK>                      Track to open, numbered from 1 as in the track overview
       --no-antialiasing                    Disable antialiasing
       --theme <THEME>                      Force the color theme [possible values: light, dark]
   -h, --help                               Print help

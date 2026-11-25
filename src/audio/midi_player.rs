@@ -112,6 +112,11 @@ impl AudioPlayer {
         self.player_params.is_track_solo(track_id)
     }
 
+    /// Whether the track will be heard: not muted, and soloed if any is.
+    pub fn is_track_audible(&self, track_id: usize) -> bool {
+        self.player_params.is_track_audible(track_id)
+    }
+
     /// Whether playback reached the end of the song.
     pub fn is_finished(&self) -> bool {
         self.player_params.is_finished()

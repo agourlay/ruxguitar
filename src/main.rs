@@ -68,7 +68,7 @@ pub struct CliArgs {
     /// Optional path to tab file to by-pass the file picker.
     #[arg(long)]
     tab_file_path: Option<PathBuf>,
-    /// Track to open, numbered from 1 as in the track menu.
+    /// Track to open, numbered from 1 as in the track overview.
     #[arg(long, requires = "tab_file_path", value_parser = clap::value_parser!(u16).range(1..))]
     track: Option<u16>,
     /// Disable antialiasing.

@@ -4,7 +4,7 @@
 use iced::{Subscription, event, keyboard, mouse, stream, window};
 
 use iced::futures::{SinkExt, Stream};
-use iced::keyboard::key::Named::{ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Escape, F11, Space};
+use iced::keyboard::key::Named::{ArrowDown, ArrowLeft, ArrowRight, ArrowUp, F11, Space};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::Notify;
@@ -52,20 +52,15 @@ impl RuxApplication {
                 }
                 keyboard::Key::Named(ArrowLeft) => Some(Message::PreviousMeasure),
                 keyboard::Key::Named(ArrowRight) => Some(Message::NextMeasure),
+                keyboard::Key::Named(ArrowUp) => Some(Message::PreviousTrack),
+                keyboard::Key::Named(ArrowDown) => Some(Message::NextTrack),
                 keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s") => {
                     Some(Message::ToggleSolo)
                 }
                 keyboard::Key::Character(c) if c.eq_ignore_ascii_case("m") => {
                     Some(Message::ToggleMute)
                 }
-                // not with Ctrl or Alt, which other applications use to open files
-                keyboard::Key::Character(c)
-                    if c.eq_ignore_ascii_case("o") && !modifiers.control() && !modifiers.alt() =>
-                {
-                    Some(Message::ToggleTrackOverview)
-                }
                 keyboard::Key::Named(F11) => Some(Message::ToggleFullscreen),
-                keyboard::Key::Named(Escape) => Some(Message::CloseTrackMenu),
                 _ => None,
             }
         });

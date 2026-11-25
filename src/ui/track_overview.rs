@@ -1,13 +1,16 @@
 //! The multitrack overview under the tablature: a row per track, a square
-//! per measure, to see where each instrument plays and jump there.
+//! per measure, to see where each instrument plays and jump there. Like
+//! TuxGuitar's track table, each row also solos and mutes its track.
 //!
-//! Like TuxGuitar's track table (`TGTableViewer`), a square takes its track's
-//! color, or a muted one when the measure only rests; the measure being
-//! played gets an inner marker, and a click moves to that track and measure.
+//! Squares follow the tablature's colors: a neutral tone where a track plays,
+//! the accent on the current track, a faint one where the measure only rests.
+//! A track that will not be heard, muted or left out of a solo, fades. The
+//! measure being played gets an inner marker, and a click moves to that
+//! track and measure.
 
 use crate::parser::song_parser::{Measure, Song};
 use crate::ui::application::Message;
-use crate::ui::utils::{COLOR_DARK_RED, TablatureColors, mix};
+use crate::ui::utils::{TablatureColors, mix};
 use iced::advanced::mouse;
 use iced::advanced::text::Shaping::Auto;
 use iced::mouse::Cursor;
@@ -15,10 +18,10 @@ use iced::widget::canvas::{Cache, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::scrollable::{AbsoluteOffset, Direction, Scrollbar, Viewport};
 use iced::widget::text::Wrapping;
 use iced::widget::{
-    Action, Canvas, Id, button, canvas, column, container, row, scrollable, space, text,
+    Action, Canvas, Id, button, canvas, column, container, row, scrollable, space, text, tooltip,
 };
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
-use std::cell::Cell;
+use std::cell::RefCell;
 
 /// The side of a measure's square.
 const CELL: f32 = 14.0;
@@ -26,8 +29,10 @@ const CELL: f32 = 14.0;
 const STEP: f32 = CELL + 1.0;
 /// The band above the squares holding measure numbers and markers.
 const HEADER: f32 = 14.0;
-const LABEL_WIDTH: f32 = 170.0;
+/// The track names with their solo and mute toggles.
+const LABEL_WIDTH: f32 = 210.0;
 const LABEL_SIZE: f32 = 11.0;
+const TOGGLE_WIDTH: f32 = 18.0;
 /// Rows shown before the overview scrolls vertically.
 const MAX_VISIBLE_ROWS: usize = 6;
 /// The horizontal scrollbar, drawn over the bottom of the squares.
@@ -38,12 +43,12 @@ pub const PLAYING_MARGIN: usize = 3;
 pub struct TrackOverview {
     /// Per track, per measure, whether the measure only rests.
     rests: Vec<Vec<bool>>,
-    colors: Vec<Color>,
     labels: Vec<String>,
     /// Per measure, whether it has a marker.
     markers: Vec<bool>,
     cells_cache: Cache,
-    painted_colors: Cell<Option<TablatureColors>>,
+    /// What the cached squares were painted with.
+    painted: RefCell<Option<Painted>>,
     squares_id: Id,
     labels_id: Id,
     /// Where the squares are scrolled and how wide they show, once known.
@@ -52,6 +57,8 @@ pub struct TrackOverview {
     labels_y: f32,
     /// The measure the scroll last followed.
     followed: Option<usize>,
+    /// The track whose row to bring into view once the view is known.
+    track_to_follow: Option<usize>,
 }
 
 impl TrackOverview {
@@ -62,7 +69,6 @@ impl TrackOverview {
                 .iter()
                 .map(|track| track.measures.iter().map(is_rest_measure).collect())
                 .collect(),
-            colors: song.tracks.iter().map(|t| track_color(t.color)).collect(),
             labels: song
                 .tracks
                 .iter()
@@ -75,12 +81,13 @@ impl TrackOverview {
                 .map(|header| header.marker.is_some())
                 .collect(),
             cells_cache: Cache::default(),
-            painted_colors: Cell::new(None),
+            painted: RefCell::new(None),
             squares_id: Id::unique(),
             labels_id: Id::unique(),
             squares: None,
             labels_y: 0.0,
             followed: None,
+            track_to_follow: None,
         }
     }
 
@@ -89,11 +96,12 @@ impl TrackOverview {
     }
 
     /// Forget where the squares stand, for when they show again and
-    /// start from the left.
-    pub fn reset_view(&mut self) {
+    /// start from the left and top, with `track` to bring back into view.
+    pub fn reset_view(&mut self, track: usize) {
         self.squares = None;
         self.labels_y = 0.0;
         self.followed = None;
+        self.track_to_follow = Some(track);
     }
 
     /// The squares were scrolled: keep where, and the labels' offset to
@@ -111,6 +119,11 @@ impl TrackOverview {
 
     fn squares_at(&mut self, view: SquaresView) -> Option<(Id, AbsoluteOffset)> {
         self.squares = Some(view);
+        if let Some(track) = self.track_to_follow.take()
+            && let Some(follow) = self.follow_track(track)
+        {
+            return Some(follow);
+        }
         ((view.y - self.labels_y).abs() > 0.5).then(|| {
             self.labels_y = view.y;
             (self.labels_id.clone(), AbsoluteOffset { x: 0.0, y: view.y })
@@ -147,34 +160,66 @@ impl TrackOverview {
         Some((self.squares_id.clone(), AbsoluteOffset { x, y: squares.y }))
     }
 
+    /// The squares' offset bringing `track`'s row into view, when hidden;
+    /// the labels follow the squares. Before the view is known, the track
+    /// waits for it.
+    pub fn follow_track(&mut self, track: usize) -> Option<(Id, AbsoluteOffset)> {
+        let Some(squares) = self.squares.as_mut() else {
+            self.track_to_follow = Some(track);
+            return None;
+        };
+        let visible = self.labels.len().min(MAX_VISIBLE_ROWS);
+        // the squares hold the offset a measure follow scrolls with too
+        let y = follow_row(track, squares.y, visible)?;
+        squares.y = y;
+        Some((self.squares_id.clone(), AbsoluteOffset { x: squares.x, y }))
+    }
+
     pub fn view(
         &self,
         track: usize,
         focused: usize,
         selection: Option<(usize, usize)>,
+        sounds: Vec<TrackSound>,
     ) -> Element<'_, Message> {
-        let labels = self.labels.iter().enumerate().map(|(index, label)| {
-            let is_current = index == track;
-            button(
-                text(label)
-                    .size(LABEL_SIZE)
-                    .shaping(Auto)
-                    .wrapping(Wrapping::None),
-            )
-            .padding([0, 6])
-            .width(Length::Fill)
-            .height(STEP)
-            .clip(true)
-            .on_press(Message::TrackOverviewTrack(index))
-            .style(move |theme: &Theme, status| {
-                if is_current {
-                    button::primary(theme, status)
-                } else {
-                    button::text(theme, status)
-                }
-            })
-            .into()
-        });
+        let labels = self
+            .labels
+            .iter()
+            .zip(&sounds)
+            .enumerate()
+            .map(|(index, (label, sound))| {
+                let is_current = index == track;
+                let name = button(
+                    text(label)
+                        .size(LABEL_SIZE)
+                        .shaping(Auto)
+                        .wrapping(Wrapping::None),
+                )
+                .padding([0, 6])
+                .width(Length::Fill)
+                .height(STEP)
+                .clip(true)
+                .on_press(Message::TrackOverviewTrack(index))
+                .style(move |theme: &Theme, status| {
+                    if is_current {
+                        // the accent, like the current track's squares
+                        let accent = TablatureColors::of(theme).accent;
+                        let background = match status {
+                            button::Status::Hovered => mix(accent, Color::WHITE, 0.15),
+                            _ => accent,
+                        };
+                        button::primary(theme, status).with_background(background)
+                    } else {
+                        button::text(theme, status)
+                    }
+                });
+                row![
+                    name,
+                    toggle("S", "Solo", sound.solo, Message::ToggleTrackSolo(index)),
+                    toggle("M", "Mute", sound.muted, Message::ToggleTrackMute(index)),
+                ]
+                .into()
+            });
         let rows = self.labels.len();
         let visible_rows = rows.min(MAX_VISIBLE_ROWS) as f32;
         // the labels show as high as the squares above their scrollbar
@@ -197,6 +242,7 @@ impl TrackOverview {
             track,
             focused,
             selection,
+            audible: sounds.iter().map(|sound| sound.audible).collect(),
         })
         .width(self.measure_count() as f32 * STEP)
         // room under the last row to scroll it above the scrollbar, so the
@@ -217,6 +263,69 @@ impl TrackOverview {
     }
 }
 
+/// A track's solo and mute, and whether it will be heard.
+#[derive(Debug, Clone, Copy)]
+pub struct TrackSound {
+    pub solo: bool,
+    pub muted: bool,
+    pub audible: bool,
+}
+
+impl Default for TrackSound {
+    fn default() -> Self {
+        Self {
+            solo: false,
+            muted: false,
+            audible: true,
+        }
+    }
+}
+
+/// A row's solo or mute toggle: a dim letter while off, inverted while on
+/// to read at this size on either theme tone.
+fn toggle<'a>(letter: &'a str, label: &'a str, on: bool, message: Message) -> Element<'a, Message> {
+    let toggle = button(text(letter).size(LABEL_SIZE).center())
+        .padding(0)
+        .width(TOGGLE_WIDTH)
+        .height(STEP)
+        .on_press(message)
+        .style(move |theme: &Theme, status| {
+            if on {
+                let palette = theme.palette();
+                let background = match status {
+                    button::Status::Hovered => mix(palette.text, palette.background, 0.2),
+                    _ => palette.text,
+                };
+                button::Style {
+                    text_color: palette.background,
+                    ..button::secondary(theme, status).with_background(background)
+                }
+            } else {
+                let style = button::text(theme, status);
+                if status == button::Status::Hovered {
+                    style
+                } else {
+                    // off: a dim letter, so the names stand out
+                    button::Style {
+                        text_color: TablatureColors::of(theme).string_line,
+                        ..style
+                    }
+                }
+            }
+        });
+    tooltip(toggle, label, tooltip::Position::FollowCursor)
+        .style(container::rounded_box)
+        .into()
+}
+
+/// What the cached squares were painted with.
+#[derive(Debug, Clone, PartialEq)]
+struct Painted {
+    colors: TablatureColors,
+    track: usize,
+    audible: Vec<bool>,
+}
+
 /// Where the squares are scrolled, and how wide they show.
 #[derive(Debug, Clone, Copy)]
 struct SquaresView {
@@ -235,39 +344,50 @@ fn is_rest_measure(measure: &Measure) -> bool {
         .all(|voice| voice.beats.iter().all(|beat| beat.notes.is_empty()))
 }
 
-/// A track's color from its 0xRRGGBB value; files without one (GP1, GP2,
-/// some GPX) store 0, shown in the tablature's accent rather than black.
-fn track_color(rgb: i32) -> Color {
-    if rgb == 0 {
-        return COLOR_DARK_RED;
-    }
-    let [_, r, g, b] = rgb.to_be_bytes();
-    Color::from_rgb8(r, g, b)
+/// The colors of the squares, from the tablature's.
+#[derive(Debug, Clone, Copy)]
+struct SquareColors {
+    plays: Color,
+    current: Color,
+    /// As `plays` and `current`, for a track that will not be heard.
+    silent_plays: Color,
+    silent_current: Color,
+    rests: Color,
+    /// The marker cut into a square with notes.
+    marker: Color,
+    /// The marker on a resting square, which the background would not show on.
+    resting_marker: Color,
 }
 
-/// A track color as shown on `background`: one too close to it, like white
-/// on the light theme or black on the dark one, is blended with the text.
-fn visible_color(track: Color, background: Color, text: Color) -> Color {
-    // by channel: a saturated color stands out even as dark as the background
-    let distance = (track.r - background.r)
-        .abs()
-        .max((track.g - background.g).abs())
-        .max((track.b - background.b).abs());
-    if distance < 0.15 {
-        mix(track, text, 0.5)
-    } else {
-        track
+impl SquareColors {
+    fn of(colors: TablatureColors, background: Color) -> Self {
+        Self {
+            plays: mix(background, colors.foreground, 0.45),
+            current: colors.accent,
+            silent_plays: mix(background, colors.foreground, 0.25),
+            silent_current: mix(background, colors.accent, 0.45),
+            rests: mix(background, colors.foreground, 0.12),
+            marker: background,
+            resting_marker: colors.foreground,
+        }
     }
-}
 
-/// The marker color showing on a square: dark on a bright one, light on a
-/// dark one, with TuxGuitar's threshold.
-fn marker_color(square: Color) -> Color {
-    let [r, g, b, _] = square.into_rgba8();
-    if u32::from(r) + u32::from(g) + u32::from(b) > 3 * 0x50 {
-        Color::BLACK
-    } else {
-        Color::WHITE
+    fn square(&self, rests: bool, current: bool, audible: bool) -> Color {
+        match (rests, current, audible) {
+            (true, _, _) => self.rests,
+            (false, true, true) => self.current,
+            (false, false, true) => self.plays,
+            (false, true, false) => self.silent_current,
+            (false, false, false) => self.silent_plays,
+        }
+    }
+
+    fn marker(&self, rests: bool) -> Color {
+        if rests {
+            self.resting_marker
+        } else {
+            self.marker
+        }
     }
 }
 
@@ -279,6 +399,21 @@ fn cell_at(point: Point, tracks: usize, measures: usize) -> Option<(usize, usize
     let measure = (point.x / STEP) as usize;
     let track = ((point.y - HEADER) / STEP) as usize;
     (track < tracks && measure < measures).then_some((track, measure))
+}
+
+/// The vertical offset bringing `track`'s row into a view at `offset`
+/// showing `visible` rows, or `None` when it shows already.
+fn follow_row(track: usize, offset: f32, visible: usize) -> Option<f32> {
+    // the view is the header and `visible` rows high, so the header's
+    // height cancels out on both ends
+    let top = track as f32 * STEP;
+    if top < offset {
+        Some(top)
+    } else if top + STEP > offset + visible as f32 * STEP {
+        Some((track + 1).saturating_sub(visible) as f32 * STEP)
+    } else {
+        None
+    }
 }
 
 /// The horizontal offset bringing `measure` into a view at `offset` and
@@ -306,11 +441,14 @@ struct OverviewCanvas<'a> {
     track: usize,
     focused: usize,
     selection: Option<(usize, usize)>,
+    /// Per track, whether it will be heard.
+    audible: Vec<bool>,
 }
 
 impl OverviewCanvas<'_> {
-    /// The header and the squares, which only change with the theme.
-    fn paint_cells(&self, frame: &mut Frame, colors: TablatureColors, background: Color) {
+    /// The header and the squares, which only change with the theme, the
+    /// current track and which tracks are heard.
+    fn paint_cells(&self, frame: &mut Frame, colors: TablatureColors, squares: SquareColors) {
         let overview = self.overview;
         for (measure, has_marker) in overview.markers.iter().enumerate() {
             let x = measure as f32 * STEP;
@@ -335,11 +473,8 @@ impl OverviewCanvas<'_> {
         for (track, rests) in overview.rests.iter().enumerate() {
             let y = HEADER + track as f32 * STEP;
             for (measure, rests) in rests.iter().enumerate() {
-                let color = if *rests {
-                    colors.string_line
-                } else {
-                    visible_color(overview.colors[track], background, colors.foreground)
-                };
+                let audible = self.audible.get(track).copied().unwrap_or(true);
+                let color = squares.square(*rests, track == self.track, audible);
                 frame.fill_rectangle(
                     Point::new(measure as f32 * STEP, y),
                     Size::new(CELL, CELL),
@@ -350,14 +485,21 @@ impl OverviewCanvas<'_> {
     }
 
     /// The selection, the focused measure and its marker.
-    fn paint_focus(&self, frame: &mut Frame, theme: &Theme, colors: TablatureColors) {
+    fn paint_focus(
+        &self,
+        frame: &mut Frame,
+        theme: &Theme,
+        colors: TablatureColors,
+        squares: SquareColors,
+    ) {
         let overview = self.overview;
         let rows_height = overview.rests.len() as f32 * STEP;
         if let Some((start, end)) = self.selection {
             frame.fill_rectangle(
                 Point::new(start as f32 * STEP, HEADER),
                 Size::new((end + 1 - start) as f32 * STEP - 1.0, rows_height - 1.0),
-                theme.palette().primary.scale_alpha(0.4),
+                // a faint tint, like the tablature's: the squares show through
+                theme.palette().primary.scale_alpha(0.2),
             );
         }
         let x = self.focused as f32 * STEP;
@@ -368,24 +510,18 @@ impl OverviewCanvas<'_> {
                 .with_color(colors.foreground)
                 .with_width(1.0),
         );
+        let marker = Path::rounded_rectangle(
+            Point::new(x + 3.0, HEADER + self.track as f32 * STEP + 3.0),
+            Size::new(CELL - 6.0, CELL - 6.0),
+            2.0.into(),
+        );
         let resting = overview
             .rests
             .get(self.track)
             .and_then(|rests| rests.get(self.focused))
             .copied()
             .unwrap_or(true);
-        let square = if resting {
-            colors.string_line
-        } else {
-            let background = theme.palette().background;
-            visible_color(overview.colors[self.track], background, colors.foreground)
-        };
-        let marker = Path::rounded_rectangle(
-            Point::new(x + 3.0, HEADER + self.track as f32 * STEP + 3.0),
-            Size::new(CELL - 6.0, CELL - 6.0),
-            2.0.into(),
-        );
-        frame.fill(&marker, marker_color(square));
+        frame.fill(&marker, squares.marker(resting));
     }
 }
 
@@ -422,19 +558,26 @@ impl canvas::Program<Message> for OverviewCanvas<'_> {
         _cursor: Cursor,
     ) -> Vec<Geometry> {
         let colors = TablatureColors::of(theme);
-        // the cached squares hold the colors they were painted with
-        if self.overview.painted_colors.get() != Some(colors) {
-            self.overview.painted_colors.set(Some(colors));
+        let squares = SquareColors::of(colors, theme.palette().background);
+        let painted = Painted {
+            colors,
+            track: self.track,
+            audible: self.audible.clone(),
+        };
+        let mut cached = self.overview.painted.borrow_mut();
+        if cached.as_ref() != Some(&painted) {
+            *cached = Some(painted);
             self.overview.cells_cache.clear();
         }
+        drop(cached);
         let cells = self
             .overview
             .cells_cache
             .draw(renderer, bounds.size(), |frame| {
-                self.paint_cells(frame, colors, theme.palette().background);
+                self.paint_cells(frame, colors, squares);
             });
         let mut focus = Frame::new(renderer, bounds.size());
-        self.paint_focus(&mut focus, theme, colors);
+        self.paint_focus(&mut focus, theme, colors, squares);
         vec![cells, focus.into_geometry()]
     }
 
@@ -581,33 +724,78 @@ mod tests {
     }
 
     #[test]
-    fn a_track_without_color_takes_the_accent() {
-        assert_eq!(track_color(0xFF_00_00), Color::from_rgb8(255, 0, 0));
-        assert_eq!(track_color(0x00_80_FF), Color::from_rgb8(0, 128, 255));
-        assert_eq!(track_color(0), COLOR_DARK_RED);
-    }
-
-    #[test]
-    fn a_track_color_close_to_the_background_is_lifted() {
-        let (white, black) = (Color::WHITE, Color::BLACK);
-        let red = Color::from_rgb8(255, 0, 0);
-        assert_eq!(visible_color(red, white, black), red);
-        // as dark as the dark theme, but saturated
-        let dark = Color::from_rgb8(43, 45, 49);
-        assert_eq!(visible_color(red, dark, white), red);
-        assert_ne!(
-            visible_color(Color::from_rgb8(250, 250, 250), white, black),
-            Color::from_rgb8(250, 250, 250)
-        );
-        assert_ne!(
-            visible_color(Color::from_rgb8(10, 10, 10), black, white),
-            Color::from_rgb8(10, 10, 10)
+    fn the_current_track_plays_in_the_accent() {
+        let colors = TablatureColors::of(&Theme::Dark);
+        let squares = SquareColors::of(colors, Theme::Dark.palette().background);
+        assert_eq!(squares.square(false, true, true), colors.accent);
+        assert_ne!(squares.square(false, false, true), colors.accent);
+        // a rest looks the same on every track
+        assert_eq!(
+            squares.square(true, true, true),
+            squares.square(true, false, false)
         );
     }
 
     #[test]
-    fn the_marker_contrasts_with_its_square() {
-        assert_eq!(marker_color(Color::from_rgb8(255, 255, 0)), Color::BLACK);
-        assert_eq!(marker_color(Color::from_rgb8(40, 40, 120)), Color::WHITE);
+    fn a_track_not_heard_fades() {
+        let theme = Theme::Dark;
+        let background = theme.palette().background;
+        let squares = SquareColors::of(TablatureColors::of(&theme), background);
+        for current in [true, false] {
+            let heard = squares.square(false, current, true);
+            let silent = squares.square(false, current, false);
+            assert_ne!(heard, silent);
+            // closer to the background, still apart from a rest
+            assert!(distance(silent, background) < distance(heard, background));
+            assert_ne!(silent, squares.square(true, current, false));
+        }
+    }
+
+    fn distance(a: Color, b: Color) -> f32 {
+        (a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs()
+    }
+
+    #[test]
+    fn a_hidden_row_scrolls_into_view() {
+        // rows 2 to 7 show
+        let offset = 2.0 * STEP;
+        assert_eq!(follow_row(2, offset, 6), None);
+        assert_eq!(follow_row(7, offset, 6), None);
+        // above: it becomes the first row, below: the last
+        assert_eq!(follow_row(0, offset, 6), Some(0.0));
+        assert_eq!(follow_row(9, offset, 6), Some(4.0 * STEP));
+    }
+
+    #[test]
+    fn following_a_track_moves_the_squares_and_the_labels_after_them() {
+        let song = Song {
+            tracks: (0..10).map(|_| Default::default()).collect(),
+            ..Default::default()
+        };
+        let mut overview = TrackOverview::new(&song);
+        // the view is not known yet: the track waits for it
+        assert_eq!(overview.follow_track(8), None);
+        let (id, offset) = overview.squares_at(view(30.0, 0.0)).unwrap();
+        assert_eq!(id, overview.squares_id);
+        assert_eq!((offset.x, offset.y), (30.0, 3.0 * STEP));
+        // a measure followed meanwhile keeps the row
+        assert_eq!(overview.follow(50, 0).unwrap().1.y, 3.0 * STEP);
+        // the squares report it: the labels follow, and their echo is quiet
+        let (id, offset) = overview.squares_at(view(50.0 * STEP, 3.0 * STEP)).unwrap();
+        assert_eq!((id, offset.y), (overview.labels_id.clone(), 3.0 * STEP));
+        assert_eq!(overview.labels_at(3.0 * STEP), None);
+        // shows already
+        assert_eq!(overview.follow_track(5), None);
+        assert_eq!(overview.follow_track(0).unwrap().1.y, 0.0);
+    }
+
+    #[test]
+    fn the_marker_shows_on_a_resting_square() {
+        for theme in [Theme::Light, Theme::Dark] {
+            let background = theme.palette().background;
+            let squares = SquareColors::of(TablatureColors::of(&theme), background);
+            assert_eq!(squares.marker(false), background);
+            assert_ne!(squares.marker(true), background);
+        }
     }
 }
