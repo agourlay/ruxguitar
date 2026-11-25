@@ -2,7 +2,7 @@
 
 use iced::advanced::text::Shaping::Auto;
 use iced::widget::space::horizontal;
-use iced::widget::{Text, column, container, pick_list, row, rule, slider, text};
+use iced::widget::{Text, column, container, pick_list, row, rule, slider, stack, text};
 use iced::{Alignment, Border, Element, Length, Theme};
 
 use crate::audio::midi_player::AudioPlayer;
@@ -25,13 +25,26 @@ const SECTION_SPACING: f32 = 20.0;
 impl RuxApplication {
     pub(super) fn view(&self) -> Element<'_, Message> {
         let tablature_view = self.song.as_ref().map_or_else(
-            || untitled_text_table_box().into(),
+            || {
+                let open = (!self.tab_file_is_loading).then_some(Message::OpenFileDialog);
+                untitled_text_table_box(open).into()
+            },
             |song| song.tablature.view(),
         );
         let tablature = container(tablature_view).id(self.tablature_id.clone());
 
         let base: Element<Message> = if self.is_fullscreen {
-            column![tablature]
+            // the overview is hidden: a key's effect on the track shows here
+            let notice = self.notice.as_ref().map(|notice| {
+                container(
+                    container(text(notice).size(16).shaping(Auto))
+                        .padding([6, 12])
+                        .style(container::rounded_box),
+                )
+                .align_right(Length::Fill)
+                .padding(10)
+            });
+            column![stack![tablature].push(notice)]
                 .spacing(SECTION_SPACING)
                 .padding(10)
                 .into()
@@ -83,6 +96,7 @@ impl RuxApplication {
             open_icon(),
             "Open file",
             (!self.tab_file_is_loading).then_some(Message::OpenFileDialog),
+            false,
         );
         let controls = row![
             open_file,
@@ -116,8 +130,8 @@ impl RuxApplication {
         } else {
             (play_icon(), "Play")
         };
-        let play_button = action_gated(icon, message, Some(Message::PlayPause));
-        let stop_button = action_gated(stop_icon(), "Stop", Some(Message::StopPlayer));
+        let play_button = action_gated(icon, message, Some(Message::PlayPause), true);
+        let stop_button = action_gated(stop_icon(), "Stop", Some(Message::StopPlayer), false);
         let counter = self
             .song
             .as_ref()

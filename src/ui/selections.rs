@@ -87,6 +87,19 @@ impl TrackSelection {
     }
 }
 
+impl TrackSelection {
+    /// The name and tuning, without the number: empty for a track with
+    /// neither.
+    pub fn detail(&self) -> String {
+        let name = self.name.trim();
+        match &self.tuning {
+            Some(tuning) if name.is_empty() => format!("({tuning})"),
+            Some(tuning) => format!("{name} ({tuning})"),
+            None => name.to_string(),
+        }
+    }
+}
+
 impl Display for TrackSelection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} - {}", self.index + 1, self.name)?;
@@ -124,6 +137,17 @@ mod tests {
             strings: vec![(1, 64), (2, 59), (3, 55), (4, 50), (5, 45), (6, 40)],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_track_without_name_or_tuning_has_no_detail() {
+        let detail = |name: &str, tuning: Option<&str>| {
+            TrackSelection::new(0, name.to_string(), tuning.map(str::to_string)).detail()
+        };
+        assert_eq!(detail("Guitar", Some("Drop D")), "Guitar (Drop D)");
+        assert_eq!(detail("Drums", None), "Drums");
+        assert_eq!(detail(" ", Some("Drop D")), "(Drop D)");
+        assert_eq!(detail(" ", None), "");
     }
 
     #[test]

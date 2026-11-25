@@ -1,6 +1,6 @@
 use iced::widget::operation::scroll_to;
 use iced::widget::{Id, selector};
-use iced::{Point, Size, Task, Theme, window};
+use iced::{Point, Size, Task, Theme, theme, window};
 
 use crate::audio::midi_player::AudioPlayer;
 use crate::audio::playback_order::compute_playback_order;
@@ -12,15 +12,20 @@ use crate::ui::selections::{TempoSelection, TrackSelection};
 use crate::ui::song_info::SongDisplayInfo;
 use crate::ui::tablature::Tablature;
 use crate::ui::track_overview::{PLAYING_MARGIN, TrackOverview};
+use crate::ui::utils::rux_theme;
 use crate::{ApplicationArgs, ThemeChoice};
 use iced::widget::scrollable::{AbsoluteOffset, Viewport};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
+use std::time::Duration;
 use tokio::sync::Notify;
 
 const ICONS_FONT: &[u8] = include_bytes!("../../../resources/icons.ttf");
+const WINDOW_SIZE: Size = Size::new(1150.0, 768.0);
+/// How long a notice stays over the fullscreen tablature.
+const NOTICE_DURATION: Duration = Duration::from_millis(1500);
 
 pub struct RuxApplication {
     /// The open song, if any.
@@ -37,6 +42,16 @@ pub struct RuxApplication {
     config: Config,
     pub(super) error_message: Option<String>,
     pub(super) is_fullscreen: bool,
+    /// What a key just changed, shown for a moment over the fullscreen
+    /// tablature, which hides the overview.
+    pub(super) notice: Option<String>,
+    /// Counts the notices, so an expiry only clears its own.
+    notice_count: u64,
+    /// The theme asked for on the command line, over the desktop's tone.
+    theme_choice: Option<ThemeChoice>,
+    /// Built once per tone: iced asks for it on every refresh.
+    theme: Theme,
+    window_height: f32,
     pub(super) selection_drag: SelectionDrag,
     current_tab_path: Option<PathBuf>,
     session_restore: Option<SessionRestore>,
@@ -124,7 +139,7 @@ pub enum Message {
     OpenFile(PathBuf),
     /// File content, parent folder and file name.
     FileOpened(Result<(Vec<u8>, Option<PathBuf>, String, PathBuf), FilePickerError>),
-    /// A track's label was pressed in the overview.
+    /// A track was picked, by its label in the overview or its number key.
     TrackOverviewTrack(usize),
     /// A square was pressed in the overview: its track and measure.
     TrackOverviewMeasure(usize, usize),
@@ -150,8 +165,15 @@ pub enum Message {
     ToggleTrackMute(usize),
     ToggleMetronome,
     ToggleCountIn,
+    /// The window took a new size.
+    WindowSized(Size),
+    /// The layout changed: measure the tablature again.
     WindowResized,
     TablatureResized(Size),
+    /// The desktop switched between its light and dark tones.
+    DesktopToneChanged(theme::Mode),
+    /// The notice with this count has been shown long enough.
+    NoticeExpired(u64),
     TempoSelected(TempoSelection),
     IncreaseTempo,
     DecreaseTempo,
@@ -185,6 +207,11 @@ impl RuxApplication {
             config,
             error_message: None,
             is_fullscreen: false,
+            notice: None,
+            notice_count: 0,
+            theme_choice: None,
+            theme: rux_theme(is_dark(None, theme::Mode::None)),
+            window_height: WINDOW_SIZE.height,
             selection_drag: SelectionDrag::Idle,
             current_tab_path: None,
             session_restore: None,
@@ -194,6 +221,8 @@ impl RuxApplication {
 
     fn boot(args: &ApplicationArgs) -> (Self, Task<Message>) {
         let mut app = Self::new(args.sound_font_bank.clone(), args.local_config.clone());
+        app.theme_choice = args.theme;
+        app.theme = rux_theme(is_dark(app.theme_choice, theme::Mode::None));
 
         let init_task = if let Some(path) = &args.tab_file_path {
             app.startup_track = args.track;
@@ -208,7 +237,46 @@ impl RuxApplication {
         } else {
             Task::none()
         };
-        (app, init_task)
+        let desktop_tone = iced::system::theme().map(Message::DesktopToneChanged);
+        (app, Task::batch([init_task, desktop_tone]))
+    }
+
+    /// The command line's theme, or the desktop's tone.
+    fn theme(&self) -> Theme {
+        self.theme.clone()
+    }
+
+    /// Show `text` for a moment over the fullscreen tablature.
+    fn notify(&mut self, text: String) -> Task<Message> {
+        if !self.is_fullscreen {
+            return Task::none();
+        }
+        self.notice = Some(text);
+        self.notice_count += 1;
+        let count = self.notice_count;
+        // built when polled: the timer needs the runtime
+        Task::perform(
+            async { tokio::time::sleep(NOTICE_DURATION).await },
+            move |()| Message::NoticeExpired(count),
+        )
+    }
+
+    /// Tell which track shows and how it sounds, when the overview that
+    /// shows it is hidden.
+    fn notify_track(&mut self) -> Task<Message> {
+        let Some(song) = &self.song else {
+            return Task::none();
+        };
+        let mut text = song.track.to_string();
+        if let Some(player) = &self.audio_player {
+            if player.is_track_solo(song.track.index) {
+                text.push_str(" \u{2022} solo");
+            }
+            if player.is_track_muted(song.track.index) {
+                text.push_str(" \u{2022} muted");
+            }
+        }
+        self.notify(text)
     }
 
     /// Loop the selected measures, or play through when nothing is selected.
@@ -337,14 +405,13 @@ impl RuxApplication {
 
     pub fn start(args: ApplicationArgs) -> iced::Result {
         let antialiasing = !args.no_antialiasing;
-        let theme = resolve_theme(args.theme);
         iced::application(move || Self::boot(&args), Self::update, Self::view)
             .title(Self::title)
             .subscription(Self::subscription)
             .default_font(iced::Font::MONOSPACE)
-            .theme(move |_state: &Self| theme.clone())
+            .theme(Self::theme)
             .font(ICONS_FONT)
-            .window_size((1150.0, 768.0))
+            .window_size(WINDOW_SIZE)
             .centered()
             .exit_on_close_request(false)
             .antialiasing(antialiasing)
@@ -456,7 +523,7 @@ impl RuxApplication {
             tablature_scroll_id.clone(),
             &playback_order,
         );
-        let mut overview = TrackOverview::new(&song_rc);
+        let mut overview = TrackOverview::new(&song_rc, self.window_height);
         // its view is not known yet: the row shows once it is
         let _ = overview.follow_track(default_track);
         self.song = Some(LoadedSong {
@@ -586,7 +653,10 @@ impl RuxApplication {
         song.track = selection;
         let follow = song.overview.follow_track(index);
         self.persist_session();
-        follow.map_or_else(Task::none, |(id, offset)| scroll_to(id, offset))
+        Task::batch([
+            follow.map_or_else(Task::none, |(id, offset)| scroll_to(id, offset)),
+            self.notify_track(),
+        ])
     }
 
     /// The track `step` away from the current one, if any.
@@ -731,13 +801,13 @@ impl RuxApplication {
                 if let (Some(audio_player), Some(song)) = (&self.audio_player, &self.song) {
                     audio_player.toggle_track_solo(song.track.index);
                 }
-                Task::none()
+                self.notify_track()
             }
             Message::ToggleMute => {
                 if let (Some(audio_player), Some(song)) = (&self.audio_player, &self.song) {
                     audio_player.toggle_track_mute(song.track.index);
                 }
-                Task::none()
+                self.notify_track()
             }
             Message::ToggleTrackSolo(track_index) => {
                 if let Some(audio_player) = &self.audio_player {
@@ -762,6 +832,23 @@ impl RuxApplication {
                 self.prefs.count_in = !self.prefs.count_in;
                 if let Some(audio_player) = &self.audio_player {
                     audio_player.set_count_in(self.prefs.count_in);
+                }
+                Task::none()
+            }
+            Message::WindowSized(size) => {
+                self.window_height = size.height;
+                if let Some(song) = &mut self.song {
+                    song.overview.window_resized(size.height);
+                }
+                Task::done(Message::WindowResized)
+            }
+            Message::DesktopToneChanged(tone) => {
+                self.theme = rux_theme(is_dark(self.theme_choice, tone));
+                Task::none()
+            }
+            Message::NoticeExpired(count) => {
+                if count == self.notice_count {
+                    self.notice = None;
                 }
                 Task::none()
             }
@@ -817,6 +904,7 @@ impl RuxApplication {
             }
             Message::ToggleFullscreen => {
                 self.is_fullscreen = !self.is_fullscreen;
+                self.notice = None;
                 if !self.is_fullscreen
                     && let Some(song) = &mut self.song
                 {
@@ -856,16 +944,17 @@ impl RuxApplication {
     }
 }
 
-/// The theme to run with, or `None` to let iced follow the desktop.
+/// Whether to run on the dark tone.
 ///
-/// An explicit choice always wins. Otherwise iced resolves the desktop
-/// preference - except on Linux, where winit reports none and iced would
-/// fall back to light whatever the desktop looks like; the dark tab stays
-/// the default there.
-fn resolve_theme(choice: Option<ThemeChoice>) -> Option<Theme> {
-    choice
-        .map(Theme::from)
-        .or_else(|| cfg!(target_os = "linux").then_some(Theme::Dark))
+/// An explicit choice always wins, then the desktop's tone - except on
+/// Linux, where winit often reports none: the dark tab stays the default
+/// there, and the light one elsewhere, as iced would pick.
+fn is_dark(choice: Option<ThemeChoice>, desktop_tone: theme::Mode) -> bool {
+    match (choice, desktop_tone) {
+        (Some(ThemeChoice::Dark), _) | (None, theme::Mode::Dark) => true,
+        (Some(ThemeChoice::Light), _) | (None, theme::Mode::Light) => false,
+        (None, theme::Mode::None) => cfg!(target_os = "linux"),
+    }
 }
 
 #[cfg(test)]
@@ -981,6 +1070,49 @@ mod tests {
         let _ = app.update(Message::TrackOverviewTrack(last));
         let _ = app.update(Message::NextTrack);
         assert_eq!(current(&app), last);
+    }
+
+    #[test]
+    fn a_track_change_is_told_in_fullscreen_only_and_cleared_by_its_own_expiry() {
+        let mut app = app_with_demo_song();
+        let _ = app.update(Message::NextTrack);
+        assert_eq!(app.notice, None);
+        let _ = app.update(Message::ToggleFullscreen);
+        let _ = app.update(Message::NextTrack);
+        let first = app.notice.clone().expect("a notice in fullscreen");
+        assert!(first.starts_with("3 - "));
+        let _ = app.update(Message::ToggleSolo);
+        let second = app.notice.clone().unwrap();
+        assert!(second.ends_with("solo"));
+        // the first notice's expiry leaves the second one up
+        let _ = app.update(Message::NoticeExpired(app.notice_count - 1));
+        assert_eq!(app.notice, Some(second));
+        let _ = app.update(Message::NoticeExpired(app.notice_count));
+        assert_eq!(app.notice, None);
+        // leaving fullscreen takes the notice with it
+        let _ = app.update(Message::ToggleMute);
+        assert!(app.notice.is_some());
+        let _ = app.update(Message::ToggleFullscreen);
+        assert_eq!(app.notice, None);
+    }
+
+    #[test]
+    fn the_theme_follows_the_choice_then_the_desktop() {
+        use theme::Mode;
+        let mut app = RuxApplication::new(None, Config::in_memory(SessionState::default()));
+        let _ = app.update(Message::DesktopToneChanged(Mode::Light));
+        assert_eq!(app.theme(), rux_theme(false));
+        let _ = app.update(Message::DesktopToneChanged(Mode::Dark));
+        assert_eq!(app.theme(), rux_theme(true));
+        app.theme_choice = Some(ThemeChoice::Light);
+        let _ = app.update(Message::DesktopToneChanged(Mode::Dark));
+        assert_eq!(app.theme(), rux_theme(false));
+
+        assert!(is_dark(Some(ThemeChoice::Dark), Mode::Light));
+        assert!(!is_dark(Some(ThemeChoice::Light), Mode::Dark));
+        assert!(is_dark(None, Mode::Dark));
+        assert!(!is_dark(None, Mode::Light));
+        assert_eq!(is_dark(None, Mode::None), cfg!(target_os = "linux"));
     }
 
     #[test]

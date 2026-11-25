@@ -7,10 +7,14 @@
 //! A track that will not be heard, muted or left out of a solo, fades. The
 //! measure being played gets an inner marker, and a click moves to that
 //! track and measure.
+//!
+//! The band of measure numbers stays on top while the rows scroll under it,
+//! and names a measure's marker when hovered.
 
 use crate::parser::song_parser::{Measure, Song};
 use crate::ui::application::Message;
-use crate::ui::utils::{TablatureColors, mix};
+use crate::ui::selections::TrackSelection;
+use crate::ui::utils::{TablatureColors, mix, toggle_style};
 use iced::advanced::mouse;
 use iced::advanced::text::Shaping::Auto;
 use iced::mouse::Cursor;
@@ -21,7 +25,7 @@ use iced::widget::{
     Action, Canvas, Id, button, canvas, column, container, row, scrollable, space, text, tooltip,
 };
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 /// The side of a measure's square.
 const CELL: f32 = 14.0;
@@ -33,8 +37,11 @@ const HEADER: f32 = 14.0;
 const LABEL_WIDTH: f32 = 210.0;
 const LABEL_SIZE: f32 = 11.0;
 const TOGGLE_WIDTH: f32 = 18.0;
-/// Rows shown before the overview scrolls vertically.
-const MAX_VISIBLE_ROWS: usize = 6;
+/// Rows always shown before the overview scrolls vertically.
+const MIN_VISIBLE_ROWS: usize = 6;
+/// The share of the window's height the overview may grow to.
+const WINDOW_SHARE: f32 = 0.3;
+const TOOLTIP_SIZE: f32 = 11.0;
 /// The horizontal scrollbar, drawn over the bottom of the squares.
 const SCROLLBAR_WIDTH: f32 = 10.0;
 /// Measures kept visible past the played one while following playback.
@@ -44,9 +51,17 @@ pub struct TrackOverview {
     /// Per track, per measure, whether the measure only rests.
     rests: Vec<Vec<bool>>,
     labels: Vec<String>,
-    /// Per measure, whether it has a marker.
-    markers: Vec<bool>,
+    /// Per track, its full name and tuning, told when its label is hovered;
+    /// empty when it has neither.
+    details: Vec<String>,
+    /// Per measure, the title of its marker, which can be empty.
+    markers: Vec<Option<String>>,
+    /// Rows shown before the overview scrolls vertically.
+    max_rows: usize,
     cells_cache: Cache,
+    header_cache: Cache,
+    /// The colors and offset the cached header was painted with.
+    painted_header: Cell<Option<(TablatureColors, f32)>>,
     /// What the cached squares were painted with.
     painted: RefCell<Option<Painted>>,
     squares_id: Id,
@@ -62,7 +77,8 @@ pub struct TrackOverview {
 }
 
 impl TrackOverview {
-    pub fn new(song: &Song) -> Self {
+    /// The overview of `song`, as high as a window of `window_height` allows.
+    pub fn new(song: &Song, window_height: f32) -> Self {
         Self {
             rests: song
                 .tracks
@@ -75,12 +91,24 @@ impl TrackOverview {
                 .enumerate()
                 .map(|(index, track)| format!("{} {}", index + 1, track.name))
                 .collect(),
+            details: TrackSelection::all_of(song)
+                .iter()
+                .map(TrackSelection::detail)
+                .collect(),
             markers: song
                 .measure_headers
                 .iter()
-                .map(|header| header.marker.is_some())
+                .map(|header| {
+                    header
+                        .marker
+                        .as_ref()
+                        .map(|marker| marker.title.trim().to_string())
+                })
                 .collect(),
+            max_rows: rows_for_window(window_height),
             cells_cache: Cache::default(),
+            header_cache: Cache::default(),
+            painted_header: Cell::new(None),
             painted: RefCell::new(None),
             squares_id: Id::unique(),
             labels_id: Id::unique(),
@@ -93,6 +121,31 @@ impl TrackOverview {
 
     fn measure_count(&self) -> usize {
         self.markers.len()
+    }
+
+    /// The title to tell of a measure's marker: none without a marker, or
+    /// for one left untitled, which only shows its tick.
+    fn marker_title(&self, measure: usize) -> Option<&str> {
+        let title = self.markers.get(measure)?.as_deref()?;
+        (!title.is_empty()).then_some(title)
+    }
+
+    /// Rows shown at once: all of them when the window leaves the room.
+    fn visible_rows(&self) -> usize {
+        self.labels.len().min(self.max_rows)
+    }
+
+    /// The window was resized: the overview grows or shrinks with it.
+    pub fn window_resized(&mut self, window_height: f32) {
+        self.max_rows = rows_for_window(window_height);
+    }
+
+    /// How far down the rows are scrolled, under the header.
+    fn scroll_y(&self) -> f32 {
+        // no further than the rows go: squares that stop scrolling, as when
+        // the window grows to show them all, do not report it
+        let furthest = (self.labels.len() - self.visible_rows()) as f32 * STEP;
+        self.squares.map_or(0.0, |squares| squares.y.min(furthest))
     }
 
     /// Forget where the squares stand, for when they show again and
@@ -168,7 +221,7 @@ impl TrackOverview {
             self.track_to_follow = Some(track);
             return None;
         };
-        let visible = self.labels.len().min(MAX_VISIBLE_ROWS);
+        let visible = self.labels.len().min(self.max_rows);
         // the squares hold the offset a measure follow scrolls with too
         let y = follow_row(track, squares.y, visible)?;
         squares.y = y;
@@ -185,9 +238,10 @@ impl TrackOverview {
         let labels = self
             .labels
             .iter()
+            .zip(&self.details)
             .zip(&sounds)
             .enumerate()
-            .map(|(index, (label, sound))| {
+            .map(|(index, ((label, detail), sound))| {
                 let is_current = index == track;
                 let name = button(
                     text(label)
@@ -213,6 +267,18 @@ impl TrackOverview {
                         button::text(theme, status)
                     }
                 });
+                // the label clips a long name, and has no room for the tuning
+                let name: Element<'_, Message> = if detail.is_empty() {
+                    name.into()
+                } else {
+                    tooltip(
+                        name,
+                        text(detail).size(LABEL_SIZE).shaping(Auto),
+                        tooltip::Position::FollowCursor,
+                    )
+                    .style(container::rounded_box)
+                    .into()
+                };
                 row![
                     name,
                     toggle("S", "Solo", sound.solo, Message::ToggleTrackSolo(index)),
@@ -221,21 +287,21 @@ impl TrackOverview {
                 .into()
             });
         let rows = self.labels.len();
-        let visible_rows = rows.min(MAX_VISIBLE_ROWS) as f32;
-        // the labels show as high as the squares above their scrollbar
-        let rows_height = HEADER + visible_rows * STEP;
+        let visible_height = self.visible_rows() as f32 * STEP;
         let scrollbar = Scrollbar::default()
             .width(SCROLLBAR_WIDTH)
             .scroller_width(SCROLLBAR_WIDTH)
             .spacing(0.0);
         // the vertical scrollbar sits by the labels: beside the squares it
         // would leave a corner with the horizontal one, showing a hidden row
-        let labels = scrollable(column![space().height(HEADER), column(labels)])
+        let labels = scrollable(column(labels))
             .id(self.labels_id.clone())
             .direction(Direction::Vertical(scrollbar))
             .on_scroll(Message::TrackOverviewLabelsScrolled)
-            .width(LABEL_WIDTH)
-            .height(rows_height);
+            .height(visible_height);
+        // the labels scroll under the header's height, like the squares
+        // under their header
+        let labels = column![space().height(HEADER), labels].width(LABEL_WIDTH);
 
         let squares = Canvas::new(OverviewCanvas {
             overview: self,
@@ -258,7 +324,7 @@ impl TrackOverview {
             .width(Length::Fill);
 
         container(row![labels, squares].spacing(6))
-            .height(rows_height + SCROLLBAR_WIDTH)
+            .height(HEADER + visible_height + SCROLLBAR_WIDTH)
             .into()
     }
 }
@@ -281,8 +347,8 @@ impl Default for TrackSound {
     }
 }
 
-/// A row's solo or mute toggle: a dim letter while off, inverted while on
-/// to read at this size on either theme tone.
+/// A row's solo or mute toggle: a dim letter while off, so the names stand
+/// out, inverted while on like the toolbar's.
 fn toggle<'a>(letter: &'a str, label: &'a str, on: bool, message: Message) -> Element<'a, Message> {
     let toggle = button(text(letter).size(LABEL_SIZE).center())
         .padding(0)
@@ -291,15 +357,7 @@ fn toggle<'a>(letter: &'a str, label: &'a str, on: bool, message: Message) -> El
         .on_press(message)
         .style(move |theme: &Theme, status| {
             if on {
-                let palette = theme.palette();
-                let background = match status {
-                    button::Status::Hovered => mix(palette.text, palette.background, 0.2),
-                    _ => palette.text,
-                };
-                button::Style {
-                    text_color: palette.background,
-                    ..button::secondary(theme, status).with_background(background)
-                }
+                toggle_style(true)(theme, status)
             } else {
                 let style = button::text(theme, status);
                 if status == button::Status::Hovered {
@@ -391,9 +449,16 @@ impl SquareColors {
     }
 }
 
-/// The `(track, measure)` of the square under a point of the canvas.
-fn cell_at(point: Point, tracks: usize, measures: usize) -> Option<(usize, usize)> {
-    if point.x < 0.0 || point.y < HEADER {
+/// Rows shown before the overview scrolls, in a window `window_height` high.
+fn rows_for_window(window_height: f32) -> usize {
+    let room = window_height * WINDOW_SHARE - HEADER - SCROLLBAR_WIDTH;
+    ((room / STEP) as usize).max(MIN_VISIBLE_ROWS)
+}
+
+/// The `(track, measure)` of the square under a point of the canvas, whose
+/// header stands `scroll_y` down, over the rows scrolled under it.
+fn cell_at(point: Point, tracks: usize, measures: usize, scroll_y: f32) -> Option<(usize, usize)> {
+    if point.x < 0.0 || point.y < scroll_y + HEADER {
         return None;
     }
     let measure = (point.x / STEP) as usize;
@@ -401,11 +466,17 @@ fn cell_at(point: Point, tracks: usize, measures: usize) -> Option<(usize, usize
     (track < tracks && measure < measures).then_some((track, measure))
 }
 
+/// The measure whose part of the header, standing `scroll_y` down the
+/// canvas, is under a point.
+fn header_measure_at(point: Point, scroll_y: f32) -> Option<usize> {
+    let in_header = point.x >= 0.0 && (scroll_y..scroll_y + HEADER).contains(&point.y);
+    in_header.then(|| (point.x / STEP) as usize)
+}
+
 /// The vertical offset bringing `track`'s row into a view at `offset`
 /// showing `visible` rows, or `None` when it shows already.
 fn follow_row(track: usize, offset: f32, visible: usize) -> Option<f32> {
-    // the view is the header and `visible` rows high, so the header's
-    // height cancels out on both ends
+    // the header stays on top: the view shows `visible` rows from `offset`
     let top = track as f32 * STEP;
     if top < offset {
         Some(top)
@@ -446,30 +517,10 @@ struct OverviewCanvas<'a> {
 }
 
 impl OverviewCanvas<'_> {
-    /// The header and the squares, which only change with the theme, the
-    /// current track and which tracks are heard.
-    fn paint_cells(&self, frame: &mut Frame, colors: TablatureColors, squares: SquareColors) {
+    /// The squares, which only change with the theme, the current track
+    /// and which tracks are heard.
+    fn paint_cells(&self, frame: &mut Frame, squares: SquareColors) {
         let overview = self.overview;
-        for (measure, has_marker) in overview.markers.iter().enumerate() {
-            let x = measure as f32 * STEP;
-            if measure == 0 || (measure + 1) % 5 == 0 {
-                frame.fill_text(Text {
-                    shaping: Auto,
-                    content: (measure + 1).to_string(),
-                    color: colors.foreground,
-                    size: 9.0.into(),
-                    position: Point::new(x, 0.0),
-                    ..Text::default()
-                });
-            }
-            if *has_marker {
-                frame.fill_rectangle(
-                    Point::new(x, HEADER - 3.0),
-                    Size::new(CELL, 2.0),
-                    colors.accent,
-                );
-            }
-        }
         for (track, rests) in overview.rests.iter().enumerate() {
             let y = HEADER + track as f32 * STEP;
             for (measure, rests) in rests.iter().enumerate() {
@@ -482,6 +533,69 @@ impl OverviewCanvas<'_> {
                 );
             }
         }
+    }
+
+    /// The measure numbers and marker ticks, `y` down the canvas to stay on
+    /// top of the rows scrolled under them.
+    fn paint_header(&self, frame: &mut Frame, colors: TablatureColors, background: Color, y: f32) {
+        frame.fill_rectangle(
+            Point::new(0.0, y),
+            Size::new(frame.width(), HEADER),
+            background,
+        );
+        for (measure, marker) in self.overview.markers.iter().enumerate() {
+            let x = measure as f32 * STEP;
+            if measure == 0 || (measure + 1) % 5 == 0 {
+                frame.fill_text(Text {
+                    shaping: Auto,
+                    content: (measure + 1).to_string(),
+                    color: colors.foreground,
+                    size: 9.0.into(),
+                    position: Point::new(x, y),
+                    ..Text::default()
+                });
+            }
+            if marker.is_some() {
+                frame.fill_rectangle(
+                    Point::new(x, y + HEADER - 3.0),
+                    Size::new(CELL, 2.0),
+                    colors.accent,
+                );
+            }
+        }
+    }
+
+    /// The titled marker under the cursor, when it is over the header.
+    fn hovered_marker(&self, bounds: Rectangle, cursor: Cursor) -> Option<(usize, Point)> {
+        let point = cursor.position_in(bounds)?;
+        let measure = header_measure_at(point, self.overview.scroll_y())?;
+        self.overview.marker_title(measure)?;
+        Some((measure, point))
+    }
+
+    /// The title of the hovered marker, in a box by the cursor.
+    fn paint_tooltip(&self, frame: &mut Frame, theme: &Theme, title: &str, cursor: Point) {
+        let palette = theme.palette();
+        // the canvas only shows a part of itself: stay within it
+        let (left, right) = self
+            .overview
+            .squares
+            .map_or((0.0, frame.width()), |view| (view.x, view.x + view.width));
+        // monospace: a character is about 0.6 of the size wide
+        let width = title.chars().count() as f32 * TOOLTIP_SIZE * 0.6 + 12.0;
+        let x = (cursor.x + 10.0).min(right - width).max(left);
+        let y = self.overview.scroll_y() + HEADER;
+        let bubble =
+            Path::rounded_rectangle(Point::new(x, y), Size::new(width, STEP + 3.0), 3.0.into());
+        frame.fill(&bubble, palette.text);
+        frame.fill_text(Text {
+            shaping: Auto,
+            content: title.to_string(),
+            color: palette.background,
+            size: TOOLTIP_SIZE.into(),
+            position: Point::new(x + 6.0, y + 2.0),
+            ..Text::default()
+        });
     }
 
     /// The selection, the focused measure and its marker.
@@ -526,36 +640,50 @@ impl OverviewCanvas<'_> {
 }
 
 impl canvas::Program<Message> for OverviewCanvas<'_> {
-    type State = ();
+    /// The measure whose marker is hovered, to repaint when it changes.
+    type State = Option<usize>;
 
     fn update(
         &self,
-        _state: &mut Self::State,
+        hovered: &mut Self::State,
         event: &Event,
         bounds: Rectangle,
         cursor: Cursor,
     ) -> Option<Action<Message>> {
-        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
-            let point = cursor.position_in(bounds)?;
-            let (track, measure) = cell_at(
-                point,
-                self.overview.rests.len(),
-                self.overview.measure_count(),
-            )?;
-            return Some(Action::publish(Message::TrackOverviewMeasure(
-                track, measure,
-            )));
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                let point = cursor.position_in(bounds)?;
+                let (track, measure) = cell_at(
+                    point,
+                    self.overview.rests.len(),
+                    self.overview.measure_count(),
+                    self.overview.scroll_y(),
+                )?;
+                Some(Action::publish(Message::TrackOverviewMeasure(
+                    track, measure,
+                )))
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. } | mouse::Event::CursorLeft) => {
+                let marker = self
+                    .hovered_marker(bounds, cursor)
+                    .map(|(measure, _)| measure);
+                // the tooltip follows the cursor along its marker
+                (marker.is_some() || *hovered != marker).then(|| {
+                    *hovered = marker;
+                    Action::request_redraw()
+                })
+            }
+            _ => None,
         }
-        None
     }
 
     fn draw(
         &self,
-        _state: &Self::State,
+        _hovered: &Self::State,
         renderer: &Renderer,
         theme: &Theme,
         bounds: Rectangle,
-        _cursor: Cursor,
+        cursor: Cursor,
     ) -> Vec<Geometry> {
         let colors = TablatureColors::of(theme);
         let squares = SquareColors::of(colors, theme.palette().background);
@@ -574,11 +702,34 @@ impl canvas::Program<Message> for OverviewCanvas<'_> {
             .overview
             .cells_cache
             .draw(renderer, bounds.size(), |frame| {
-                self.paint_cells(frame, colors, squares);
+                self.paint_cells(frame, squares);
             });
         let mut focus = Frame::new(renderer, bounds.size());
         self.paint_focus(&mut focus, theme, colors, squares);
-        vec![cells, focus.into_geometry()]
+
+        let background = theme.palette().background;
+        let scroll_y = self.overview.scroll_y();
+        let painted_header = Some((colors, scroll_y));
+        if self.overview.painted_header.get() != painted_header {
+            self.overview.painted_header.set(painted_header);
+            self.overview.header_cache.clear();
+        }
+        let header = self
+            .overview
+            .header_cache
+            .draw(renderer, bounds.size(), |frame| {
+                self.paint_header(frame, colors, background, scroll_y);
+            });
+        let mut layers = vec![cells, focus.into_geometry(), header];
+
+        if let Some((measure, point)) = self.hovered_marker(bounds, cursor)
+            && let Some(title) = self.overview.marker_title(measure)
+        {
+            let mut tooltip = Frame::new(renderer, bounds.size());
+            self.paint_tooltip(&mut tooltip, theme, title, point);
+            layers.push(tooltip.into_geometry());
+        }
+        layers
     }
 
     fn mouse_interaction(
@@ -592,6 +743,7 @@ impl canvas::Program<Message> for OverviewCanvas<'_> {
                 point,
                 self.overview.rests.len(),
                 self.overview.measure_count(),
+                self.overview.scroll_y(),
             )
             .is_some()
         });
@@ -610,13 +762,69 @@ mod tests {
 
     #[test]
     fn a_point_finds_its_square() {
-        let at = |x: f32, y: f32| cell_at(Point::new(x, y), 3, 10);
+        let at = |x: f32, y: f32| cell_at(Point::new(x, y), 3, 10, 0.0);
         assert_eq!(at(1.0, HEADER + 1.0), Some((0, 0)));
         assert_eq!(at(STEP * 4.5, HEADER + STEP * 2.5), Some((2, 4)));
         // the header, and past the last track or measure
         assert_eq!(at(1.0, HEADER - 1.0), None);
         assert_eq!(at(1.0, HEADER + STEP * 3.0), None);
         assert_eq!(at(STEP * 10.0, HEADER + 1.0), None);
+    }
+
+    #[test]
+    fn the_header_stays_over_the_rows_scrolled_under_it() {
+        // scrolled two rows down: the header covers where row 2 starts
+        let scroll_y = 2.0 * STEP;
+        let at = |y: f32| cell_at(Point::new(1.0, y), 10, 10, scroll_y);
+        assert_eq!(at(scroll_y + 1.0), None);
+        assert_eq!(at(scroll_y + HEADER + 1.0), Some((2, 0)));
+        let header = |y: f32| header_measure_at(Point::new(STEP * 4.5, y), scroll_y);
+        assert_eq!(header(scroll_y + 1.0), Some(4));
+        assert_eq!(header(scroll_y + HEADER + 1.0), None);
+        assert_eq!(header(1.0), None);
+    }
+
+    #[test]
+    fn only_a_titled_marker_has_a_title_to_tell() {
+        use crate::parser::song_parser::{Marker, MeasureHeader};
+        let header = |title: Option<&str>| MeasureHeader {
+            marker: title.map(|title| Marker {
+                title: title.to_string(),
+                color: 0,
+            }),
+            ..Default::default()
+        };
+        let song = Song {
+            measure_headers: vec![header(None), header(Some(" Intro ")), header(Some("  "))],
+            ..Default::default()
+        };
+        let overview = TrackOverview::new(&song, 400.0);
+        assert_eq!(overview.marker_title(0), None);
+        assert_eq!(overview.marker_title(1), Some("Intro"));
+        // untitled: it keeps its tick, without a tooltip
+        assert_eq!(overview.markers[2], Some(String::new()));
+        assert_eq!(overview.marker_title(2), None);
+        assert_eq!(overview.marker_title(9), None);
+    }
+
+    #[test]
+    fn a_taller_window_shows_more_rows() {
+        assert_eq!(rows_for_window(400.0), MIN_VISIBLE_ROWS);
+        assert_eq!(rows_for_window(768.0), 13);
+        assert!(rows_for_window(1440.0) > rows_for_window(768.0));
+        let song = Song {
+            tracks: (0..9).map(|_| Default::default()).collect(),
+            ..Default::default()
+        };
+        let mut overview = TrackOverview::new(&song, 400.0);
+        assert_eq!(overview.visible_rows(), 6);
+        // scrolled down in the small window, which then grows to show all
+        // the rows: the header is back on top without a report
+        overview.squares_at(view(0.0, 3.0 * STEP));
+        assert_eq!(overview.scroll_y(), 3.0 * STEP);
+        overview.window_resized(768.0);
+        assert_eq!(overview.visible_rows(), 9);
+        assert_eq!(overview.scroll_y(), 0.0);
     }
 
     #[test]
@@ -650,7 +858,7 @@ mod tests {
             measure_headers: (0..100).map(|_| Default::default()).collect(),
             ..Default::default()
         };
-        TrackOverview::new(&song)
+        TrackOverview::new(&song, 400.0)
     }
 
     fn view(x: f32, y: f32) -> SquaresView {
@@ -772,7 +980,7 @@ mod tests {
             tracks: (0..10).map(|_| Default::default()).collect(),
             ..Default::default()
         };
-        let mut overview = TrackOverview::new(&song);
+        let mut overview = TrackOverview::new(&song, 400.0);
         // the view is not known yet: the track waits for it
         assert_eq!(overview.follow_track(8), None);
         let (id, offset) = overview.squares_at(view(30.0, 0.0)).unwrap();

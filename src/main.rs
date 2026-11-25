@@ -86,15 +86,6 @@ pub enum ThemeChoice {
     Dark,
 }
 
-impl From<ThemeChoice> for iced::Theme {
-    fn from(choice: ThemeChoice) -> Self {
-        match choice {
-            ThemeChoice::Light => Self::Light,
-            ThemeChoice::Dark => Self::Dark,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ApplicationArgs {
     sound_font_bank: Option<PathBuf>,

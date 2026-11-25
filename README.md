@@ -22,6 +22,7 @@ The design of the application is described in details in the blog article "[Play
     - `Ctrl+Up` / `Ctrl+Down` tempo up/down
     - `Left` / `Right` previous/next measure
     - `Up` / `Down` previous/next track
+    - `1` to `9` jump to a track
     - `S` / `M` toggle solo/mute
     - `F11` toggle fullscreen
 - Open files via the picker or drag-and-drop
