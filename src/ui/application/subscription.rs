@@ -71,6 +71,11 @@ impl RuxApplication {
                 keyboard::Key::Character(c) if c.eq_ignore_ascii_case("m") => {
                     Some(Message::ToggleMute)
                 }
+                keyboard::Key::Character(c)
+                    if modifiers.command() && c.eq_ignore_ascii_case("w") =>
+                {
+                    Some(Message::CloseTab)
+                }
                 keyboard::Key::Named(F11) => Some(Message::ToggleFullscreen),
                 _ => None,
             }

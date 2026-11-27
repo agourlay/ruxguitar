@@ -24,6 +24,7 @@ The design of the application is described in details in the blog article "[Play
     - `Up` / `Down` previous/next track
     - `1` to `9` jump to a track
     - `S` / `M` toggle solo/mute
+    - `Ctrl+W` close the tab
     - `F11` toggle fullscreen
 - Open files via the picker or drag-and-drop
 

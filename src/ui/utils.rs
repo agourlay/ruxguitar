@@ -86,13 +86,14 @@ pub fn mix(base: Color, over: Color, amount: f32) -> Color {
 
 /// What shows before a tab is open: how to open one, and the shortcuts.
 pub fn untitled_text_table_box<'a>(open: Option<Message>) -> Container<'a, Message> {
-    const TIPS: [(&str, &str); 8] = [
+    const TIPS: [(&str, &str); 9] = [
         ("Space", "play or pause"),
         ("Left / Right", "previous or next measure"),
         ("Up / Down", "previous or next track"),
         ("1 - 9", "jump to a track"),
         ("Ctrl + Up / Down", "tempo up or down"),
         ("S / M", "solo or mute the track"),
+        ("Ctrl + W", "close the tab"),
         ("F11", "fullscreen"),
         ("Drag on the tab", "loop the selected measures"),
     ];

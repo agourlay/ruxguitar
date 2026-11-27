@@ -41,9 +41,9 @@ const SOLO: Point = Point::new(193.0, 580.0);
 /// Inside the loop's first and last measures, once the tablature shows them.
 const DRAG: (Point, Point) = (Point::new(200.0, 140.0), Point::new(580.0, 146.0));
 const TEMPO_PICKER: Point = Point::new(800.0, 36.0);
-const PLAY: Point = Point::new(246.0, 36.0);
+const PLAY: Point = Point::new(275.0, 36.0);
 /// Out of the way while the loop plays.
-const REST: Point = Point::new(330.0, 62.0);
+const REST: Point = Point::new(359.0, 62.0);
 
 /// An arrow with its tip on the first pixel: `X` outline, `.` fill.
 const ARROW: [&str; 18] = [

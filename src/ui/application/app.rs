@@ -185,6 +185,8 @@ pub enum Message {
     MasterVolumeChanged(f32),
     /// The window is closing: save the session, then exit.
     CloseRequested,
+    /// Close the tab, back to the start screen, where the next launch opens too.
+    CloseTab,
 }
 
 impl RuxApplication {
@@ -931,6 +933,22 @@ impl RuxApplication {
                 self.persist_session();
                 iced::exit()
             }
+            Message::CloseTab => {
+                if self.song.is_none() || self.tab_file_is_loading {
+                    return Task::none();
+                }
+                if let Some(mut player) = self.audio_player.take() {
+                    player.stop();
+                }
+                self.song = None;
+                self.current_tab_path = None;
+                self.session_restore = None;
+                self.selection_drag = SelectionDrag::Idle;
+                self.notice = None;
+                // no tab to reopen on the next launch
+                self.persist_session();
+                Task::none()
+            }
             Message::ClearError => {
                 self.error_message = None;
                 Task::none()
@@ -1123,6 +1141,24 @@ mod tests {
         assert_eq!(opening_track(None, 8), (0, None));
         assert_eq!(opening_track(Some(1), 8), (0, None));
         assert_eq!(opening_track(Some(8), 8), (7, None));
+    }
+
+    #[test]
+    fn closing_the_tab_returns_to_the_start_screen_for_good() {
+        let mut app = app_with_demo_song();
+        app.persist_session();
+        assert!(app.config.session().last_tab_file.is_some());
+
+        let _ = app.update(Message::CloseTab);
+        assert!(app.song.is_none());
+        assert!(app.audio_player.is_none());
+        assert_eq!(app.title(), "Ruxguitar - untitled");
+        // the next launch has no tab to reopen
+        assert!(app.config.session().last_tab_file.is_none());
+
+        // nothing left to close
+        let _ = app.update(Message::CloseTab);
+        assert!(app.song.is_none());
     }
 
     #[test]

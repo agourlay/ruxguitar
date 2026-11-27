@@ -8,7 +8,7 @@ use iced::{Alignment, Border, Element, Length, Theme};
 use crate::audio::midi_player::AudioPlayer;
 use crate::parser::song_parser::{MeasureHeader, QUARTER_TIME};
 use crate::ui::icons::{
-    count_in_icon, metronome_icon, open_icon, pause_icon, play_icon, stop_icon,
+    close_icon, count_in_icon, metronome_icon, open_icon, pause_icon, play_icon, stop_icon,
 };
 use crate::ui::selections::TempoSelection;
 use crate::ui::song_info::SongDisplayInfo;
@@ -98,8 +98,12 @@ impl RuxApplication {
             (!self.tab_file_is_loading).then_some(Message::OpenFileDialog),
             false,
         );
+        let close_tab = self
+            .song
+            .is_some()
+            .then(|| action_gated(close_icon(), "Close tab", Some(Message::CloseTab), false));
         let controls = row![
-            open_file,
+            row![open_file].push(close_tab).spacing(10),
             horizontal(),
             self.transport_controls(),
             horizontal(),
