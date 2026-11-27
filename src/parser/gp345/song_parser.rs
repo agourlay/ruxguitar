@@ -388,16 +388,16 @@ pub fn parse_page_setup(i: &[u8]) -> IResult<&[u8], PageSetup> {
             parse_padding,
             parse_int,
             parse_short,
-            parse_int_sized_string,
-            parse_int_sized_string,
-            parse_int_sized_string,
-            parse_int_sized_string,
-            parse_int_sized_string,
-            parse_int_sized_string,
-            parse_int_sized_string,
-            parse_int_sized_string,
-            parse_int_sized_string,
-            parse_int_sized_string,
+            parse_int_byte_sized_string,
+            parse_int_byte_sized_string,
+            parse_int_byte_sized_string,
+            parse_int_byte_sized_string,
+            parse_int_byte_sized_string,
+            parse_int_byte_sized_string,
+            parse_int_byte_sized_string,
+            parse_int_byte_sized_string,
+            parse_int_byte_sized_string,
+            parse_int_byte_sized_string,
         ),
         |(
             page_size,
@@ -552,18 +552,18 @@ pub fn parse_gp345_data(file_data: &[u8]) -> Result<Song, RuxError> {
     let (rest, base_song) = flat_map(parse_gp_version, |version| {
         map(
             (
-                parse_info(version),                                     // Song info
-                cond(version < GpVersion::GP5, parse_bool),              // Triplet feel
-                cond(version >= GpVersion::GP4, parse_lyrics),           // Lyrics
-                cond(version >= GpVersion::GP5_10, take(19usize)),       // Skip RSE master effect
-                cond(version >= GpVersion::GP5, parse_page_setup),       // Page setup
-                cond(version >= GpVersion::GP5, parse_int_sized_string), // Tempo name
-                parse_int,                                               // Tempo value
-                cond(version > GpVersion::GP5, parse_bool),              // Tempo hide
-                parse_i8,                                                // Key signature
-                take(3usize),                                            // unknown
-                cond(version > GpVersion::GP3, parse_i8),                // Octave
-                parse_midi_channels,                                     // Midi channels
+                parse_info(version),                                          // Song info
+                cond(version < GpVersion::GP5, parse_bool),                   // Triplet feel
+                cond(version >= GpVersion::GP4, parse_lyrics),                // Lyrics
+                cond(version >= GpVersion::GP5_10, take(19usize)), // Skip RSE master effect
+                cond(version >= GpVersion::GP5, parse_page_setup), // Page setup
+                cond(version >= GpVersion::GP5, parse_int_byte_sized_string), // Tempo name
+                parse_int,                                         // Tempo value
+                cond(version > GpVersion::GP5, parse_bool),        // Tempo hide
+                parse_i8,                                          // Key signature
+                take(3usize),                                      // unknown
+                cond(version > GpVersion::GP3, parse_i8),          // Octave
+                parse_midi_channels,                               // Midi channels
             ),
             move |(
                 song_info,

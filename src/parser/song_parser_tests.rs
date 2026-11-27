@@ -687,23 +687,20 @@ mod tests {
 
         assert_eq!(page_setup.score_size_proportion, 1.0);
         assert_eq!(page_setup.header_and_footer, 511);
-        assert_eq!(page_setup.title, "\u{7}%TITLE%");
-        assert_eq!(page_setup.subtitle, "\n%SUBTITLE%");
-        assert_eq!(page_setup.artist, "\u{8}%ARTIST%");
-        assert_eq!(page_setup.album, "\u{7}%ALBUM%");
-        assert_eq!(page_setup.words, "\u{10}Words by %WORDS%");
-        assert_eq!(page_setup.music, "\u{10}Music by %MUSIC%");
-        assert_eq!(
-            page_setup.word_and_music,
-            "\u{1d}Words & Music by %WORDSMUSIC%"
-        );
+        assert_eq!(page_setup.title, "%TITLE%");
+        assert_eq!(page_setup.subtitle, "%SUBTITLE%");
+        assert_eq!(page_setup.artist, "%ARTIST%");
+        assert_eq!(page_setup.album, "%ALBUM%");
+        assert_eq!(page_setup.words, "Words by %WORDS%");
+        assert_eq!(page_setup.music, "Music by %MUSIC%");
+        assert_eq!(page_setup.word_and_music, "Words & Music by %WORDSMUSIC%");
         assert_eq!(
             page_setup.copyright,
-            "\u{15}Copyright %COPYRIGHT%\n5All Rights Reserved - International Copyright Secured"
+            "Copyright %COPYRIGHT%\nAll Rights Reserved - International Copyright Secured"
         );
-        assert_eq!(page_setup.page_number, "\u{c}Page %N%/%P%");
+        assert_eq!(page_setup.page_number, "Page %N%/%P%");
 
-        assert_eq!(song.tempo.name, Some("\u{8}Moderate".to_string()));
+        assert_eq!(song.tempo.name, Some("Moderate".to_string()));
         assert_eq!(song.tempo.value, 90);
         assert_eq!(song.hide_tempo, Some(false));
         assert_eq!(song.key_signature, 0);
