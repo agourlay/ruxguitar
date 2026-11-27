@@ -330,6 +330,12 @@ pub fn parse_midi_channels(i: &[u8]) -> IResult<&[u8], Vec<MidiChannel>> {
     Ok((i, channels))
 }
 
+/// Scale a channel byte (0-16) to a MIDI value (0-127), as TuxGuitar's
+/// `toChannelShort`: 16 gives 127, 8 gives 63 and 0 gives 0.
+fn to_channel_short(value: i8) -> i8 {
+    (i32::from(value) * 8 - 1).clamp(0, 127) as i8
+}
+
 pub fn parse_midi_channel(channel_id: i32) -> impl FnMut(&[u8]) -> IResult<&[u8], MidiChannel> {
     move |i: &[u8]| {
         map(
@@ -360,12 +366,12 @@ pub fn parse_midi_channel(channel_id: i32) -> impl FnMut(&[u8]) -> IResult<&[u8]
                     channel_id: channel_id as u8,
                     effect_channel_id: 0, // filled at the track level
                     instrument,
-                    volume,
-                    balance,
-                    chorus,
-                    reverb,
-                    phaser,
-                    tremolo,
+                    volume: to_channel_short(volume),
+                    balance: to_channel_short(balance),
+                    chorus: to_channel_short(chorus),
+                    reverb: to_channel_short(reverb),
+                    phaser: to_channel_short(phaser),
+                    tremolo: to_channel_short(tremolo),
                     bank,
                 }
             },
@@ -629,6 +635,16 @@ mod tests {
         assert!(GpVersion::GP5 >= GpVersion::GP5);
         assert!(GpVersion::GP3 < GpVersion::GP4);
         assert!(GpVersion::GP3 < GpVersion::GP5);
+    }
+
+    #[test]
+    fn channel_bytes_scale_to_midi_values() {
+        assert_eq!(to_channel_short(0), 0); // silent / hard left
+        assert_eq!(to_channel_short(8), 63); // half / center
+        assert_eq!(to_channel_short(16), 127); // full / hard right
+        // out-of-range values are clamped
+        assert_eq!(to_channel_short(-1), 0);
+        assert_eq!(to_channel_short(127), 127);
     }
 
     fn header(version: GpVersion, bytes: &[u8]) -> MeasureHeader {

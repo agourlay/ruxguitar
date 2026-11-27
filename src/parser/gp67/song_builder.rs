@@ -20,7 +20,7 @@ use crate::parser::song_parser::{
     MAX_VOICES, Marker, Measure, MeasureHeader, MidiChannel, NATURAL_FREQUENCIES, Note, NoteEffect,
     NoteType, QUARTER, QUARTER_TIME, SEMITONE_LENGTH, SlapEffect, SlideType, Song, SongInfo, Tempo,
     TimeSignature, Track, TremoloBarEffect, TremoloPickingEffect, TrillEffect, TripletFeel, Voice,
-    convert_velocity,
+    convert_velocity, round_half_up,
 };
 
 /// Position units used by GPX bend/whammy offsets (a full bar = 100%).
@@ -149,8 +149,8 @@ fn build_tracks(doc: &GpxDocument) -> (Vec<Track>, Vec<MidiChannel>) {
                 gp_track.gm_program
             },
             // Raw GP channel scale (0-16), scaled to MIDI 0-127 at emit time.
-            volume: 16, // full
-            balance: 8, // center
+            volume: 127, // full
+            balance: 64, // center
             chorus: 0,
             reverb: 0,
             phaser: 0,
@@ -766,7 +766,7 @@ fn harmonic_of(gp_note: &GpxNote) -> Option<HarmonicEffect> {
 }
 
 fn bend_value(gp_value: i32) -> i8 {
-    (gp_value as f32 * SEMITONE_LENGTH / GP_BEND_SEMITONE).round() as i8
+    round_half_up(gp_value as f32 * SEMITONE_LENGTH / GP_BEND_SEMITONE) as i8
 }
 
 fn bend_position(gp_offset: i32) -> u8 {
@@ -835,7 +835,7 @@ fn bend_of(gp_note: &GpxNote) -> Option<BendEffect> {
 }
 
 fn tremolo_bar_value(gp_value: i32) -> i8 {
-    let value = (gp_value as f32 / GP_WHAMMY_SEMITONE).round() as i32;
+    let value = round_half_up(gp_value as f32 / GP_WHAMMY_SEMITONE) as i32;
     value.clamp(
         -i32::from(TREMOLO_BAR_MAX_VALUE),
         i32::from(TREMOLO_BAR_MAX_VALUE),

@@ -5,7 +5,9 @@
 //! and store each measure's beats track after track.
 
 use crate::RuxError;
-use crate::parser::gp345::primitive_parser::{parse_bool, parse_i8, parse_int, parse_u8, skip};
+use crate::parser::gp345::primitive_parser::{
+    make_string, parse_bool, parse_i8, parse_int, parse_u8, skip,
+};
 use crate::parser::gp345::song_parser::convert_repeat_alternative;
 use crate::parser::model::{
     Beat, BendEffect, BendPoint, Chord, DEFAULT_BANK, DEFAULT_PERCUSSION_BANK, DEFAULT_VELOCITY,
@@ -13,7 +15,6 @@ use crate::parser::model::{
     MidiChannel, Note, NoteEffect, NoteType, QUARTER_TIME, SlapEffect, SlideType, Song, SongInfo,
     Tempo, TimeSignature, Track, TripletFeel, Voice, convert_velocity,
 };
-use encoding_rs::WINDOWS_1252;
 use nom::IResult;
 use nom::bytes::complete::take;
 
@@ -82,10 +83,6 @@ pub fn is_gp12_data(data: &[u8]) -> bool {
     matches!(parse_format(data), Ok((_, Some(_))))
 }
 
-fn make_string(bytes: &[u8]) -> String {
-    WINDOWS_1252.decode(bytes).0.into_owned()
-}
-
 /// A string as a length byte, then a field as long as the string.
 fn parse_byte_string(i: &[u8]) -> IResult<&[u8], String> {
     let (i, length) = parse_u8(i)?;
@@ -108,10 +105,18 @@ fn parse_sized_byte_string(i: &[u8]) -> IResult<&[u8], String> {
     Ok((i, make_string(&field[..length])))
 }
 
-/// A channel setting stored as a MIDI value (0-127), in the 0-16 scale of
-/// later formats that the MIDI builder expects.
+/// A channel setting, stored as a MIDI value.
 fn channel_setting(value: i32) -> i8 {
-    ((value.clamp(0, 127) + 1) as f32 / 8.0).round() as i8
+    value.clamp(0, 127) as i8
+}
+
+/// The key as a number of sharps, or of flats when negative. Like TuxGuitar,
+/// 8 to 14 stand for 1 to 7 flats.
+fn key_signature(key: i32) -> i8 {
+    match key {
+        8..=14 => (7 - key) as i8,
+        key => key.clamp(-7, 7) as i8,
+    }
 }
 
 fn verify_failure<T>(i: &[u8]) -> IResult<&[u8], T> {
@@ -147,7 +152,7 @@ fn parse_song(i: &[u8]) -> IResult<&[u8], Song> {
     } else {
         (i, 0)
     };
-    let key = key.clamp(-7, 7) as i8;
+    let key = key_signature(key);
 
     let mut tracks = Vec::with_capacity(track_count);
     for (index, &(channel_id, _)) in TRACK_CHANNELS.iter().take(track_count).enumerate() {
@@ -880,6 +885,24 @@ mod tests {
     }
 
     #[test]
+    fn keys_past_seven_sharps_are_flats() {
+        assert_eq!(key_signature(0), 0);
+        assert_eq!(key_signature(7), 7);
+        assert_eq!(key_signature(8), -1);
+        assert_eq!(key_signature(14), -7);
+        assert_eq!(key_signature(15), 7);
+        assert_eq!(key_signature(-3), -3);
+    }
+
+    #[test]
+    fn channel_settings_stay_midi_values() {
+        assert_eq!(channel_setting(64), 64);
+        assert_eq!(channel_setting(100), 100);
+        assert_eq!(channel_setting(200), 127);
+        assert_eq!(channel_setting(-1), 0);
+    }
+
+    #[test]
     fn a_gp2_song_reads_its_info_tracks_and_channels() {
         let song = parse_gp_data(&gp2_song()).unwrap();
         assert_eq!(song.version, GpVersion::GP2);
@@ -893,9 +916,9 @@ mod tests {
             vec![(1, 43), (2, 38), (3, 33), (4, 28)]
         );
         assert_eq!(song.midi_channels[1].instrument, 26);
-        // MIDI volume 127 is the loudest of the 0-16 scale
-        assert_eq!(song.midi_channels[0].volume, 16);
-        assert_eq!(song.midi_channels[0].balance, 8);
+        // the channel settings are MIDI values, kept as they are
+        assert_eq!(song.midi_channels[0].volume, 127);
+        assert_eq!(song.midi_channels[0].balance, 64);
         // the last track plays the drums
         let drums = &song.midi_channels[7];
         assert_eq!((drums.channel_id, drums.instrument), (9, 0));

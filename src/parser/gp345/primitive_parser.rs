@@ -31,20 +31,12 @@ pub fn skip(i: &[u8], n: usize) -> &[u8] {
     i.get(n..).unwrap_or(&[])
 }
 
-/// Materialize properly encoded String
-fn make_string(i: &[u8]) -> String {
-    let (cow, encoding_used, had_errors) = WINDOWS_1252.decode(i);
-    if had_errors {
-        log::debug!("Error parsing string with {encoding_used:?}");
-        match std::str::from_utf8(i) {
-            Ok(s) => s.to_string(),
-            Err(e) => {
-                log::debug!("Error UTF-8 string parsing:{e}");
-                String::new()
-            }
-        }
-    } else {
-        cow.to_string()
+/// Decode a file's text: UTF-8 as TuxGuitar reads it, and Windows-1252, the
+/// encoding of Guitar Pro itself, for the bytes that are not valid UTF-8.
+pub fn make_string(i: &[u8]) -> String {
+    match std::str::from_utf8(i) {
+        Ok(text) => text.to_string(),
+        Err(_) => WINDOWS_1252.decode_without_bom_handling(i).0.into_owned(),
     }
 }
 
@@ -113,8 +105,17 @@ pub fn parse_int_byte_sized_string(i: &[u8]) -> IResult<&[u8], String> {
 #[cfg(test)]
 mod tests {
     use crate::parser::gp345::primitive_parser::{
-        parse_byte_size_string, parse_int_byte_sized_string, parse_int_sized_string, skip,
+        make_string, parse_byte_size_string, parse_int_byte_sized_string, parse_int_sized_string,
+        skip,
     };
+
+    #[test]
+    fn text_is_utf8_or_else_windows_1252() {
+        assert_eq!(make_string("Für Élise".as_bytes()), "Für Élise");
+        // the same title as Guitar Pro writes it
+        assert_eq!(make_string(b"F\xFCr \xC9lise"), "Für Élise");
+        assert_eq!(make_string(b"plain"), "plain");
+    }
 
     /// An int byte sized string: the Int, the length byte, then the field.
     fn int_byte_sized(int: i32, str_len: u8, field: &[u8]) -> Vec<u8> {

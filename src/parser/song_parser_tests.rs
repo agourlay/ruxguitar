@@ -712,7 +712,7 @@ mod tests {
         assert_eq!(song.midi_channels.len(), 64);
         assert_eq!(song.midi_channels[0].effect_channel_id, 0);
         assert_eq!(song.midi_channels[0].instrument, 25);
-        assert_eq!(song.midi_channels[0].volume, 16);
+        assert_eq!(song.midi_channels[0].volume, 127);
         assert_eq!(song.midi_channels[0].balance, 0);
         assert_eq!(song.midi_channels[0].chorus, 0);
         assert_eq!(song.midi_channels[0].reverb, 0);

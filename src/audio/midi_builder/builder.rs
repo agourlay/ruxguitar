@@ -50,13 +50,6 @@ const METRONOME_CHANNEL: i32 = PERCUSSION_CHANNEL as i32;
 const MAX_CHANNELS: u8 = 16;
 pub const METRONOME_VELOCITY: i16 = 127;
 
-/// Scale a raw Guitar Pro channel byte (0-16) to a MIDI value (0-127),
-/// matching TuxGuitar's `toChannelShort`. Used for channel volume, pan,
-/// chorus and reverb (raw 16 -> 127, raw 8 -> 63, raw 0 -> 0).
-fn to_channel_short(value: i8) -> i32 {
-    (i32::from(value) * 8 - 1).clamp(0, 127)
-}
-
 pub struct MidiBuilder {
     events: Vec<MidiEvent>,
 }
@@ -304,7 +297,9 @@ impl MidiBuilder {
         let tempo = header.tempo.value;
         let beat_duration = triplet_adj.duration;
         let stroke = &beat.effect.stroke;
-        let stroke_increment = stroke.increment_for_duration(beat_duration);
+        // like TuxGuitar, the strum speed follows the written duration, not
+        // the one the triplet feel gives the beat
+        let stroke_increment = stroke.increment_for_duration(beat.duration.time());
         // pre-compute per-string stroke offsets (only for strings with non-tied notes)
         let stroke_offsets = compute_stroke_offsets(beat, stroke_increment, strings.len());
         for note in &beat.notes {
@@ -395,6 +390,7 @@ impl MidiBuilder {
                     output,
                     base_key,
                     &mut span,
+                    playback_order[playback_index].1,
                     tempo,
                     note,
                     slide_target,
@@ -416,6 +412,7 @@ impl MidiBuilder {
         output: Output,
         base_key: i32,
         span: &mut Span,
+        tick_offset: i64,
         tempo: u32,
         note: &Note,
         slide_target: Option<(u32, i16)>,
@@ -430,7 +427,14 @@ impl MidiBuilder {
         }
 
         if let Some(grace) = &note.effect.grace {
-            self.add_grace_note(output, grace, fret_key(grace.fret), tempo, span);
+            self.add_grace_note(
+                output,
+                grace,
+                fret_key(grace.fret),
+                tempo,
+                span,
+                tick_offset,
+            );
         }
 
         // a trill or tremolo picking plays the note itself, as repeated notes
@@ -511,7 +515,9 @@ impl MidiBuilder {
     }
 
     /// Play the grace note before the note. A grace note on the beat, or one
-    /// with too little room before the note, delays the note instead.
+    /// with too little room before the note, delays the note instead. The
+    /// room is counted in playback time, where `tick_offset` places the
+    /// measure: the first beat of the song has none, but it does once repeated.
     fn add_grace_note(
         &mut self,
         output: Output,
@@ -519,6 +525,7 @@ impl MidiBuilder {
         grace_key: i32,
         tempo: u32,
         span: &mut Span,
+        tick_offset: i64,
     ) {
         let grace_length = grace.duration_time() as u32;
         let grace_duration = if grace.is_dead {
@@ -526,8 +533,8 @@ impl MidiBuilder {
         } else {
             grace_length
         };
-        let on_beat_duration = span.start - grace_length;
-        if grace.is_on_beat || on_beat_duration < QUARTER_TIME {
+        let grace_start = i64::from(span.start) + tick_offset - i64::from(grace_length);
+        if grace.is_on_beat || grace_start < i64::from(QUARTER_TIME) {
             span.start = span.start.saturating_add(grace_length);
             span.duration = span.duration.saturating_sub(grace_length);
         }
@@ -833,11 +840,11 @@ impl MidiBuilder {
         let mut control = |controller, value| {
             self.add_control_change(output, tick, controller, value);
         };
-        control(CC_VOLUME, to_channel_short(midi_channel.volume));
-        control(CC_PAN, to_channel_short(midi_channel.balance));
+        control(CC_VOLUME, i32::from(midi_channel.volume));
+        control(CC_PAN, i32::from(midi_channel.balance));
         control(CC_EXPRESSION, 127);
-        control(CC_CHORUS, to_channel_short(midi_channel.chorus));
-        control(CC_REVERB, to_channel_short(midi_channel.reverb));
+        control(CC_CHORUS, i32::from(midi_channel.chorus));
+        control(CC_REVERB, i32::from(midi_channel.reverb));
         // phaser and tremolo are left out: the synthesizer has neither
         control(CC_BANK_SELECT, bank_select(midi_channel));
         self.add_program_selection(output, tick, midi_channel.instrument);
@@ -1021,7 +1028,8 @@ mod tests {
     use super::*;
     use crate::audio::midi_event::MidiEventType;
     use crate::parser::song_parser::{
-        DEFAULT_BANK, DEFAULT_PERCUSSION_BANK, DEFAULT_VELOCITY, NoteEffect, SlideType, TrillEffect,
+        BeatStroke, BeatStrokeDirection, DEFAULT_BANK, DEFAULT_PERCUSSION_BANK, DEFAULT_VELOCITY,
+        MeasureHeader, NoteEffect, SlideType, TrillEffect, Voice,
     };
 
     const OUTPUT: Output = Output {
@@ -1151,6 +1159,60 @@ mod tests {
     }
 
     #[test]
+    fn a_stroke_keeps_its_written_speed_under_a_triplet_feel() {
+        let mut beat = Beat {
+            start: QUARTER_TIME,
+            ..Default::default()
+        };
+        beat.duration.value = 8;
+        beat.effect.stroke = BeatStroke {
+            direction: BeatStrokeDirection::Up,
+            value: 16,
+        };
+        for string in 1..=2 {
+            let mut note = Note::new(NoteEffect::default());
+            note.string = string;
+            beat.notes.push(note);
+        }
+        let track = Track {
+            strings: vec![(1, 64), (2, 59)],
+            measures: vec![Measure {
+                voices: vec![Voice {
+                    measure_index: 0,
+                    beats: vec![beat],
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let header = MeasureHeader::default();
+        let channel = file_channel(0, 0);
+        let context = MeasureContext {
+            track_id: 0,
+            track: &track,
+            header: &header,
+            midi_channel: &channel,
+            playback_order: &[(0, 0)],
+            playback_index: 0,
+        };
+        // the triplet feel makes the eighth last two thirds of a quarter
+        let swung = TripletAdjustment {
+            start: QUARTER_TIME,
+            duration: QUARTER_TIME * 2 / 3,
+        };
+        let beat = &track.measures[0].voices[0].beats[0];
+        let mut builder = MidiBuilder::new();
+        builder.add_notes(&context, 0, 0, beat, swung);
+        let mut starts: Vec<u32> = notes_played(&builder.events)
+            .iter()
+            .map(|(tick, _, _)| *tick)
+            .collect();
+        starts.sort_unstable();
+        // a sixteenth stroke over an eighth: 480 / 8 * 4 / 16 ticks per string
+        assert_eq!(starts, [QUARTER_TIME, QUARTER_TIME + 15]);
+    }
+
+    #[test]
     fn a_grace_note_on_the_beat_delays_the_note() {
         let grace = GraceEffect {
             duration: 2,
@@ -1160,7 +1222,7 @@ mod tests {
         let length = grace.duration_time() as u32;
         let mut note = span(QUARTER_TIME * 4, QUARTER_TIME);
         let mut builder = MidiBuilder::new();
-        builder.add_grace_note(OUTPUT, &grace, 44, 120, &mut note);
+        builder.add_grace_note(OUTPUT, &grace, 44, 120, &mut note, 0);
         assert_eq!(note, span(QUARTER_TIME * 4 + length, QUARTER_TIME - length));
         assert_eq!(
             notes_played(&builder.events),
@@ -1177,11 +1239,37 @@ mod tests {
         let length = grace.duration_time() as u32;
         let mut note = span(QUARTER_TIME * 4, QUARTER_TIME);
         let mut builder = MidiBuilder::new();
-        builder.add_grace_note(OUTPUT, &grace, 44, 120, &mut note);
+        builder.add_grace_note(OUTPUT, &grace, 44, 120, &mut note, 0);
         assert_eq!(note, span(QUARTER_TIME * 4, QUARTER_TIME));
         assert_eq!(
             notes_played(&builder.events),
             [(QUARTER_TIME * 4 - length, 44, length)]
+        );
+    }
+
+    #[test]
+    fn a_grace_note_on_the_first_beat_has_room_once_the_measure_repeats() {
+        let grace = GraceEffect {
+            duration: 2,
+            ..Default::default()
+        };
+        let length = grace.duration_time() as u32;
+        // the first pass has nothing before the first beat of the song
+        let mut note = span(QUARTER_TIME, QUARTER_TIME);
+        let mut builder = MidiBuilder::new();
+        builder.add_grace_note(OUTPUT, &grace, 44, 120, &mut note, 0);
+        assert_eq!(note, span(QUARTER_TIME + length, QUARTER_TIME - length));
+        assert_eq!(notes_played(&builder.events), [(QUARTER_TIME, 44, length)]);
+
+        // the second pass plays it at the end of the previous measure
+        let mut note = span(QUARTER_TIME, QUARTER_TIME);
+        let mut builder = MidiBuilder::new();
+        let repeat = i64::from(QUARTER_TIME * 4);
+        builder.add_grace_note(OUTPUT, &grace, 44, 120, &mut note, repeat);
+        assert_eq!(note, span(QUARTER_TIME, QUARTER_TIME));
+        assert_eq!(
+            notes_played(&builder.events),
+            [(QUARTER_TIME - length, 44, length)]
         );
     }
 
@@ -1248,17 +1336,6 @@ mod tests {
         let bends = pitch_bends(&builder.events);
         assert_eq!(bends.first(), Some(&(50, 64)));
         assert_eq!(bends[bends.len() - 2], (100, 64 + 33));
-    }
-
-    #[test]
-    fn channel_short_scaling() {
-        // Raw Guitar Pro channel scale (0-16) -> MIDI (0-127), per TuxGuitar.
-        assert_eq!(to_channel_short(0), 0); // silent / hard left
-        assert_eq!(to_channel_short(8), 63); // half / center
-        assert_eq!(to_channel_short(16), 127); // full / hard right
-        // Out-of-range values are clamped.
-        assert_eq!(to_channel_short(-1), 0);
-        assert_eq!(to_channel_short(127), 127);
     }
 
     /// A channel as the file defines it: its main and effect channel.

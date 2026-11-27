@@ -63,6 +63,14 @@ pub struct Song {
     pub tracks: Vec<Track>,
 }
 
+/// Round to the nearest integer with halves going up, as Java's `Math.round`
+/// that TuxGuitar converts values with: -2.5 gives -2, where `f32::round`
+/// gives -3.
+pub fn round_half_up(value: f32) -> f32 {
+    (value + 0.5).floor()
+}
+
+/// A channel's settings, as MIDI values (0-127).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MidiChannel {
     pub channel_id: u8,
@@ -894,6 +902,15 @@ impl Default for Track {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn halves_round_up_below_zero_too() {
+        assert_eq!(round_half_up(2.5), 3.0);
+        assert_eq!(round_half_up(-2.5), -2.0);
+        assert_eq!(round_half_up(-2.6), -3.0);
+        assert_eq!(round_half_up(-0.4), 0.0);
+        assert_eq!(round_half_up(1.4), 1.0);
+    }
 
     #[test]
     fn a_pitch_without_accidental_is_spelled_with_sharps() {

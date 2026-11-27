@@ -233,15 +233,15 @@ pub fn parse_harmonic_effect(
             5 => he.kind = HarmonicType::Semi,
             // pre-GP5 artificial harmonic variants, with the key offset
             // TuxGuitar assigns them (+24, +19 and +12 respectively)
-            15 => {
+            15 if version < GpVersion::GP5 => {
                 he.kind = HarmonicType::Artificial;
                 he.data = 2;
             }
-            17 => {
+            17 if version < GpVersion::GP5 => {
                 he.kind = HarmonicType::Artificial;
                 he.data = 3;
             }
-            22 => he.kind = HarmonicType::Artificial,
+            22 if version < GpVersion::GP5 => he.kind = HarmonicType::Artificial,
             // like TuxGuitar, unknown types drop the harmonic
             x => {
                 log::warn!("Unknown harmonic type {x}");
@@ -364,17 +364,18 @@ pub fn parse_beat_effects<'a>(
             let (inner, (first, second)) = (parse_i8, parse_i8).parse(i)?;
             i = inner;
             // GP5 stores the up stroke first, GP4 stores the down stroke first.
-            let (stroke_up, stroke_down) = if version >= GpVersion::GP5 {
-                (first, second)
+            // Like TuxGuitar, the stroke stored first wins when both are set.
+            let (first_direction, second_direction) = if version >= GpVersion::GP5 {
+                (BeatStrokeDirection::Up, BeatStrokeDirection::Down)
             } else {
-                (second, first)
+                (BeatStrokeDirection::Down, BeatStrokeDirection::Up)
             };
-            if stroke_up > 0 {
-                beat.effect.stroke.value = to_stroke_value(stroke_up);
-                beat.effect.stroke.direction = BeatStrokeDirection::Up;
-            } else if stroke_down > 0 {
-                beat.effect.stroke.value = to_stroke_value(stroke_down);
-                beat.effect.stroke.direction = BeatStrokeDirection::Down;
+            if first > 0 {
+                beat.effect.stroke.value = to_stroke_value(first);
+                beat.effect.stroke.direction = first_direction;
+            } else if second > 0 {
+                beat.effect.stroke.value = to_stroke_value(second);
+                beat.effect.stroke.direction = second_direction;
             }
         }
 
@@ -468,7 +469,7 @@ pub fn parse_bend_effect(i: &[u8]) -> IResult<&[u8], BendEffect> {
         let point_value = bend_value as f32 * SEMITONE_LENGTH / GP_BEND_SEMITONE;
         bend_effect.points.push(BendPoint {
             position: point_position.round() as u8,
-            value: point_value.round() as i8,
+            value: round_half_up(point_value) as i8,
         });
     }
     Ok((i, bend_effect))
@@ -486,7 +487,7 @@ pub fn parse_tremolo_bar_gp3(i: &[u8]) -> IResult<&[u8], TremoloBarEffect> {
     });
     tremolo_bar_effect.points.push(BendPoint {
         position: (BEND_EFFECT_MAX_POSITION_LENGTH / 2.0).round() as u8,
-        value: (-(value as f32 / (GP_BEND_SEMITONE * 2.0))).round() as i8,
+        value: round_half_up(-(value as f32 / (GP_BEND_SEMITONE * 2.0))) as i8,
     });
     tremolo_bar_effect.points.push(BendPoint {
         position: BEND_EFFECT_MAX_POSITION_LENGTH as u8,
@@ -509,8 +510,75 @@ pub fn parse_tremolo_bar(i: &[u8]) -> IResult<&[u8], TremoloBarEffect> {
         let point_value = value as f32 / (GP_BEND_SEMITONE * 2.0);
         tremolo_bar_effect.points.push(BendPoint {
             position: point_position.round() as u8,
-            value: point_value.round() as i8,
+            value: round_half_up(point_value) as i8,
         });
     }
     Ok((i, tremolo_bar_effect))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The stroke of a beat whose effects hold these two stroke bytes.
+    fn stroke(version: GpVersion, strokes: [u8; 2]) -> BeatStroke {
+        let mut beat = Beat::default();
+        let mut note_effect = NoteEffect::default();
+        let bytes = [0x40, 0, strokes[0], strokes[1]];
+        let (rest, ()) = parse_beat_effects(&mut beat, &mut note_effect, version)(&bytes).unwrap();
+        assert!(rest.is_empty());
+        beat.effect.stroke
+    }
+
+    #[test]
+    fn gp4_stores_the_down_stroke_first_and_gp5_the_up_stroke() {
+        let up = BeatStrokeDirection::Up;
+        let down = BeatStrokeDirection::Down;
+        assert_eq!(stroke(GpVersion::GP4, [4, 0]).direction, down);
+        assert_eq!(stroke(GpVersion::GP4, [0, 4]).direction, up);
+        assert_eq!(stroke(GpVersion::GP5, [4, 0]).direction, up);
+        assert_eq!(stroke(GpVersion::GP5, [0, 4]).direction, down);
+    }
+
+    #[test]
+    fn the_stroke_stored_first_wins_when_both_are_set() {
+        let gp4 = stroke(GpVersion::GP4, [4, 5]);
+        assert_eq!(gp4.direction, BeatStrokeDirection::Down);
+        assert_eq!(gp4.value, to_stroke_value(4));
+        let gp5 = stroke(GpVersion::GP5, [4, 5]);
+        assert_eq!(gp5.direction, BeatStrokeDirection::Up);
+        assert_eq!(gp5.value, to_stroke_value(4));
+    }
+
+    /// A tremolo bar with a single point of this value.
+    fn tremolo_bar(value: i32) -> TremoloBarEffect {
+        let mut bytes = vec![0; 5];
+        bytes.extend(1i32.to_le_bytes());
+        bytes.extend(30i32.to_le_bytes());
+        bytes.extend(value.to_le_bytes());
+        bytes.push(0);
+        let (rest, effect) = parse_tremolo_bar(&bytes).unwrap();
+        assert!(rest.is_empty());
+        effect
+    }
+
+    #[test]
+    fn a_tremolo_bar_dip_of_half_a_step_rounds_up_like_tuxguitar() {
+        // 50 units a semitone: -125 is two and a half semitones down
+        assert_eq!(tremolo_bar(-125).points[0].value, -2);
+        assert_eq!(tremolo_bar(-126).points[0].value, -3);
+        assert_eq!(tremolo_bar(125).points[0].value, 3);
+        let (_, gp3) = parse_tremolo_bar_gp3(&125i32.to_le_bytes()).unwrap();
+        assert_eq!(gp3.points[1].value, -2);
+    }
+
+    #[test]
+    fn the_gp4_artificial_harmonics_are_unknown_to_gp5() {
+        for kind in [15, 17, 22] {
+            let (_, gp4) = parse_harmonic_effect(GpVersion::GP4)(&[kind]).unwrap();
+            assert_eq!(gp4.map(|h| h.kind), Some(HarmonicType::Artificial));
+            let (_, gp5) = parse_harmonic_effect(GpVersion::GP5)(&[kind]).unwrap();
+            assert_eq!(gp5, None, "type {kind}");
+        }
+    }
 }
