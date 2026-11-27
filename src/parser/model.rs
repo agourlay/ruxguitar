@@ -198,7 +198,7 @@ impl KeySignature {
 impl std::fmt::Display for KeySignature {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let index: usize = if self.is_minor {
-            (23i8 + self.key) as usize
+            (25i8 + self.key) as usize
         } else {
             (8i8 + self.key) as usize
         };
@@ -902,6 +902,19 @@ impl Default for Track {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_key_is_named_after_its_sharps_or_flats() {
+        let name = |key, is_minor| KeySignature::new(key, is_minor).to_string();
+        assert_eq!(name(0, false), "C major");
+        assert_eq!(name(1, false), "G major");
+        assert_eq!(name(-1, false), "F major");
+        assert_eq!(name(0, true), "A minor");
+        assert_eq!(name(1, true), "E minor");
+        assert_eq!(name(-1, true), "D minor");
+        assert_eq!(name(-8, true), "D♭ minor");
+        assert_eq!(name(8, true), "E# minor");
+    }
 
     #[test]
     fn halves_round_up_below_zero_too() {

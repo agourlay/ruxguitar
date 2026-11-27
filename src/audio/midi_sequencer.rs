@@ -78,10 +78,6 @@ impl MidiSequencer {
         self.needs_init = true;
     }
 
-    pub fn reset_ticks(&mut self) {
-        self.set_tick(0);
-    }
-
     pub const fn get_tick(&self) -> u32 {
         self.tick
     }

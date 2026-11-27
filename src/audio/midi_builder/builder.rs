@@ -1,6 +1,6 @@
 //! Port of TuxGuitar's `MidiSequenceParser.java`.
 
-use crate::audio::midi_event::{FIRST_TICK, MidiEvent};
+use crate::audio::midi_event::{FIRST_TICK, MidiEvent, MidiEventType};
 use crate::audio::playback_order::playback_tick;
 use crate::parser::song_parser::{
     Beat, BendEffect, BendPoint, GraceEffect, HarmonicEffect, HarmonicType, MIN_VELOCITY, Measure,
@@ -160,9 +160,20 @@ impl MidiBuilder {
             );
         }
         self.add_metronome_events(&song.measure_headers, playback_order);
-        // Sort events by tick
-        self.events.sort_by_key(|event| event.tick);
+        self.sort_events();
         self.events
+    }
+
+    /// Order the events by tick, the note-offs of a tick before the rest of
+    /// it. A note is always released after it starts, so a note-off belongs
+    /// to an earlier note: played after a note-on of the same key and tick,
+    /// as when a voice starts the note another voice ends, it would cut the
+    /// new note short.
+    fn sort_events(&mut self) {
+        self.events.sort_by_key(|event| {
+            let releases = matches!(event.event, MidiEventType::NoteOff(_, _));
+            (event.tick, !releases)
+        });
     }
 
     /// One percussion click per beat of every played measure, like
@@ -1026,7 +1037,6 @@ fn harmonic_key(harmonic: &HarmonicEffect, note_value: i16, initial_key: i32) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::midi_event::MidiEventType;
     use crate::parser::song_parser::{
         BeatStroke, BeatStrokeDirection, DEFAULT_BANK, DEFAULT_PERCUSSION_BANK, DEFAULT_VELOCITY,
         MeasureHeader, NoteEffect, SlideType, TrillEffect, Voice,
@@ -1156,6 +1166,25 @@ mod tests {
         let mut builder = MidiBuilder::new();
         builder.add_repeated_notes(OUTPUT, [40, 40], 100, span(100, 10), DEFAULT_VELOCITY);
         assert!(builder.events.is_empty());
+    }
+
+    #[test]
+    fn a_note_ending_where_another_starts_is_released_first() {
+        let mut builder = MidiBuilder::new();
+        // the second voice starts the key the first one ends, on that tick
+        builder.add_note(OUTPUT, 60, span(480, 480), DEFAULT_VELOCITY);
+        builder.add_note(OUTPUT, 60, span(0, 480), DEFAULT_VELOCITY);
+        builder.add_control_change(OUTPUT, 480, CC_EXPRESSION, 127);
+        builder.sort_events();
+        let at_480: Vec<&MidiEventType> = builder
+            .events
+            .iter()
+            .filter(|event| event.tick == 480)
+            .map(|event| &event.event)
+            .collect();
+        assert_eq!(at_480[0], &MidiEventType::NoteOff(0, 60));
+        assert_eq!(at_480[1], &MidiEventType::NoteOn(0, 60, DEFAULT_VELOCITY));
+        assert!(matches!(at_480[2], MidiEventType::MidiMessage(..)));
     }
 
     #[test]

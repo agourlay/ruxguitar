@@ -6,6 +6,7 @@ use crate::audio::midi_player_params::MidiPlayerParams;
 use crate::audio::midi_sequencer::{MidiSequencer, TickRate};
 use crate::audio::playback_order::{
     MeasureLoop, first_occurrence_ticks, first_playback_ticks, measure_loop_tick_range,
+    playback_tick,
 };
 use crate::parser::song_parser::Song;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -37,6 +38,8 @@ pub struct AudioPlayer {
     /// Latest tick reached by the audio callback, and the UI wake-up signal.
     current_tick: Arc<AtomicU32>,
     beat_notify: Arc<Notify>,
+    /// Where the song starts playing: the first tick of its first measure.
+    start_tick: u32,
     /// First playback tick per measure, for seeking.
     measure_playback_ticks: Vec<u32>,
     /// First playback tick per measure, `None` when it is never played.
@@ -75,8 +78,20 @@ impl AudioPlayer {
         let sound_font = Arc::new(sound_font);
         let synthesizer = Self::make_synthesizer(sound_font.clone(), DEFAULT_SAMPLE_RATE)?;
 
+        // the channel setup at `FIRST_TICK` is applied when the stream opens:
+        // playing from there would wait a silent beat for the first measure
+        let start_tick = playback_order
+            .first()
+            .and_then(|&(measure, offset)| {
+                let header = song.measure_headers.get(measure)?;
+                Some(playback_tick(header.start, offset))
+            })
+            .unwrap_or(FIRST_TICK);
+        let mut sequencer = MidiSequencer::new(events);
+        sequencer.set_tick(start_tick);
+
         let synthesizer = Arc::new(Mutex::new(synthesizer));
-        let sequencer = Arc::new(Mutex::new(MidiSequencer::new(events)));
+        let sequencer = Arc::new(Mutex::new(sequencer));
         Ok(Self {
             is_playing: false,
             song,
@@ -87,6 +102,7 @@ impl AudioPlayer {
             sound_font,
             current_tick,
             beat_notify,
+            start_tick,
             measure_playback_ticks,
             measure_first_occurrences,
         })
@@ -227,8 +243,10 @@ impl AudioPlayer {
         }
         self.is_playing = false;
 
-        self.sequencer.lock().unwrap().reset_ticks();
+        self.sequencer.lock().unwrap().set_tick(self.start_tick);
         self.player_params.set_finished(false);
+        // back to the tempo the song starts at: no event restores it
+        self.player_params.set_tempo(self.song.tempo.value);
         self.silence_synthesizer();
 
         // reset the UI cursor to the first playable tick so the measure lookup resolves cleanly
@@ -1005,6 +1023,36 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn stopping_returns_to_the_first_measure_at_the_song_tempo() {
+        use crate::audio::playback_order::compute_playback_order;
+        use crate::parser::song_parser_tests::parse_gp_file;
+        use std::rc::Rc;
+        use tokio::sync::Notify;
+
+        let song = parse_gp_file("test-files/Demo v5.gp5").unwrap();
+        let tempo = song.tempo.value;
+        let first_measure = song.measure_headers[0].start;
+        let song = Rc::new(song);
+        let order = compute_playback_order(&song.measure_headers);
+        let current_tick = Arc::new(AtomicU32::new(FIRST_TICK));
+        let notify = Arc::new(Notify::new());
+        let mut player =
+            AudioPlayer::new(song, tempo, 100, None, current_tick, notify, &order).unwrap();
+
+        // a fresh player plays the first measure right away: the sequencer
+        // waits one tick before it, to include its events
+        let position = |player: &AudioPlayer| player.sequencer.lock().unwrap().get_tick();
+        assert_eq!(position(&player), first_measure - 1);
+
+        // as after a tempo change further in the song
+        player.focus_measure_at(10, 0);
+        player.player_params.set_tempo(tempo + 40);
+        player.stop();
+        assert_eq!(position(&player), first_measure - 1);
+        assert_eq!(player.player_params.adjusted_tempo(), tempo);
     }
 
     #[test]
